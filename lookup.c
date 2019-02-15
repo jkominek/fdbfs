@@ -44,9 +44,9 @@ struct fdbfs_inflight_lookup {
   // but that probably won't fit the pattern. we'll see what
   // the pattern ends up being, though.
   char *name;
+  
   // stage 2
   fuse_ino_t target;
-  
 };
 
 void fdbfs_lookup_callback(FDBFuture *f, void *p)
@@ -64,7 +64,7 @@ void fdbfs_lookup_callback(FDBFuture *f, void *p)
       bcopy(val, &(inflight->target), sizeof(fuse_ino_t));
       inflight->have_target = 1;
 
-      // ok, now look up the inode attributes
+      // TODO ensure this is sized right.
       uint8_t key[512];
       int keylen;
 
@@ -100,7 +100,7 @@ void fdbfs_lookup_issuer(void *p)
   // find 'name' in the directory pointed to by 'parent'
   struct fdbfs_inflight_lookup *inflight = p;
 
-  // pack the inode key
+  // TODO ensure this is sized right.
   uint8_t key[1024];
   int keylen;
 
@@ -122,11 +122,13 @@ void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 
   // get the file attributes of an inode
   struct fdbfs_inflight_lookup *inflight;
+  // to just make one allocation, we'll stuff our copy of the name
+  // right after the struct.
   inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_lookup) + namelen + 1,
 				   req,
 				   fdbfs_lookup_callback,
 				   fdbfs_lookup_issuer);
-  inflight->have_target = 0;
+  // inflight->have_target = 0; // the issuer sets this.
   inflight->ino = parent;
   inflight->namelen = namelen;
   inflight->name = ((char*)inflight) + sizeof(struct fdbfs_inflight_lookup);

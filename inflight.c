@@ -70,6 +70,8 @@ void fdbfs_error_processor(FDBFuture *f, void *p)
   fdb_future_destroy(f);
 
   if(err) {
+    debug_print("fdbfs_error_processor killing request %p for inflight %p: %s",
+		inflight->req, p, fdb_get_error(err));
     // error during an error. foundationdb says that means
     // you should give up. so we'll let fuse know they're hosed.
     fuse_reply_err(inflight->req, EIO);
