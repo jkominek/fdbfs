@@ -72,7 +72,7 @@ void fdbfs_error_processor(FDBFuture *f, void *p)
   if(err) {
     // error during an error. foundationdb says that means
     // you should give up. so we'll let fuse know they're hosed.
-    fuse_reply_err(inflight->req, -EIO);
+    fuse_reply_err(inflight->req, EIO);
 
     fdbfs_inflight_cleanup(inflight);
     return;
