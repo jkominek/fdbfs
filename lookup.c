@@ -53,7 +53,7 @@ void fdbfs_lookup_callback(FDBFuture *f, void *p)
   if(!inflight->have_target) {
     // we're on the first callback, to get the directory entry
     if(present) {
-      bcopy(&(inflight->target), val, sizeof(fuse_ino_t));
+      bcopy(val, &(inflight->target), sizeof(fuse_ino_t));
       inflight->have_target = 1;
 
       // ok, now look up the inode attributes

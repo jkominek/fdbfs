@@ -18,9 +18,9 @@ int kplen;
 
 void pack_inode_key(fuse_ino_t ino, uint8_t *key, int *keylen)
 {
-  bcopy(key, kp, kplen);
+  bcopy(kp, key, kplen);
   key[kplen] = INODE_PREFIX;
-  bcopy(key+kplen+1, &ino, sizeof(fuse_ino_t));
+  bcopy(&ino, key+kplen+1, sizeof(fuse_ino_t));
   *keylen = kplen + 1 + sizeof(fuse_ino_t);
 }
 
@@ -29,7 +29,7 @@ void pack_dentry_key(fuse_ino_t ino, char *name, int namelen, uint8_t *key, int 
   pack_inode_key(ino, key, keylen);
 
   key[*keylen] = DENTRY_PREFIX;
-  bcopy(key+*keylen+1, name, namelen);
+  bcopy(name, key+*keylen+1, namelen);
 
   *keylen += 1 + namelen;
 }
@@ -40,5 +40,5 @@ void unpack_stat_from_dbvalue(uint8_t *val, int vallen, struct stat *attr)
   // be bytewise identical across kernel versions, let alone
   // microarchitectures or operating systems. we'll have to do
   // something smart later on.
-  bcopy(attr, val, min(sizeof(struct stat), vallen));
+  bcopy(val, attr, min(sizeof(struct stat), vallen));
 }
