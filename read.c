@@ -37,21 +37,74 @@
 struct fdbfs_inflight_read {
   struct fdbfs_inflight_base base;
   fuse_ino_t ino;
+  uint16_t data_prefix_len;
   size_t size;
   off_t off;
 };
 
 void fdbfs_read_callback(FDBFuture *f, void *p)
 {
+  struct fdbfs_inflight_read *inflight = p;
 
+  FDBKeyValue *kvs;
+  int kvcount;
+  fdb_bool_t more;
+
+  fdb_future_get_keyvalue_array(f, (const FDBKeyValue **)&kvs, &kvcount, &more);
+
+  char buffer[inflight->size];
+  
+  for(int i=0; i<kvcount; i++) {
+    FDBKeyValue kv = kvs[i];
+    uint64_t block;
+    bcopy(((uint8_t*)kv.key) + inflight->data_prefix_len,
+	  &block,
+	  sizeof(uint64_t));
+    // TODO variable block size
+    uint64_t block_off = inflight->off - block * 8192;
+    if( (block * 8192) < inflight->off ) {
+      // start our read offset into the block
+      // we're definitionally at the start, so no offset into buffer needed.
+      bcopy(kv.value + block_off,
+	    buffer,
+	    min(inflight->size, 8192 - block_off));
+    } else {
+      int position = block * 8192 - inflight->off;
+      bcopy(kv.value,
+	    buffer + position,
+	    min(inflight->size - position, 8192));
+    }
+  }
+
+  fuse_reply_buf(inflight->base.req, buffer, inflight->size);
 }
 
 void fdbfs_read_issuer(void *p)
 {
-  // issue fdb_transaction_get_range for appropriate content.
-  // point the resulting future at fdbfs_read_callback
+  struct fdbfs_inflight_read *inflight;
+  inflight = (struct fdbfs_inflight_read *)p;
 
-  fdb_future_set_callback(NULL, fdbfs_error_checker, p);
+  uint8_t start[512], stop[512];
+  int len;
+  pack_inode_key(inflight->ino, start, &len);
+  start[len++] = 'f';
+  // TODO variable block size
+  uint64_t start_block = (inflight->off >> 13);
+  uint64_t stop_block  = ((inflight->off + inflight->size) >> 13);
+  bcopy(&start_block, start+len, sizeof(uint64_t));
+  bcopy(&stop_block, stop+len, sizeof(uint64_t));
+  inflight->data_prefix_len = len;
+  len += sizeof(uint64_t);
+
+  FDBFuture *f =
+    fdb_transaction_get_range(inflight->base.transaction,
+			      start, len, 1, 0,
+			      stop, len, 1, 0,
+			      0, 0,
+			      FDB_STREAMING_MODE_WANT_ALL, 0,
+			      0, 0);
+  
+  fdb_future_set_callback(f, fdbfs_error_checker, p);
 }
 
 void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
