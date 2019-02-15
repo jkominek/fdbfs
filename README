@@ -1,0 +1,21 @@
+/* Overall key scheme:                                                          
+ * === inodes ===                                                               
+ * prefix \x69 inode              -> contains basic attrs and symlink info      
+ * prefix \x69 inode \x00 lock    -> info on whoever has the lock               
+ * prefix \x69 inode \x00 pending -> info on parties waiting for lock?          
+ * prefix \x69 inode \x00 use\id1 -> per process use counter                    
+ * prefix \x69 inode \x00 use\id2 -> per process use counter                    
+ * prefix \x69 inode \x01 xattr0  -> arbitrary number of extended attributes    
+ * prefix \x69 inode \x01 xattr1                                                
+ * prefix \x69 inode \x01 xattr2                                                
+ * prefix \x69 inode \x64 filenameA-> dirents. value has inode pointer          
+ * prefix \x69 inode \x64 filenameB                                             
+ * prefix \x69 inode \x64 filenameC                                             
+ * prefix \x69 inode \x66 offset0 -> blocks of data. offset is 64bit byte count
+ * prefix \x69 inode \x66 offset1                                               
+ * prefix \x69 inode \x66 offset2                                               
+ * === garbage ===                                                              
+ * prefix \x67 inode -> indicates the inode needs to be GC'd when use is 0      
+ * === meta ===                                                                 
+ * prefix \x4D -> metadata block. filesystem version and blocksize?             
+ */
