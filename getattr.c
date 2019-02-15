@@ -22,7 +22,8 @@
  * this should be a single get.
  *
  * REAL PLAN
- * maybe a small range read?
+ * maybe a small range read to pick up extended attributes
+ * or less common values?
  */
 struct fdbfs_inflight_getattr {
   struct fdbfs_inflight_base base;

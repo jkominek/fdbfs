@@ -15,15 +15,23 @@
  * lookup
  *************************************************************
  * INITIAL PLAN
- * pretty easy? given an inode and a name, we just need to do
- * a single get to find the inode that points to.
+ * not too bad. given a directory inode and a name, we:
+ *   1. fetch the directory entry, getting us an inode.
+ *   2. getattr-equiv on that inode.
  *
  * REAL PLAN
  * might be a good spot for an optimization? we can finish off
  * the fuse request, but then maintain some inode cache with
  * the last unchanging attributes of an inode that we've seen.
  * we could reject invalid requests to inodes faster. (readdir
- * on a file, for instance?) is that worth it?
+ * on a file, for instance?) is it worth it to make the error
+ * case faster?
+ *
+ * TRANSACTIONAL BEHAVIOR
+ * We're doing the two reads as snapshots. Since the filesystem
+ * can change arbitrarily immediately after we're done, it doesn't
+ * much matter if it changes by a little or a lot. Just want to
+ * ensure that we show the user something that was true.
  */
 struct fdbfs_inflight_lookup {
   struct fdbfs_inflight_base base;
