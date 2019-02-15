@@ -64,7 +64,7 @@ void fdbfs_getattr_issuer(void *p)
   pack_inode_key(inflight->ino, key, &keylen);
 
   // and request just that inode
-  FDBFuture *f = fdb_transaction_get_key(inflight->base.transaction, key, keylen, 0, 0, 0);
+  FDBFuture *f = fdb_transaction_get(inflight->base.transaction, key, keylen, 0);
 
   fdb_future_set_callback(f, fdbfs_error_checker, p);
 }

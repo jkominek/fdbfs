@@ -71,7 +71,7 @@ void fdbfs_lookup_callback(FDBFuture *f, void *p)
       pack_inode_key(inflight->ino, key, &keylen);
 
       // and request just that inode
-      FDBFuture *f = fdb_transaction_get_key(inflight->base.transaction, key, keylen, 0, 0, 0);
+      FDBFuture *f = fdb_transaction_get(inflight->base.transaction, key, keylen, 1);
 
       fdb_future_set_callback(f, fdbfs_error_checker, p);
     } else {
@@ -111,7 +111,7 @@ void fdbfs_lookup_issuer(void *p)
   pack_dentry_key(inflight->ino, inflight->name, inflight->namelen,
 		  key, &keylen);
 
-  FDBFuture *f = fdb_transaction_get_key(inflight->base.transaction, key, keylen, 0, 0, 0);
+  FDBFuture *f = fdb_transaction_get(inflight->base.transaction, key, keylen, 1);
 
   fdb_future_set_callback(f, fdbfs_error_checker, p);
 }
