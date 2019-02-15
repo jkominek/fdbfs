@@ -68,30 +68,38 @@ void fdbfs_lookup_callback(FDBFuture *f, void *p)
       uint8_t key[512];
       int keylen;
 
-      pack_inode_key(inflight->ino, key, &keylen);
+      pack_inode_key(inflight->target, key, &keylen);
 
       // and request just that inode
       FDBFuture *f = fdb_transaction_get(inflight->base.transaction, key, keylen, 1);
 
       fdb_future_set_callback(f, fdbfs_error_checker, p);
     } else {
+      debug_print("fdbfs_lookup_callback for req %p didn't find entry\n", inflight->base.req);
       fuse_reply_err(inflight->base.req, ENOENT);
       fdbfs_inflight_cleanup(p);
     }
   } else {
     // and second callback, to get the attributes
-    struct fuse_entry_param e;
+    if(present) {
+      struct fuse_entry_param e;
 
-    e.ino = inflight->ino;
-    // TODO technically we need to be smarter about generations
-    e.generation = 0;
-    unpack_stat_from_dbvalue(val, vallen, &(e.attr));
-    e.attr_timeout = 0.0;
-    e.entry_timeout = 0.0;
+      e.ino = inflight->target;
+      // TODO technically we need to be smarter about generations
+      e.generation = 1;
+      unpack_stat_from_dbvalue(val, vallen, &(e.attr));
+      e.attr_timeout = 0.01;
+      e.entry_timeout = 0.01;
 
-    fuse_reply_entry(inflight->base.req, &e);
+      debug_print("fdbfs_lookup_callback returning entry for req %p ino %li\n", inflight->base.req, inflight->ino);
+      
+      fuse_reply_entry(inflight->base.req, &e);
+    } else {
+      debug_print("fdbfs_lookup_callback for req %p didn't find attributes\n", inflight->base.req);
+      fuse_reply_err(inflight->base.req, EIO);
+    }
     fdbfs_inflight_cleanup(p);
-  }  
+  }
   fdb_future_destroy(f);
 }
 
@@ -111,6 +119,17 @@ void fdbfs_lookup_issuer(void *p)
   pack_dentry_key(inflight->ino, inflight->name, inflight->namelen,
 		  key, &keylen);
 
+#ifdef DEBUG
+  char buffer[2048];
+  char buffer2[2048];
+  for(int i=0; i<keylen; i++)
+    sprintf(buffer+(i<<1), "%02x", key[i]);
+  bcopy(inflight->name, buffer2, inflight->namelen);
+  buffer2[inflight->namelen] = '\0';
+  
+  debug_print("fdbfs_lookup_issuer req %p launching get for key %s ino %li name '%s'\n", inflight->base.req, buffer, inflight->ino, buffer2);
+#endif
+  
   FDBFuture *f = fdb_transaction_get(inflight->base.transaction, key, keylen, 1);
 
   fdb_future_set_callback(f, fdbfs_error_checker, p);

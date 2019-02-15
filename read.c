@@ -98,8 +98,8 @@ void fdbfs_read_issuer(void *p)
 
   FDBFuture *f =
     fdb_transaction_get_range(inflight->base.transaction,
-			      start, len, 1, 0,
-			      stop, len, 1, 0,
+			      start, len, 0, 1,
+			      stop, len, 0, 1,
 			      0, 0,
 			      FDB_STREAMING_MODE_WANT_ALL, 0,
 			      0, 0);
