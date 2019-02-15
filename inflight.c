@@ -62,26 +62,6 @@ void fdbfs_inflight_cleanup(struct fdbfs_inflight_base *inflight)
   free(inflight);
 }
 
-void fdbfs_error_processor(FDBFuture *, void *);
-
-void fdbfs_error_checker(FDBFuture *f, void *p)
-{
-  struct fdbfs_inflight_base *inflight = (struct fdbfs_inflight_base *)p;
-  fdb_error_t err = fdb_future_get_error(f);
-
-  if(err) {
-    // got an error during normal processing. foundationdb says
-    // we should call _on_error on it, and maybe we'll get to
-    // try again, and maybe we won't.
-    FDBFuture *nextf = fdb_transaction_on_error(inflight->transaction, err);
-    fdb_future_destroy(f);
-    fdb_future_set_callback(nextf, fdbfs_error_processor, p);
-    return;
-  }
-
-  inflight->cb(f, p);  
-}
-
 void fdbfs_error_processor(FDBFuture *f, void *p)
 {
   struct fdbfs_inflight_base *inflight = (struct fdbfs_inflight_base *)p;
@@ -102,3 +82,22 @@ void fdbfs_error_processor(FDBFuture *f, void *p)
   // goahead to attempt our transaction again.
   inflight->issuer(p);
 }
+
+void fdbfs_error_checker(FDBFuture *f, void *p)
+{
+  struct fdbfs_inflight_base *inflight = (struct fdbfs_inflight_base *)p;
+  fdb_error_t err = fdb_future_get_error(f);
+
+  if(err) {
+    // got an error during normal processing. foundationdb says
+    // we should call _on_error on it, and maybe we'll get to
+    // try again, and maybe we won't.
+    FDBFuture *nextf = fdb_transaction_on_error(inflight->transaction, err);
+    fdb_future_destroy(f);
+    fdb_future_set_callback(nextf, fdbfs_error_processor, p);
+    return;
+  }
+
+  inflight->cb(f, p);  
+}
+
