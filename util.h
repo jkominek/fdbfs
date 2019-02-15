@@ -12,6 +12,15 @@
 #define GARBAGE_PREFIX  'g'
 #define METADATA_PREFIX 'M'
 
+#define max(a,b) \
+  ({ __typeof__ (a) _a = (a); \
+    __typeof__ (b) _b = (b); \
+    _a > _b ? _a : _b; })
+#define min(a,b) \
+  ({ __typeof__ (a) _a = (a); \
+    __typeof__ (b) _b = (b); \
+    _a < _b ? _a : _b; })
+
 // will be filled out before operation begins
 extern FDBDatabase *database;
 extern char *kp;
