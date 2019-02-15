@@ -26,10 +26,5 @@
 void fdbfs_open(fuse_req_t req, fuse_ino_t ino,
                 struct fuse_file_info *fi)
 {
-  // for now maybe just always succeed?
-
-  // real implementation will need to mark the inode as opened
-  // until release is called.
-
-  // that'll prevent collection of the inode and associated data
+  fuse_reply_open(req, fi);
 }
