@@ -18,6 +18,8 @@
 FDBDatabase *database;
 char *kp;
 int kplen;
+uint8_t BLOCKBITS;
+uint32_t BLOCKSIZE; // 1<<BLOCKBITS
 
 /*************************************************************
  * setup
@@ -65,6 +67,8 @@ int main(int argc, char *argv[])
 
   kp = "FS";
   kplen = 2;
+  BLOCKBITS = 13;
+  BLOCKSIZE = 1<<BLOCKBITS;
   
   if(fdb_select_api_version(600))
     goto fail_nothing_setup;

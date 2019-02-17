@@ -61,18 +61,18 @@ void fdbfs_read_callback(FDBFuture *f, void *p)
 	  &block,
 	  sizeof(uint64_t));
     // TODO variable block size
-    uint64_t block_off = inflight->off - block * 8192;
-    if( (block * 8192) < inflight->off ) {
+    uint64_t block_off = inflight->off - block * BLOCKSIZE;
+    if( (block * BLOCKSIZE) < inflight->off ) {
       // start our read offset into the block
       // we're definitionally at the start, so no offset into buffer needed.
       bcopy(kv.value + block_off,
 	    buffer,
-	    min(inflight->size, 8192 - block_off));
+	    min(inflight->size, BLOCKSIZE - block_off));
     } else {
-      int position = block * 8192 - inflight->off;
+      int position = block * BLOCKSIZE - inflight->off;
       bcopy(kv.value,
 	    buffer + position,
-	    min(inflight->size - position, 8192));
+	    min(inflight->size - position, BLOCKSIZE));
     }
   }
 
@@ -89,8 +89,8 @@ void fdbfs_read_issuer(void *p)
   pack_inode_key(inflight->ino, start, &len);
   start[len++] = 'f';
   // TODO variable block size
-  uint64_t start_block = (inflight->off >> 13);
-  uint64_t stop_block  = ((inflight->off + inflight->size) >> 13);
+  uint64_t start_block = (inflight->off >> BLOCKBITS);
+  uint64_t stop_block  = ((inflight->off + inflight->size) >> BLOCKBITS);
   bcopy(&start_block, start+len, sizeof(uint64_t));
   bcopy(&stop_block, stop+len, sizeof(uint64_t));
   inflight->data_prefix_len = len;

@@ -25,6 +25,8 @@
 extern FDBDatabase *database;
 extern char *kp;
 extern int kplen;
+extern uint8_t BLOCKBITS;
+extern uint32_t BLOCKSIZE;
 
 extern void pack_inode_key(fuse_ino_t ino, uint8_t *key, int *keylen);
 extern void pack_dentry_key(fuse_ino_t ino, char *name, int namelen, uint8_t *key, int *keylen);
