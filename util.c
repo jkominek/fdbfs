@@ -2,6 +2,7 @@
 
 #include <strings.h>
 #include <stdio.h>
+#include <time.h>
 
 #define max(a,b) \
   ({ __typeof__ (a) _a = (a); \
@@ -16,6 +17,21 @@
 FDBDatabase *database;
 char *kp;
 int kplen;
+
+fuse_ino_t generate_inode()
+{
+  struct timespec tp;
+  clock_gettime(CLOCK_REALTIME, &tp);
+  // we get ~30 bits from the nanoseconds. we'll leave those
+  // in the least significant bytes. the lowest 34 bits of
+  // the seconds will become the most significant bytes.
+  // since we're going to prefer LSB systems, that'll get the
+  // most rapidly varying bytes at the start of the FDB keys,
+  // spreading inode allocation uniformly across key space.
+  uint64_t h = (tp.tv_sec & 0x3FFFFFFFF) << 30;
+  uint64_t l = (tp.tv_nsec & 0x3FFFFFFF) >> 2;
+  return (h | l);
+}
 
 void pack_inode_key(fuse_ino_t ino, uint8_t *key, int *keylen)
 {
