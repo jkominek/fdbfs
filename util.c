@@ -1,6 +1,7 @@
 #include "util.h"
 
 #include <strings.h>
+#include <stdio.h>
 
 #define max(a,b) \
   ({ __typeof__ (a) _a = (a); \
@@ -41,4 +42,11 @@ void unpack_stat_from_dbvalue(uint8_t *val, int vallen, struct stat *attr)
   // microarchitectures or operating systems. we'll have to do
   // something smart later on.
   bcopy(val, attr, min(sizeof(struct stat), vallen));
+  printf("stat struct\n");
+  printf("  dev: %li\n", attr->st_dev);
+  printf("  ino: %li\n", attr->st_ino);
+  printf(" mode: %o\n", attr->st_mode);
+  printf("nlink: %li\n", attr->st_nlink);
+  printf("  uid: %i\n", attr->st_uid);
+  printf("  gid: %i\n", attr->st_gid);
 }

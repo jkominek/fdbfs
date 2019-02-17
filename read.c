@@ -96,6 +96,16 @@ void fdbfs_read_issuer(void *p)
   inflight->data_prefix_len = len;
   len += sizeof(uint64_t);
 
+#ifdef DEBUG
+  char buffer[2048];
+  for(int i=0; i<len; i++)
+    sprintf(buffer+(i<<1), "%02x", start[i]);
+  debug_print("fdbfs_read_issuer for req %p reading from block %li (key %s) to block %li\n",
+	      (inflight->off >> BLOCKBITS),
+	      buffer,
+	      (inflight->off + inflight->size) >> BLOCKBITS);
+#endif
+  
   FDBFuture *f =
     fdb_transaction_get_range(inflight->base.transaction,
 			      start, len, 0, 1,
