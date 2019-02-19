@@ -1,4 +1,4 @@
-fs: getattr.o  inflight.o  lookup.o  main.o  read.o  util.o readdir.o open.o
+fs: getattr.o  inflight.o  lookup.o  main.o  read.o  util.o readdir.o open.o mkdir.o
 	gcc -g -Wall $^  `pkg-config fuse --libs` -lfdb_c -o fs
 
 %.o: %.c inflight.h util.h

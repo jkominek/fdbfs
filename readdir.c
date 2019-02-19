@@ -63,16 +63,11 @@ void fdbfs_readdir_callback(FDBFuture *f, void *p)
 	  keylen);
     name[keylen] = '\0'; // null terminate
 
-    fuse_ino_t ino;
-    // TODO check kv.value_length to ensure it is long enough
-    bcopy(kv.value, &ino, sizeof(fuse_ino_t));
-    
+    const struct dirent *dirent;
+    dirent = kv.value;
     struct stat attr;
-    attr.st_ino = ino;
-    bcopy(((uint8_t*)kv.value)+sizeof(fuse_ino_t),
-	  &(attr.st_mode),
-	  sizeof(mode_t));
-    attr.st_mode &= S_IFMT;
+    attr.st_ino = dirent->ino;
+    attr.st_mode = dirent->st_mode & S_IFMT;
     
     size_t used = fuse_add_direntry(inflight->base.req,
 				    inflight->buf + consumed_buffer,

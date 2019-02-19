@@ -30,6 +30,7 @@ extern void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info 
 extern void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
 extern void fdbfs_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 extern void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
+extern void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode);
 
 /* These are our entry points for the operations. They'll set
  * up the appropriate inflight structure and make the initial
@@ -42,6 +43,7 @@ static struct fuse_lowlevel_ops fdbfs_oper =
     .readdir	= fdbfs_readdir,
     .open	= fdbfs_open,
     .read	= fdbfs_read,
+    .mkdir      = fdbfs_mkdir,
   };
 
 /* Purely to get the FoundationDB network stuff running in a
