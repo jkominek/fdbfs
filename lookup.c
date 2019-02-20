@@ -35,7 +35,6 @@
  */
 struct fdbfs_inflight_lookup {
   struct fdbfs_inflight_base base;
-  bool have_target;
 
   // stage 1
   fuse_ino_t ino;
@@ -49,7 +48,7 @@ struct fdbfs_inflight_lookup {
   fuse_ino_t target;
 };
 
-void fdbfs_lookup_callback(FDBFuture *f, void *p)
+void fdbfs_lookup_inode(FDBFuture *f, void *p)
 {
   struct fdbfs_inflight_lookup *inflight = p;
 
@@ -58,48 +57,58 @@ void fdbfs_lookup_callback(FDBFuture *f, void *p)
   int vallen;
   fdb_future_get_value(f, &present, (const uint8_t **)&val, &vallen);
 
-  if(!inflight->have_target) {
-    // we're on the first callback, to get the directory entry
-    if(present) {
-      bcopy(val, &(inflight->target), sizeof(fuse_ino_t));
-      inflight->have_target = 1;
+  // and second callback, to get the attributes
+  if(present) {
+    struct fuse_entry_param e;
 
-      // TODO ensure this is sized right.
-      uint8_t key[512];
-      int keylen;
+    e.ino = inflight->target;
+    // TODO technically we need to be smarter about generations
+    e.generation = 1;
+    unpack_stat_from_dbvalue(val, vallen, &(e.attr));
+    e.attr_timeout = 0.01;
+    e.entry_timeout = 0.01;
 
-      pack_inode_key(inflight->target, key, &keylen);
-
-      // and request just that inode
-      FDBFuture *f = fdb_transaction_get(inflight->base.transaction, key, keylen, 1);
-
-      fdb_future_set_callback(f, fdbfs_error_checker, p);
-    } else {
-      debug_print("fdbfs_lookup_callback for req %p didn't find entry\n", inflight->base.req);
-      fuse_reply_err(inflight->base.req, ENOENT);
-      fdbfs_inflight_cleanup(p);
-    }
-  } else {
-    // and second callback, to get the attributes
-    if(present) {
-      struct fuse_entry_param e;
-
-      e.ino = inflight->target;
-      // TODO technically we need to be smarter about generations
-      e.generation = 1;
-      unpack_stat_from_dbvalue(val, vallen, &(e.attr));
-      e.attr_timeout = 0.01;
-      e.entry_timeout = 0.01;
-
-      debug_print("fdbfs_lookup_callback returning entry for req %p ino %li\n", inflight->base.req, inflight->ino);
+    debug_print("fdbfs_lookup_callback returning entry for req %p ino %li\n", inflight->base.req, inflight->ino);
       
-      fuse_reply_entry(inflight->base.req, &e);
-    } else {
-      debug_print("fdbfs_lookup_callback for req %p didn't find attributes\n", inflight->base.req);
-      fuse_reply_err(inflight->base.req, EIO);
-    }
+    fuse_reply_entry(inflight->base.req, &e);
+  } else {
+    debug_print("fdbfs_lookup_callback for req %p didn't find attributes\n", inflight->base.req);
+    fuse_reply_err(inflight->base.req, EIO);
+  }
+  fdbfs_inflight_cleanup(p);
+  fdb_future_destroy(f);
+}
+
+void fdbfs_lookup_dirent(FDBFuture *f, void *p)
+{
+  struct fdbfs_inflight_lookup *inflight = p;
+
+  fdb_bool_t present=0;
+  uint8_t *val;
+  int vallen;
+  fdb_future_get_value(f, &present, (const uint8_t **)&val, &vallen);
+
+  // we're on the first callback, to get the directory entry
+  if(present) {
+    bcopy(val, &(inflight->target), sizeof(fuse_ino_t));
+
+    // TODO ensure this is sized right.
+    uint8_t key[512];
+    int keylen;
+
+    pack_inode_key(inflight->target, key, &keylen);
+
+    // and request just that inode
+    FDBFuture *f = fdb_transaction_get(inflight->base.transaction, key, keylen, 1);
+
+    inflight->base.cb = fdbfs_lookup_inode;
+    fdb_future_set_callback(f, fdbfs_error_checker, p);
+  } else {
+    debug_print("fdbfs_lookup_callback for req %p didn't find entry\n", inflight->base.req);
+    fuse_reply_err(inflight->base.req, ENOENT);
     fdbfs_inflight_cleanup(p);
   }
+
   fdb_future_destroy(f);
 }
 
@@ -111,10 +120,6 @@ void fdbfs_lookup_issuer(void *p)
   // TODO ensure this is sized right.
   uint8_t key[1024];
   int keylen;
-
-  // who knows how many times we have to try this?
-  // clear out any state
-  inflight->have_target = 0;
 
   pack_dentry_key(inflight->ino, inflight->name, inflight->namelen,
 		  key, &keylen);
@@ -132,6 +137,7 @@ void fdbfs_lookup_issuer(void *p)
   
   FDBFuture *f = fdb_transaction_get(inflight->base.transaction, key, keylen, 1);
 
+  inflight->base.cb = fdbfs_lookup_dirent;
   fdb_future_set_callback(f, fdbfs_error_checker, p);
 }
 
@@ -145,9 +151,9 @@ void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
   // right after the struct.
   inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_lookup) + namelen + 1,
 				   req,
-				   fdbfs_lookup_callback,
+				   fdbfs_lookup_dirent,
 				   fdbfs_lookup_issuer);
-  // inflight->have_target = 0; // the issuer sets this.
+
   inflight->ino = parent;
   inflight->namelen = namelen;
   inflight->name = ((char*)inflight) + sizeof(struct fdbfs_inflight_lookup);
