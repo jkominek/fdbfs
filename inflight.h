@@ -20,7 +20,10 @@ struct fdbfs_inflight_base {
   fuse_req_t req;
 };
 
-extern void *fdbfs_inflight_create(size_t s, fuse_req_t req, FDBCallback cb, void (*issuer)(void *p));
+#define T_READONLY  0
+#define T_READWRITE 1
+
+extern void *fdbfs_inflight_create(size_t s, fuse_req_t req, FDBCallback cb, void (*issuer)(void *p), fdb_bool_t readonly);
 extern void fdbfs_inflight_cleanup(struct fdbfs_inflight_base *inflight);
 extern void fdbfs_error_processor(FDBFuture *, void *);
 extern void fdbfs_error_checker(FDBFuture *f, void *p);

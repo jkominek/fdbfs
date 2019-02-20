@@ -43,10 +43,13 @@
  */
 
 // allocate an inflight struct and fill and out some basics.
-void *fdbfs_inflight_create(size_t s, fuse_req_t req, FDBCallback cb, void (*issuer)(void *p))
+// readwrite specifies the transaction will include writes
+void *fdbfs_inflight_create(size_t s, fuse_req_t req, FDBCallback cb, void (*issuer)(void *p), fdb_bool_t readwrite)
 {
   struct fdbfs_inflight_base *inflight = malloc(s);
 
+  // we need to be more clever about this. having every single
+  // operation fetch a read version is going to add a lot of latency.
   fdb_database_create_transaction(database, &(inflight->transaction));
   inflight->req = req;
   inflight->cb = cb;

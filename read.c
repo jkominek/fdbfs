@@ -127,7 +127,8 @@ void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
   inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_read),
 				   req,
 				   fdbfs_read_callback,
-				   fdbfs_read_issuer);
+				   fdbfs_read_issuer,
+				   T_READONLY);
 
   inflight->ino = ino;
   inflight->size = size;

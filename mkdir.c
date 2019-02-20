@@ -164,7 +164,8 @@ void fdbfs_mkdir(fuse_req_t req, fuse_ino_t ino,
 				   namelen + 1,
 				   req,
 				   fdbfs_mkdir_postverification,
-				   fdbfs_mkdir_issueverification);
+				   fdbfs_mkdir_issueverification,
+				   T_READWRITE);
   inflight->parent = ino;
   inflight->name = ((char *)inflight) + sizeof(struct fdbfs_inflight_mkdir);
   inflight->namelen = namelen;

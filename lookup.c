@@ -152,7 +152,8 @@ void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
   inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_lookup) + namelen + 1,
 				   req,
 				   fdbfs_lookup_dirent,
-				   fdbfs_lookup_issuer);
+				   fdbfs_lookup_issuer,
+				   T_READONLY);
 
   inflight->ino = parent;
   inflight->namelen = namelen;

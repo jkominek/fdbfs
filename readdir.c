@@ -156,7 +156,8 @@ void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
   inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_readdir)+size,
 				   req,
 				   fdbfs_readdir_callback,
-				   fdbfs_readdir_issuer);
+				   fdbfs_readdir_issuer,
+				   T_READONLY);
   inflight->ino = ino;
   inflight->size = size;
   inflight->off = off;

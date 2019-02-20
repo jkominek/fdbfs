@@ -86,7 +86,8 @@ void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
   inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_getattr),
 				   req,
 				   fdbfs_getattr_callback,
-				   fdbfs_getattr_issuer);
+				   fdbfs_getattr_issuer,
+				   T_READONLY);
   inflight->ino = ino;
 
   debug_print("fdbfs_getattr taking off for req %p\n", inflight->base.req);
