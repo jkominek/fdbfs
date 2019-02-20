@@ -54,13 +54,25 @@ void *fdbfs_inflight_create(size_t s, fuse_req_t req, FDBCallback cb, void (*iss
   inflight->req = req;
   inflight->cb = cb;
   inflight->issuer = issuer;
-
+#ifdef DEBUG
+  clock_gettime(CLOCK_MONOTONIC, &(inflight->start));
+#endif
   return inflight;
 }
 
 // deallocate an inflight
 void fdbfs_inflight_cleanup(struct fdbfs_inflight_base *inflight)
 {
+#ifdef DEBUG
+  struct timespec stop;
+  clock_gettime(CLOCK_MONOTONIC, &stop);
+  time_t secs = (stop.tv_sec - inflight->start.tv_sec);
+  long nsecs = (stop.tv_nsec - inflight->start.tv_nsec);
+  if(secs<4) {
+    nsecs += secs * 1000000000;
+  }
+  debug_print("inflight %p for req %x took %li ns\n", inflight, inflight->req, nsecs);
+#endif
   fdb_transaction_destroy(inflight->transaction);
   free(inflight);
 }

@@ -1,6 +1,10 @@
 #ifndef __INFLIGHT_H_
 #define __INFLIGHT_H_
 
+#ifdef DEBUG
+#include <time.h>
+#endif
+
 struct fdbfs_inflight_base {
   // the transaction we're tied to. will we ever want
   // two separate chains of computation using the same
@@ -18,6 +22,9 @@ struct fdbfs_inflight_base {
   // always need this so that our error processing code
   // can throw errors back to fuse.
   fuse_req_t req;
+#ifdef DEBUG
+  struct timespec start;
+#endif
 };
 
 #define T_READONLY  0
