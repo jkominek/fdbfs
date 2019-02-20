@@ -16,7 +16,7 @@
 #include "inflight.h"
 
 /*************************************************************
- * mkdir
+ * mknod
  *************************************************************
  * INITIAL PLAN
  * make up a random inode number. check to see if it is allocated.
@@ -27,7 +27,7 @@
  * REAL PLAN
  * ???
  */
-struct fdbfs_inflight_mkdir {
+struct fdbfs_inflight_mknod {
   struct fdbfs_inflight_base base;
   FDBFuture *inode_check;
   FDBFuture *dirent_check;
@@ -37,11 +37,12 @@ struct fdbfs_inflight_mkdir {
   char *name;
   int namelen;
   mode_t mode;
+  dev_t rdev;
 };
 
-void fdbfs_mkdir_commit_cb(FDBFuture *f, void *p)
+void fdbfs_mknod_commit_cb(FDBFuture *f, void *p)
 {
-  struct fdbfs_inflight_mkdir *inflight = p;
+  struct fdbfs_inflight_mknod *inflight = p;
   
   struct fuse_entry_param e;
   e.ino = inflight->ino;
@@ -50,19 +51,19 @@ void fdbfs_mkdir_commit_cb(FDBFuture *f, void *p)
   e.attr_timeout = 0.01;
   e.entry_timeout = 0.01;
 
-  debug_print("fdbfs_mkdir_commit_cb returning ino %lx ino %lx\n", e.ino, e.attr.st_ino);
+  debug_print("fdbfs_mknod_commit_cb returning ino %lx ino %lx\n", e.ino, e.attr.st_ino);
   
   int ret = fuse_reply_entry(inflight->base.req, &e);
-  debug_print("fdbfs_mkdir_commit_cb fuse_reply_entry returned %i\n", ret);
+  debug_print("fdbfs_mknod_commit_cb fuse_reply_entry returned %i\n", ret);
   fdb_future_destroy(f);
   fdbfs_inflight_cleanup(p);
 }
 
-void fdbfs_mkdir_issueverification(void *p);
+void fdbfs_mknod_issueverification(void *p);
 
-void fdbfs_mkdir_postverification(FDBFuture *f, void *p)
+void fdbfs_mknod_postverification(FDBFuture *f, void *p)
 {
-  struct fdbfs_inflight_mkdir *inflight = p;
+  struct fdbfs_inflight_mknod *inflight = p;
 
   // make sure all of our futures are ready
   if(!fdb_future_is_ready(inflight->inode_check))
@@ -88,7 +89,7 @@ void fdbfs_mkdir_postverification(FDBFuture *f, void *p)
   if(inode_present) {
     // astonishingly we guessed an inode that already exists.
     // try this again!
-    fdbfs_mkdir_issueverification(p);
+    fdbfs_mknod_issueverification(p);
     return;
   }
 
@@ -96,10 +97,11 @@ void fdbfs_mkdir_postverification(FDBFuture *f, void *p)
   inflight->attr.st_dev = 0;
   inflight->attr.st_mode = inflight->mode;
   inflight->attr.st_ino = inflight->ino;
-  inflight->attr.st_nlink = 2;
+  inflight->attr.st_nlink = (inflight->mode & S_IFDIR) ? 2 : 1;
   inflight->attr.st_uid = 0;
   inflight->attr.st_gid = 0;
-  inflight->attr.st_size = 1;
+  inflight->attr.st_rdev = inflight->rdev;
+  inflight->attr.st_size = 0;
   inflight->attr.st_blksize = BLOCKSIZE;
   inflight->attr.st_blocks = 1;
   // set the inode KV pair
@@ -127,18 +129,18 @@ void fdbfs_mkdir_postverification(FDBFuture *f, void *p)
 
   // if the commit works, we can reply to fuse and clean up
   // if it doesn't, the issuer will try again.
-  inflight->base.cb = fdbfs_mkdir_commit_cb;
+  inflight->base.cb = fdbfs_mknod_commit_cb;
   fdb_future_set_callback(fdb_transaction_commit(inflight->base.transaction),
 			  fdbfs_error_checker, p);
 }
 
-void fdbfs_mkdir_issueverification(void *p)
+void fdbfs_mknod_issueverification(void *p)
 {
-  struct fdbfs_inflight_mkdir *inflight = p;
+  struct fdbfs_inflight_mknod *inflight = p;
 
   inflight->ino = generate_inode();
   // reset this in case commit failed
-  inflight->base.cb = fdbfs_mkdir_postverification;
+  inflight->base.cb = fdbfs_mknod_postverification;
 
   // pack the inode key
   uint8_t key[512];
@@ -153,26 +155,53 @@ void fdbfs_mkdir_issueverification(void *p)
   fdb_future_set_callback(inflight->inode_check, fdbfs_error_checker, p);
 }
 
+void fdbfs_mknod(fuse_req_t req, fuse_ino_t ino,
+		 const char *name, mode_t mode,
+		 dev_t rdev)
+{
+  // get the file attributes of an inode
+  struct fdbfs_inflight_mknod *inflight;
+  int namelen = strlen(name);
+  inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_mknod) +
+				   sizeof(struct stat) +
+				   namelen + 1,
+				   req,
+				   fdbfs_mknod_postverification,
+				   fdbfs_mknod_issueverification,
+				   T_READWRITE);
+  inflight->parent = ino;
+  inflight->name = ((char *)inflight) + sizeof(struct fdbfs_inflight_mknod);
+  inflight->namelen = namelen;
+  bcopy(name, inflight->name, namelen); // TODO smarter?
+  inflight->mode = mode;
+  inflight->rdev = rdev;
+
+  debug_print("fdbfs_mknod taking off for req %p\n", inflight->base.req);
+  
+  fdbfs_mknod_issueverification(inflight);
+}
+
 void fdbfs_mkdir(fuse_req_t req, fuse_ino_t ino,
 		 const char *name, mode_t mode)
 {
   // get the file attributes of an inode
-  struct fdbfs_inflight_mkdir *inflight;
+  struct fdbfs_inflight_mknod *inflight;
   int namelen = strlen(name);
-  inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_mkdir) +
+  inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_mknod) +
 				   sizeof(struct stat) +
 				   namelen + 1,
 				   req,
-				   fdbfs_mkdir_postverification,
-				   fdbfs_mkdir_issueverification,
+				   fdbfs_mknod_postverification,
+				   fdbfs_mknod_issueverification,
 				   T_READWRITE);
   inflight->parent = ino;
-  inflight->name = ((char *)inflight) + sizeof(struct fdbfs_inflight_mkdir);
+  inflight->name = ((char *)inflight) + sizeof(struct fdbfs_inflight_mknod);
   inflight->namelen = namelen;
   bcopy(name, inflight->name, namelen); // TODO smarter?
   inflight->mode = mode | S_IFDIR;
+  inflight->rdev = 0;
 
   debug_print("fdbfs_mkdir taking off for req %p\n", inflight->base.req);
-  
-  fdbfs_mkdir_issueverification(inflight);
+
+  fdbfs_mknod_issueverification(inflight);
 }
