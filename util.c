@@ -51,7 +51,7 @@ void pack_dentry_key(fuse_ino_t ino, char *name, int namelen, uint8_t *key, int 
   *keylen += 1 + namelen;
 }
 
-void unpack_stat_from_dbvalue(uint8_t *val, int vallen, struct stat *attr)
+void unpack_stat_from_dbvalue(const uint8_t *val, int vallen, struct stat *attr)
 {
   // TODO this isn't a great idea. the stat struct doesn't have to
   // be bytewise identical across kernel versions, let alone
@@ -65,4 +65,15 @@ void unpack_stat_from_dbvalue(uint8_t *val, int vallen, struct stat *attr)
   printf("nlink: %li\n", attr->st_nlink);
   printf("  uid: %i\n", attr->st_uid);
   printf("  gid: %i\n", attr->st_gid);
+}
+
+void print_bytes(const uint8_t *str, int strlength)
+{
+  for(int i=0; i<strlength; i++) {
+    if(isprint(str[i])) {
+      printf("%c", str[i]);
+    } else {
+      printf("\\x%02x", str[i]);
+    }
+  }
 }

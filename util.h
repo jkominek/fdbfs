@@ -34,7 +34,8 @@ extern uint32_t BLOCKSIZE;
 extern fuse_ino_t generate_inode();
 extern void pack_inode_key(fuse_ino_t ino, uint8_t *key, int *keylen);
 extern void pack_dentry_key(fuse_ino_t ino, char *name, int namelen, uint8_t *key, int *keylen);
-extern void unpack_stat_from_dbvalue(uint8_t *val, int vallen, struct stat *attr);
+extern void unpack_stat_from_dbvalue(const uint8_t *val, int vallen, struct stat *attr);
+extern void print_bytes(const uint8_t *str, int strlength);
 
 struct dirent {
   fuse_ino_t ino;
