@@ -66,10 +66,14 @@ void fdbfs_mknod_postverification(FDBFuture *f, void *p)
   struct fdbfs_inflight_mknod *inflight = p;
 
   // make sure all of our futures are ready
-  if(!fdb_future_is_ready(inflight->inode_check))
+  if(!fdb_future_is_ready(inflight->inode_check)) {
     fdb_future_set_callback(inflight->inode_check, fdbfs_error_checker, p);
-  if(!fdb_future_is_ready(inflight->dirent_check))
+    return;
+  }
+  if(!fdb_future_is_ready(inflight->dirent_check)) {
     fdb_future_set_callback(inflight->dirent_check, fdbfs_error_checker, p);
+    return;
+  }
 
   fdb_bool_t inode_present, dirent_present;
   const uint8_t *value; int valuelen;
@@ -146,13 +150,16 @@ void fdbfs_mknod_issueverification(void *p)
   uint8_t key[512];
   int keylen;
 
-  pack_inode_key(inflight->ino, key, &keylen);
-  inflight->inode_check = fdb_transaction_get(inflight->base.transaction, key, keylen, 0);
-
   pack_dentry_key(inflight->parent, inflight->name, strlen(inflight->name), key, &keylen);
   inflight->dirent_check = fdb_transaction_get(inflight->base.transaction, key, keylen, 0);
 
-  fdb_future_set_callback(inflight->inode_check, fdbfs_error_checker, p);
+  pack_inode_key(inflight->ino, key, &keylen);
+  inflight->inode_check = fdb_transaction_get(inflight->base.transaction, key, keylen, 0);
+
+  // only call back on one of the futures; it'll chain to the other.
+  // we'll set it on the dirent as anything returned there allows us to
+  // abort and cancel the other future sooner.
+  fdb_future_set_callback(inflight->dirent_check, fdbfs_error_checker, p);
 }
 
 void fdbfs_mknod(fuse_req_t req, fuse_ino_t ino,
