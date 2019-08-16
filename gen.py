@@ -66,4 +66,20 @@ print_set(dirent_key(rootdir_inode, "world"), world_dirent.SerializeToString())
 print_set(inode_key(world_inode), world_inode_value.SerializeToString())
 print_set(block_key(world_inode, 0), world_inode_data)
 
+
+portal_inode = 100
+portal_inode_value = msgs.INodeRecord()
+portal_inode_value.inode = portal_inode
+portal_inode_value.type = msgs.symlink
+portal_inode_value.nlinks = 1
+portal_inode_value.mode = 0
+portal_inode_value.symlink = "world"
+
+portal_dirent = msgs.DirectoryEntry()
+portal_dirent.inode = portal_inode
+portal_dirent.type = msgs.symlink
+
+print_set(dirent_key(rootdir_inode, "portal"), portal_dirent.SerializeToString())
+print_set(inode_key(portal_inode), portal_inode_value.SerializeToString())
+
 print "commit"
