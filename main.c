@@ -34,6 +34,7 @@ extern void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mod
 extern void fdbfs_rmdir(fuse_req_t req, fuse_ino_t parent, const char *name);
 extern void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev);
 extern void fdbfs_unlink(fuse_req_t req, fuse_ino_t parent, const char *name);
+extern void fdbfs_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newname);
 
 /* These are our entry points for the operations. They'll set
  * up the appropriate inflight structure and make the initial
@@ -50,6 +51,7 @@ static struct fuse_lowlevel_ops fdbfs_oper =
     .rmdir      = fdbfs_rmdir,
     .mknod      = fdbfs_mknod,
     .unlink     = fdbfs_unlink,
+    .link       = fdbfs_link,
   };
 
 /* Purely to get the FoundationDB network stuff running in a

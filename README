@@ -4,11 +4,11 @@ Overall key scheme:
 prefix 'i' inode              -> contains basic attrs and symlink info
 prefix 'i' inode \x00 lock    -> info on whoever has the lock
 prefix 'i' inode \x00 pending -> info on parties waiting for lock?
-prefix 'i' inode \x00 use\id1 -> per process use counter
-prefix 'i' inode \x00 use\id2 -> per process use counter
-prefix 'i' inode \x01 xattr0  -> arbitrary number of extended attributes
-prefix 'i' inode \x01 xattr1
-prefix 'i' inode \x01 xattr2
+prefix 'i' inode \x01 pid1    -> per fuse-process use counter (64 bit LE)
+prefix 'i' inode \x01 pid2    -> per fuse-process use counter (64 bit LE)
+prefix 'i' inode \x02 xattr0  -> arbitrary number of extended attributes
+prefix 'i' inode \x02 xattr1
+prefix 'i' inode \x02 xattr2
 prefix 'i' inode 'd' filenameA-> dirents.
 prefix 'i' inode 'd' filenameB
 prefix 'i' inode 'd' filenameC
@@ -16,8 +16,27 @@ prefix 'i' inode 'f' offset0 -> blocks of data. offset is 64bit byte count
 prefix 'i' inode 'f' offset1
 prefix 'i' inode 'f' offset2
 
+we should probably move the dirent and filedata subspaces out, so that
+the entire inode space can be scanned, for fsck purposes, without reading
+all information in the filesystem.
+
 === garbage ===
-prefix 'g' inode -> indicates the inode needs to be GC'd when use is 0
+prefix 'g' inode -> indicates that nlinks in the inode has gone to zero,
+                    and it should be check periodically for all of the
+		    usage to have gone to zero, at which time it can be
+		    cleared.
+
+=== pid table ===
+prefix 'pl' pid1  -> status of a given fuse process
+prefix 'pl' pid2
+
+the status should include an incrementing counter as a heartbeat,
+and some host information. each process should update its heartbeat
+every reasonable timeout amount of time. (30-60 seconds?)
+
+if processes notice that another pid's entry has stopped updating,
+they should delete it. the GC process can confirm the liveness of
+all pids it encounters when cleaning up inodes.
 
 === meta ===
 prefix 'M' -> metadata block. filesystem version and blocksize?
@@ -26,8 +45,12 @@ prefix 'M' -> metadata block. filesystem version and blocksize?
 inode record
 * struct stat
 * any information necessary for non-file/non-directory things
+* contents mutable
+* definitely not portable
 
 directory entry
+* struct dirent
 * inode value
 * (struct stat).st_mode & S_IFMT
-  * this is the immutable portion
+* contents are immutable
+* may not be portable
