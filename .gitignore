@@ -3,3 +3,7 @@ test
 *~
 *.o
 fs
+\#*\#
+gmon.out
+values.pb-c.*
+values_pb2.py

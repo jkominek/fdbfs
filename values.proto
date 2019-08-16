@@ -1,0 +1,47 @@
+syntax = "proto3";
+enum filetype {
+  unknown   = 0;
+  socket    = 0140000;
+  symlink   = 0120000;
+  regular   = 0100000;
+  block     = 0060000;
+  directory = 0040000;
+  character = 0020000;
+  fifo      = 0010000;
+}
+
+message FilesystemMetadata {
+  uint32 version = 1;
+  uint32 blockbits = 2;
+}
+
+message timespec {
+  int64 sec = 1;
+  uint32 nsec = 2;
+}
+
+message DirectoryEntry {
+  fixed64 inode = 1;
+  filetype type = 2;
+}
+
+message INodeRecord {
+  // 0.. fundamentals
+  fixed64 inode = 1;
+  filetype type = 2;
+  uint32 mode = 3;
+  uint32 nlinks = 4;
+  uint64 size = 5;
+
+  // 100... ownership block
+  uint32 uid = 100;
+  uint32 gid = 101;
+
+  // 200... time block
+  timespec atime = 200;
+  timespec mtime = 201;
+  timespec ctime = 202;
+
+  // 1000... unix weirdness
+  string symlink = 1000;
+}
