@@ -48,11 +48,13 @@ void fdbfs_link_commit_cb(FDBFuture *f, void *p)
   struct fdbfs_inflight_link *inflight = p;
   
   struct fuse_entry_param e;
+  bzero(&e, sizeof(struct fuse_entry_param));
   e.ino = inflight->ino;
   e.generation = 1;
   bcopy(&(inflight->inoattr), &(e.attr), sizeof(struct stat));
   e.attr_timeout = 0.01;
   e.entry_timeout = 0.01;
+
   fuse_reply_entry(inflight->base.req, &e);
   fdb_future_destroy(f);
   fdbfs_inflight_cleanup(p);
@@ -138,6 +140,7 @@ void fdbfs_link_check(FDBFuture *f, void *p)
 		      sizeof(struct stat));
   // also need to add the new directory entry
   struct dirent direntval;
+  bzero(&direntval, sizeof(struct dirent));
   direntval.ino = inflight->ino;
   direntval.st_mode = inflight->inoattr.st_mode & S_IFMT;
   pack_dentry_key(inflight->newparent,

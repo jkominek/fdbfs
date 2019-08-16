@@ -71,7 +71,7 @@ void fdbfs_inflight_cleanup(struct fdbfs_inflight_base *inflight)
   if(secs<4) {
     nsecs += secs * 1000000000;
   }
-  debug_print("inflight %p for req %x took %li ns\n", inflight, inflight->req, nsecs);
+  debug_print("inflight %p for req %p took %li ns\n", inflight, inflight->req, nsecs);
 #endif
   fdb_transaction_destroy(inflight->transaction);
   free(inflight);

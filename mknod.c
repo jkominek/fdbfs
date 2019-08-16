@@ -45,6 +45,7 @@ void fdbfs_mknod_commit_cb(FDBFuture *f, void *p)
   struct fdbfs_inflight_mknod *inflight = p;
   
   struct fuse_entry_param e;
+  bzero(&e, sizeof(struct fuse_entry_param));
   e.ino = inflight->ino;
   e.generation = 1;
   bcopy(&(inflight->attr), &(e.attr), sizeof(struct stat));
@@ -97,6 +98,7 @@ void fdbfs_mknod_postverification(FDBFuture *f, void *p)
     return;
   }
 
+  bzero(&(inflight->attr), sizeof(struct stat));
   // perform the necessary sets here
   inflight->attr.st_dev = 0;
   inflight->attr.st_mode = inflight->mode;
@@ -122,6 +124,7 @@ void fdbfs_mknod_postverification(FDBFuture *f, void *p)
 		      sizeof(struct stat));
 
   struct dirent direntval;
+  bzero(&direntval, sizeof(struct dirent));
   direntval.ino = inflight->ino;
   direntval.st_mode = inflight->mode & S_IFMT;
 
@@ -150,7 +153,7 @@ void fdbfs_mknod_issueverification(void *p)
   uint8_t key[512];
   int keylen;
 
-  pack_dentry_key(inflight->parent, inflight->name, strlen(inflight->name), key, &keylen);
+  pack_dentry_key(inflight->parent, inflight->name, inflight->namelen, key, &keylen);
   inflight->dirent_check = fdb_transaction_get(inflight->base.transaction, key, keylen, 0);
 
   pack_inode_key(inflight->ino, key, &keylen);

@@ -37,14 +37,19 @@
 struct fdbfs_inflight_read {
   struct fdbfs_inflight_base base;
   fuse_ino_t ino;
+  // how long is the portion of the key before the bytes
+  // representing the offset
   uint16_t data_prefix_len;
-  size_t size;
-  off_t off;
+  size_t size; //size of the read
+  off_t off;   //offset into file
 };
 
 void fdbfs_read_callback(FDBFuture *f, void *p)
 {
   struct fdbfs_inflight_read *inflight = p;
+
+  // TODO deal with the possibility of not getting all of the KV pairs
+  // that we want.
 
   FDBKeyValue *kvs;
   int kvcount;
@@ -53,30 +58,48 @@ void fdbfs_read_callback(FDBFuture *f, void *p)
   fdb_future_get_keyvalue_array(f, (const FDBKeyValue **)&kvs, &kvcount, &more);
 
   char buffer[inflight->size];
-  
+  bzero(buffer, inflight->size);
+  int actual_bytes_received=0;
+
+  debug_print("fdbfs_read_callback running, got %i records\n", kvcount);
   for(int i=0; i<kvcount; i++) {
+    debug_print("read(%i)ing from a kv!\n", 2);
     FDBKeyValue kv = kvs[i];
     uint64_t block;
     bcopy(((uint8_t*)kv.key) + inflight->data_prefix_len,
 	  &block,
 	  sizeof(uint64_t));
+    block = be64toh(block);
     // TODO variable block size
-    uint64_t block_off = inflight->off - block * BLOCKSIZE;
-    if( (block * BLOCKSIZE) < inflight->off ) {
-      // start our read offset into the block
-      // we're definitionally at the start, so no offset into buffer needed.
-      bcopy(kv.value + block_off,
-	    buffer,
-	    min(inflight->size, BLOCKSIZE - block_off));
+    int buffer_last_byte;
+    if( (block * BLOCKSIZE) <= inflight->off ) {
+      // we need an offset into the received block, since it
+      // starts before (or at) the requested read area
+      uint64_t block_off = inflight->off - block * BLOCKSIZE;
+      size_t copysize = min(inflight->size, kv.value_length - block_off);
+      if(copysize>0) {
+	bcopy(kv.value + block_off, buffer, copysize);
+	buffer_last_byte = copysize;
+      }
     } else {
-      int position = block * BLOCKSIZE - inflight->off;
-      bcopy(kv.value,
-	    buffer + position,
-	    min(inflight->size - position, BLOCKSIZE));
+      // we need an offset into the target buffer, as our block
+      // starts after the requested read area
+      int bufferoff = block * BLOCKSIZE - inflight->off;
+      size_t maxcopy = inflight->size - bufferoff;
+      size_t copysize = min(maxcopy, kv.value_length);
+      bcopy(kv.value, buffer + bufferoff, copysize);
+      // this is the position of the last useful byte we wrote.
+      buffer_last_byte = bufferoff + copysize;
     }
+
+    // furthest byte in the buffer that we write a 'real' value into.
+    actual_bytes_received = max(actual_bytes_received,
+				buffer_last_byte);
   }
 
   fuse_reply_buf(inflight->base.req, buffer, inflight->size);
+  fdb_future_destroy(f);
+  fdbfs_inflight_cleanup(p);
 }
 
 void fdbfs_read_issuer(void *p)
@@ -87,29 +110,35 @@ void fdbfs_read_issuer(void *p)
   uint8_t start[512], stop[512];
   int len;
   pack_inode_key(inflight->ino, start, &len);
-  start[len++] = 'f';
+  pack_inode_key(inflight->ino, stop, &len);
+  start[len] = stop[len] = 'f';
+  len += 1;
   // TODO variable block size
-  uint64_t start_block = (inflight->off >> BLOCKBITS);
-  uint64_t stop_block  = ((inflight->off + inflight->size) >> BLOCKBITS);
+  uint64_t start_block = htobe64(inflight->off >> BLOCKBITS);
+  uint64_t stop_block  = htobe64(((inflight->off + inflight->size) >> BLOCKBITS) + 0);
   bcopy(&start_block, start+len, sizeof(uint64_t));
   bcopy(&stop_block, stop+len, sizeof(uint64_t));
   inflight->data_prefix_len = len;
   len += sizeof(uint64_t);
 
 #ifdef DEBUG
-  char buffer[2048];
-  for(int i=0; i<len; i++)
-    sprintf(buffer+(i<<1), "%02x", start[i]);
-  debug_print("fdbfs_read_issuer for req %p reading from block %li (key %s) to block %li\n",
+  char buffera[2048], bufferb[2048];
+  for(int i=0; i<len; i++) {
+    sprintf(buffera+(i<<2), "\\x%02x", start[i]);
+    sprintf(bufferb+(i<<2), "\\x%02x", stop[i]);
+  }
+  debug_print("fdbfs_read_issuer for req %p reading from block %li (key %s) to block %li (%s)\n",
+	      inflight->base.req,
 	      (inflight->off >> BLOCKBITS),
-	      buffer,
-	      (inflight->off + inflight->size) >> BLOCKBITS);
+	      buffera,
+	      (inflight->off + inflight->size) >> BLOCKBITS,
+	      bufferb);
 #endif
   
   FDBFuture *f =
     fdb_transaction_get_range(inflight->base.transaction,
-			      start, len, 0, 1,
-			      stop, len, 0, 1,
+			      FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start,len),
+			      FDB_KEYSEL_FIRST_GREATER_THAN(stop,len),
 			      0, 0,
 			      FDB_STREAMING_MODE_WANT_ALL, 0,
 			      0, 0);
@@ -129,7 +158,7 @@ void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
 				   fdbfs_read_callback,
 				   fdbfs_read_issuer,
 				   T_READONLY);
-
+  debug_print("fdbfs_read got a read for %li bytes at %li\n", size, off);
   inflight->ino = ino;
   inflight->size = size;
   inflight->off = off;

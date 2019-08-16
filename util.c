@@ -3,6 +3,7 @@
 #include <strings.h>
 #include <stdio.h>
 #include <time.h>
+#include <ctype.h>
 
 #define max(a,b) \
   ({ __typeof__ (a) _a = (a); \
@@ -57,6 +58,7 @@ void unpack_stat_from_dbvalue(const uint8_t *val, int vallen, struct stat *attr)
   // be bytewise identical across kernel versions, let alone
   // microarchitectures or operating systems. we'll have to do
   // something smart later on.
+  bzero(attr, sizeof(struct stat));
   bcopy(val, attr, min(sizeof(struct stat), vallen));
   printf("stat struct\n");
   printf("  dev: %li\n", attr->st_dev);
