@@ -10,6 +10,7 @@
 
 #include "util.h"
 #include "inflight.h"
+#include "values.pb-c.h"
 
 /*************************************************************
  * lookup
@@ -90,7 +91,20 @@ void fdbfs_lookup_dirent(FDBFuture *f, void *p)
 
   // we're on the first callback, to get the directory entry
   if(present) {
-    bcopy(val, &(inflight->target), sizeof(fuse_ino_t));
+    {
+      DirectoryEntry *dirent;
+      dirent = directory_entry__unpack(NULL, vallen, val);
+      if(dirent == NULL) {
+	// terrible error
+      }
+      if(!dirent->has_inode) {
+	// more error
+      }
+
+      inflight->target = dirent->inode;
+
+      directory_entry__free_unpacked(dirent, NULL);
+    }
 
     // TODO ensure this is sized right.
     uint8_t key[512];

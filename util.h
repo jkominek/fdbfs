@@ -37,11 +37,6 @@ extern void pack_dentry_key(fuse_ino_t ino, char *name, int namelen, uint8_t *ke
 extern void unpack_stat_from_dbvalue(const uint8_t *val, int vallen, struct stat *attr);
 extern void print_bytes(const uint8_t *str, int strlength);
 
-struct dirent {
-  fuse_ino_t ino;
-  mode_t st_mode;
-};
-
 #ifndef DEBUG
 #define DEBUG 0
 #endif //DEBUG

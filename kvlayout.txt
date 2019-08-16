@@ -49,7 +49,7 @@ inode record
 * definitely not portable
 
 directory entry
-* struct dirent
+* DirectoryEntry protobuf message
 * inode value
 * (struct stat).st_mode & S_IFMT
 * contents are immutable

@@ -14,6 +14,7 @@
 
 #include "util.h"
 #include "inflight.h"
+#include "values.pb-c.h"
 
 /*************************************************************
  * mknod
@@ -123,16 +124,24 @@ void fdbfs_mknod_postverification(FDBFuture *f, void *p)
 		      (uint8_t *)&(inflight->attr),
 		      sizeof(struct stat));
 
-  struct dirent direntval;
-  bzero(&direntval, sizeof(struct dirent));
-  direntval.ino = inflight->ino;
-  direntval.st_mode = inflight->mode & S_IFMT;
+  
+  uint8_t dirent_buffer[2048];
+  int dirent_size;
+  {
+    DirectoryEntry dirent = DIRECTORY_ENTRY__INIT;
+    dirent.inode = inflight->ino;
+    dirent.type = inflight->mode & S_IFMT;
+    dirent.has_inode = dirent.has_type = 1;
 
+    dirent_size = directory_entry__get_packed_size(&dirent);
+    // TODO size checking
+    directory_entry__pack(&dirent, dirent_buffer);
+  }
+  printf("MKNOD.C dirent size %i\n", dirent_size);
   pack_dentry_key(inflight->parent, inflight->name, inflight->namelen, key, &keylen);
   fdb_transaction_set(inflight->base.transaction,
 		      key, keylen,
-		      (uint8_t *)&direntval,
-		      sizeof(struct dirent));  
+		      dirent_buffer, dirent_size);
 
   // if the commit works, we can reply to fuse and clean up
   // if it doesn't, the issuer will try again.
@@ -169,6 +178,23 @@ void fdbfs_mknod(fuse_req_t req, fuse_ino_t ino,
 		 const char *name, mode_t mode,
 		 dev_t rdev)
 {
+  // validate mode value
+  switch(mode & S_IFMT) {
+  case FILETYPE__socket:
+  case FILETYPE__regular:
+  case FILETYPE__block:
+  case FILETYPE__character:
+  case FILETYPE__fifo: {
+    // supported values here
+    break;
+  }
+  default: {
+    // unsupported value. abort.
+    fuse_reply_err(req, EPERM);
+    return;
+  }
+  }
+  
   // get the file attributes of an inode
   struct fdbfs_inflight_mknod *inflight;
   int namelen = strlen(name);

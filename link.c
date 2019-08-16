@@ -10,6 +10,7 @@
 
 #include "util.h"
 #include "inflight.h"
+#include "values.pb-c.h"
 
 /*************************************************************
  * link
@@ -139,17 +140,25 @@ void fdbfs_link_check(FDBFuture *f, void *p)
 		      (const uint8_t *)&(inflight->inoattr),
 		      sizeof(struct stat));
   // also need to add the new directory entry
-  struct dirent direntval;
-  bzero(&direntval, sizeof(struct dirent));
-  direntval.ino = inflight->ino;
-  direntval.st_mode = inflight->inoattr.st_mode & S_IFMT;
+
+  uint8_t dirent_buffer[2048];
+  int dirent_size;
+  {
+    DirectoryEntry dirent = DIRECTORY_ENTRY__INIT;
+    dirent.inode = inflight->ino;
+    dirent.type = inflight->inoattr.st_mode & S_IFMT;
+    dirent.has_inode = dirent.has_type = 1;
+
+    dirent_size = directory_entry__get_packed_size(&dirent);
+    // TODO size checking
+    directory_entry__pack(&dirent, dirent_buffer);
+  }
   pack_dentry_key(inflight->newparent,
 		  inflight->name, inflight->namelen,
 		  key, &keylen);
   fdb_transaction_set(inflight->base.transaction,
 		      key, keylen,
-		      (const uint8_t *)&direntval,
-		      sizeof(struct dirent));
+		      dirent_buffer, dirent_size);
 
   // commit
   fdb_future_set_callback(fdb_transaction_commit(inflight->base.transaction),

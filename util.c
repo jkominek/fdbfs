@@ -38,7 +38,8 @@ void pack_inode_key(fuse_ino_t ino, uint8_t *key, int *keylen)
 {
   bcopy(kp, key, kplen);
   key[kplen] = INODE_PREFIX;
-  bcopy(&ino, key+kplen+1, sizeof(fuse_ino_t));
+  fuse_ino_t tmp = htobe64(ino);
+  bcopy(&tmp, key+kplen+1, sizeof(fuse_ino_t));
   *keylen = kplen + 1 + sizeof(fuse_ino_t);
 }
 

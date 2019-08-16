@@ -11,6 +11,7 @@
 
 #include "util.h"
 #include "inflight.h"
+#include "values.pb-c.h"
 
 /*************************************************************
  * readdir
@@ -63,11 +64,22 @@ void fdbfs_readdir_callback(FDBFuture *f, void *p)
 	  keylen);
     name[keylen] = '\0'; // null terminate
 
-    const struct dirent *dirent;
-    dirent = kv.value;
     struct stat attr;
-    attr.st_ino = dirent->ino;
-    attr.st_mode = dirent->st_mode & S_IFMT;
+    {
+      DirectoryEntry *dirent;
+      dirent = directory_entry__unpack(NULL, kv.value_length, kv.value);
+      if(dirent == NULL) {
+	// terrible error
+      }
+
+      if((!dirent->has_inode) || (!dirent->has_type)) {
+	// more terrible errors
+      }
+      attr.st_ino = dirent->inode;
+      attr.st_mode = dirent->type;
+
+      directory_entry__free_unpacked(dirent, NULL);
+    }
     
     size_t used = fuse_add_direntry(inflight->base.req,
 				    inflight->buf + consumed_buffer,

@@ -14,6 +14,7 @@
 
 #include "util.h"
 #include "inflight.h"
+#include "values.pb-c.h"
 
 /*************************************************************
  * unlink
@@ -204,21 +205,32 @@ void fdbfs_unlink_postlookup(FDBFuture *f, void *p)
     return;
   }
 
-  struct dirent direntval;
-  bcopy(value, &direntval, valuelen);
+  Filetype dirent_type;
+  
+  {
+    DirectoryEntry *dirent;
+    dirent = directory_entry__unpack(NULL, valuelen, value);
+    if(dirent == NULL) {
+      // terrible error
+    }
+    if((!dirent->has_inode) || (!dirent->has_type)) {
+        // more terrible errors
+    }
+
+    inflight->ino = dirent->inode;
+    dirent_type = dirent->type;
+
+    directory_entry__free_unpacked(dirent, NULL);
+  }
 
   fdb_future_destroy(inflight->dirent_lookup);
-
-  // ok, we're the right thing. and we know our inode.
-  inflight->ino = direntval.ino;
-  printf("UNLINK found target inode %lx\n", inflight->ino);
 
   // check the values in the dirent to make sure
   // we're looking at the right kind of thing. bail
   // if it isn't the right thing.
   if(inflight->actually_rmdir) {
     // we want to find a directory
-    if((direntval.st_mode & S_IFMT) == S_IFDIR) {
+    if(dirent_type == S_IFDIR) {
       // ok, we've successfully found something rmdir'able.
 
       // can't remove the dirent here, though, as there might be
@@ -269,7 +281,7 @@ void fdbfs_unlink_postlookup(FDBFuture *f, void *p)
     }
   } else {
     // we want anything except a directory
-    if((direntval.st_mode & S_IFMT) != S_IFDIR) {
+    if(dirent_type != S_IFDIR) {
       // successfully found something unlinkable.
       uint8_t key[512]; // TODO correct size
       int keylen;
