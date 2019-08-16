@@ -41,7 +41,6 @@ void fdbfs_getattr_callback(FDBFuture *f, void *p)
 
   if(present) {
     struct stat attr;
-
     unpack_stat_from_dbvalue(val, vallen, &attr);
     debug_print("getattr returning for inode %016lx\n", inflight->ino);
     fuse_reply_attr(inflight->base.req, &attr, 0.0);

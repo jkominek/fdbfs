@@ -99,44 +99,60 @@ void fdbfs_mknod_postverification(FDBFuture *f, void *p)
     return;
   }
 
-  bzero(&(inflight->attr), sizeof(struct stat));
-  // perform the necessary sets here
-  inflight->attr.st_dev = 0;
-  inflight->attr.st_mode = inflight->mode;
-  inflight->attr.st_ino = inflight->ino;
-  inflight->attr.st_nlink = (inflight->mode & S_IFDIR) ? 2 : 1;
-  inflight->attr.st_uid = 0;
-  inflight->attr.st_gid = 0;
-  inflight->attr.st_rdev = inflight->rdev;
-  inflight->attr.st_size = 0;
-  inflight->attr.st_blksize = BLOCKSIZE;
-  inflight->attr.st_blocks = 1;
-  // set the inode KV pair
-  inflight->attr.st_atime = 0;
-  inflight->attr.st_ctime = 0;
-  inflight->attr.st_mtime = 0;
+  INodeRecord inode = INODE_RECORD__INIT;
+  inode.inode = inflight->ino;
+  inode.type = inflight->mode & S_IFMT;
+  inode.mode = inflight->mode & (~S_IFMT);
+  inode.nlinks = (inflight->mode & S_IFDIR) ? 2 : 1;
+  inode.size = 0;
+  inode.rdev = inflight->rdev;
+  inode.uid = 0;
+  inode.gid = 0;
+  inode.has_inode = inode.has_type = inode.has_mode = 1;
+  inode.has_nlinks = inode.has_size = inode.rdev = 1;
+  inode.has_uid = inode.has_gid = 1;
 
-  uint8_t key[2048]; int keylen;
+  Timespec atime = TIMESPEC__INIT,
+    mtime = TIMESPEC__INIT,
+    ctime = TIMESPEC__INIT;
+  inode.atime = &atime;
+  inode.atime->sec = 1565989127;
+  inode.atime->nsec = 0;
+  inode.atime->has_sec = inode.atime->has_nsec = 1;
+
+  inode.mtime = &mtime;
+  inode.mtime->sec = 1565989127;
+  inode.mtime->nsec = 0;
+  inode.mtime->has_sec = inode.mtime->has_nsec = 1;
+
+  inode.ctime = &ctime;
+  inode.ctime->sec = 1565989127;
+  inode.ctime->nsec = 0;
+  inode.ctime->has_sec = inode.ctime->has_nsec = 1;
+
+  // wrap it up to be returned to fuse later
+  pack_inode_record_into_stat(&inode, &(inflight->attr));
   
+  // set the inode KV pair
+  uint8_t key[2048]; int keylen;
   pack_inode_key(inflight->ino, key, &keylen);
+  int inode_size = inode_record__get_packed_size(&inode);
+  uint8_t inode_buffer[inode_size];
+  inode_record__pack(&inode, inode_buffer);
+  
   fdb_transaction_set(inflight->base.transaction,
 		      key, keylen,
-		      (uint8_t *)&(inflight->attr),
-		      sizeof(struct stat));
-
+		      inode_buffer, inode_size);
   
-  uint8_t dirent_buffer[2048];
-  int dirent_size;
-  {
-    DirectoryEntry dirent = DIRECTORY_ENTRY__INIT;
-    dirent.inode = inflight->ino;
-    dirent.type = inflight->mode & S_IFMT;
-    dirent.has_inode = dirent.has_type = 1;
+  DirectoryEntry dirent = DIRECTORY_ENTRY__INIT;
+  dirent.inode = inflight->ino;
+  dirent.type = inflight->mode & S_IFMT;
+  dirent.has_inode = dirent.has_type = 1;
 
-    dirent_size = directory_entry__get_packed_size(&dirent);
-    // TODO size checking
-    directory_entry__pack(&dirent, dirent_buffer);
-  }
+  int dirent_size = directory_entry__get_packed_size(&dirent);
+  uint8_t dirent_buffer[dirent_size];
+  directory_entry__pack(&dirent, dirent_buffer);
+
   printf("MKNOD.C dirent size %i\n", dirent_size);
   pack_dentry_key(inflight->parent, inflight->name, inflight->namelen, key, &keylen);
   fdb_transaction_set(inflight->base.transaction,

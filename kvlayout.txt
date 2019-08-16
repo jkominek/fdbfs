@@ -43,7 +43,7 @@ prefix 'M' -> metadata block. filesystem version and blocksize?
 
 
 inode record
-* struct stat
+* INodeRecord
 * any information necessary for non-file/non-directory things
 * contents mutable
 * definitely not portable

@@ -32,6 +32,7 @@ message INodeRecord {
   uint32 mode = 3;
   uint32 nlinks = 4;
   uint64 size = 5;
+  uint32 rdev = 6;
 
   // 100... ownership block
   uint32 uid = 100;

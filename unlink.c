@@ -147,22 +147,23 @@ void fdbfs_unlink_inodecheck(FDBFuture *f, void *p)
   FDBKeyValue inode_kv = kvs[0];
   // TODO test the key to confirm this is actually the inode KV pair
   // we're just going to pretend for now that we found the right record
-  struct stat attr;
-  unpack_stat_from_dbvalue(inode_kv.value, inode_kv.value_length,
-			   &attr);
+  INodeRecord *inode = inode_record__unpack(NULL, inode_kv.value_length, inode_kv.value);
+  if((inode==NULL) || (!inode->has_nlinks)) {
+    // serious error
+  }
+
   // check the stat structure
   // nlinks > 1? decrement and cleanup.
-  if(attr.st_nlink>1) {
-    attr.st_nlink -= 1;
+  if(inode->nlinks>1) {
+    inode->nlinks -= 1;
+
+    int inode_size = inode_record__get_packed_size(inode);
+    uint8_t inode_buffer[inode_size];
+    inode_record__pack(inode, inode_buffer);
+    
     fdb_transaction_set(inflight->base.transaction,
 		        inode_kv.key, inode_kv.key_length,
-			(uint8_t*)&attr,
-			sizeof(struct stat));
-    
-    // commit
-    fdb_future_set_callback(fdb_transaction_commit(inflight->base.transaction),
-			    fdbfs_unlink_commit_cb, p);
-    return;
+			inode_buffer, inode_size);
   } else {
     // nlinks == 1? we've removed the last dirent.
 
@@ -181,11 +182,15 @@ void fdbfs_unlink_inodecheck(FDBFuture *f, void *p)
     fdb_transaction_clear_range(inflight->base.transaction,
 				key_start, key_startlen,
 				key_stop, key_stoplen);
-    // commit
-    fdb_future_set_callback(fdb_transaction_commit(inflight->base.transaction),
-			    fdbfs_unlink_commit_cb, p);
-    return;
   }
+
+  // commit
+  fdb_future_set_callback(fdb_transaction_commit(inflight->base.transaction),
+			  fdbfs_unlink_commit_cb, p);
+
+  inode_record__free_unpacked(inode, NULL);
+  
+  return;
 }
 
 void fdbfs_unlink_postlookup(FDBFuture *f, void *p)
@@ -348,7 +353,6 @@ void _fdbfs_unlink_rmdir(fuse_req_t req, fuse_ino_t ino, const char *name,
   struct fdbfs_inflight_unlink *inflight;
   int namelen = strlen(name);
   inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_unlink) +
-				   sizeof(struct stat) +
 				   namelen + 1,
 				   req,
 				   fdbfs_unlink_postlookup,

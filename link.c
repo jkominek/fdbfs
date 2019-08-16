@@ -34,7 +34,7 @@ struct fdbfs_inflight_link {
   char *name;
   int namelen;
 
-  struct stat inoattr;
+  INodeRecord *inode;
 
   // is the file to link a non-directory?
   FDBFuture *file_lookup;
@@ -52,10 +52,12 @@ void fdbfs_link_commit_cb(FDBFuture *f, void *p)
   bzero(&e, sizeof(struct fuse_entry_param));
   e.ino = inflight->ino;
   e.generation = 1;
-  bcopy(&(inflight->inoattr), &(e.attr), sizeof(struct stat));
+  pack_inode_record_into_stat(inflight->inode, &(e.attr));
   e.attr_timeout = 0.01;
   e.entry_timeout = 0.01;
 
+  if(inflight->inode)
+    inode_record__free_unpacked(inflight->inode, NULL);
   fuse_reply_entry(inflight->base.req, &e);
   fdb_future_destroy(f);
   fdbfs_inflight_cleanup(p);
@@ -84,8 +86,11 @@ void fdbfs_link_check(FDBFuture *f, void *p)
   fdb_future_get_value(inflight->file_lookup, &present,
 		       (const uint8_t **)&val, &vallen);
   if(present) {
-    unpack_stat_from_dbvalue(val, vallen, &(inflight->inoattr));
-    if((inflight->inoattr.st_mode & S_IFMT) == S_IFDIR) {
+    inflight->inode = inode_record__unpack(NULL, vallen, val);
+    if((inflight->inode==NULL) || (!inflight->inode->has_type)) {
+      // error
+    }
+    if(inflight->inode->type == S_IFDIR) {
       // can hardlink anything except a directory
       err = EPERM;
     }
@@ -100,12 +105,15 @@ void fdbfs_link_check(FDBFuture *f, void *p)
   fdb_future_get_value(inflight->dir_lookup, &present,
 		       (const uint8_t **)&val, &vallen);
   if(present) {
-    struct stat dirattr;
-    unpack_stat_from_dbvalue(val, vallen, &dirattr);
-    if((dirattr.st_mode & S_IFMT) != S_IFDIR) {
+    INodeRecord *dirinode = inode_record__unpack(NULL, vallen, val);
+    if((dirinode==NULL) || (!dirinode->has_type)) {
+      // error
+    }
+    if(dirinode->type != S_IFDIR) {
       // have to hardlink into a directory
       err = ENOTDIR;
     }
+    inode_record__free_unpacked(dirinode, NULL);
   } else {
     err = ENOENT;
   }
@@ -125,6 +133,8 @@ void fdbfs_link_check(FDBFuture *f, void *p)
 
   if(err) {
     // some sort of error.
+    if(inflight->inode)
+      inode_record__free_unpacked(inflight->inode, NULL);
     fuse_reply_err(inflight->base.req, err);
     fdbfs_inflight_cleanup(p);
   }
@@ -134,19 +144,23 @@ void fdbfs_link_check(FDBFuture *f, void *p)
 
   // need to update the inode attributes
   pack_inode_key(inflight->ino, key, &keylen);
-  inflight->inoattr.st_nlink += 1;
+  inflight->inode->nlinks += 1;
+  // TODO do we need to touch any other inode attributes when
+  // creating a hard link?
+  uint8_t inode_buffer[2048]; // TODO size
+  int inode_size = inode_record__get_packed_size(inflight->inode);
+  inode_record__pack(inflight->inode, inode_buffer);
   fdb_transaction_set(inflight->base.transaction,
 		      key, keylen,
-		      (const uint8_t *)&(inflight->inoattr),
-		      sizeof(struct stat));
-  // also need to add the new directory entry
+		      inode_buffer, inode_size);
 
+  // also need to add the new directory entry
   uint8_t dirent_buffer[2048];
   int dirent_size;
   {
     DirectoryEntry dirent = DIRECTORY_ENTRY__INIT;
     dirent.inode = inflight->ino;
-    dirent.type = inflight->inoattr.st_mode & S_IFMT;
+    dirent.type = inflight->inode->type;
     dirent.has_inode = dirent.has_type = 1;
 
     dirent_size = directory_entry__get_packed_size(&dirent);

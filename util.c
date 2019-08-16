@@ -5,6 +5,8 @@
 #include <time.h>
 #include <ctype.h>
 
+#include "values.pb-c.h"
+
 #define max(a,b) \
   ({ __typeof__ (a) _a = (a); \
     __typeof__ (b) _b = (b); \
@@ -21,6 +23,8 @@ int kplen;
 
 fuse_ino_t generate_inode()
 {
+  // TODO everything that uses this will need to check that
+  // it isn't trampling an existing inode.
   struct timespec tp;
   clock_gettime(CLOCK_REALTIME, &tp);
   // we get ~30 bits from the nanoseconds. we'll leave those
@@ -53,14 +57,49 @@ void pack_dentry_key(fuse_ino_t ino, char *name, int namelen, uint8_t *key, int 
   *keylen += 1 + namelen;
 }
 
-void unpack_stat_from_dbvalue(const uint8_t *val, int vallen, struct stat *attr)
+void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr)
 {
-  // TODO this isn't a great idea. the stat struct doesn't have to
-  // be bytewise identical across kernel versions, let alone
-  // microarchitectures or operating systems. we'll have to do
-  // something smart later on.
-  bzero(attr, sizeof(struct stat));
-  bcopy(val, attr, min(sizeof(struct stat), vallen));
+  if(inode == NULL) {
+    printf("got bad inode to repack into attr\n");
+  }
+  attr->st_ino = inode->inode;
+  attr->st_dev = 0;
+  attr->st_mode = inode->mode | inode->type;
+  attr->st_nlink = inode->nlinks;
+  if(inode->has_uid)
+    attr->st_uid = inode->uid;
+  else
+    attr->st_uid = 0;
+
+  if(inode->has_gid)
+    attr->st_gid = inode->gid;
+  else
+    attr->st_gid = 0;
+
+  if(inode->has_size)
+    attr->st_size = inode->size;
+  else
+    attr->st_size = 0;
+
+  if(inode->atime) {
+    attr->st_atim.tv_sec = inode->atime->sec;
+    attr->st_atim.tv_nsec = inode->atime->nsec;
+  }
+
+  if(inode->mtime) {
+    attr->st_mtim.tv_sec = inode->mtime->sec;
+    attr->st_mtim.tv_nsec = inode->mtime->nsec;
+  }
+
+  if(inode->ctime) {
+    attr->st_ctim.tv_sec = inode->ctime->sec;
+    attr->st_ctim.tv_nsec = inode->ctime->nsec;
+  }
+
+  attr->st_blksize = BLOCKSIZE;
+  attr->st_blocks = attr->st_size / BLOCKSIZE + 1;
+
+  /*
   printf("stat struct\n");
   printf("  dev: %li\n", attr->st_dev);
   printf("  ino: %li\n", attr->st_ino);
@@ -68,6 +107,14 @@ void unpack_stat_from_dbvalue(const uint8_t *val, int vallen, struct stat *attr)
   printf("nlink: %li\n", attr->st_nlink);
   printf("  uid: %i\n", attr->st_uid);
   printf("  gid: %i\n", attr->st_gid);
+  */
+}
+
+void unpack_stat_from_dbvalue(const uint8_t *val, int vallen, struct stat *attr)
+{
+  INodeRecord *inode = inode_record__unpack(NULL, vallen, val);
+  pack_inode_record_into_stat(inode, attr);
+  inode_record__free_unpacked(inode, NULL);
 }
 
 void print_bytes(const uint8_t *str, int strlength)

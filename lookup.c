@@ -69,11 +69,11 @@ void fdbfs_lookup_inode(FDBFuture *f, void *p)
     e.attr_timeout = 0.01;
     e.entry_timeout = 0.01;
 
-    debug_print("fdbfs_lookup_callback returning entry for req %p ino %li\n", inflight->base.req, inflight->ino);
+    debug_print("fdbfs_lookup_callback returning entry for req %p ino %lx\n", inflight->base.req, inflight->target);
       
     fuse_reply_entry(inflight->base.req, &e);
   } else {
-    debug_print("fdbfs_lookup_callback for req %p didn't find attributes\n", inflight->base.req);
+    debug_print("fdbfs_lookup_callback for req %p ino %lx didn't find attributes!!!\n", inflight->base.req, inflight->target);
     fuse_reply_err(inflight->base.req, EIO);
   }
   fdbfs_inflight_cleanup(p);
@@ -95,10 +95,10 @@ void fdbfs_lookup_dirent(FDBFuture *f, void *p)
       DirectoryEntry *dirent;
       dirent = directory_entry__unpack(NULL, vallen, val);
       if(dirent == NULL) {
-	// terrible error
+	printf("failed to unpack dirent\n");
       }
       if(!dirent->has_inode) {
-	// more error
+	printf("dirent missing inode field\n");
       }
 
       inflight->target = dirent->inode;
@@ -118,7 +118,7 @@ void fdbfs_lookup_dirent(FDBFuture *f, void *p)
     inflight->base.cb = fdbfs_lookup_inode;
     fdb_future_set_callback(f, fdbfs_error_checker, p);
   } else {
-    debug_print("fdbfs_lookup_callback for req %p didn't find entry\n", inflight->base.req);
+    debug_print("fdbfs_lookup_callback for req %p didn't find entry for %s in ino %lx\n", inflight->base.req, inflight->name, inflight->ino);
     fuse_reply_err(inflight->base.req, ENOENT);
     fdbfs_inflight_cleanup(p);
   }
@@ -146,7 +146,7 @@ void fdbfs_lookup_issuer(void *p)
   bcopy(inflight->name, buffer2, inflight->namelen);
   buffer2[inflight->namelen] = '\0';
   
-  debug_print("fdbfs_lookup_issuer req %p launching get for key %s ino %li name '%s'\n", inflight->base.req, buffer, inflight->ino, buffer2);
+  debug_print("fdbfs_lookup_issuer req %p launching get for key %s ino %lx name '%s'\n", inflight->base.req, buffer, inflight->ino, buffer2);
 #endif
   
   FDBFuture *f = fdb_transaction_get(inflight->base.transaction, key, keylen, 1);
