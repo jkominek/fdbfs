@@ -120,8 +120,9 @@ void fdbfs_rmdir_inode_dirlist_check(FDBFuture *f, void *p)
 			      key_stop, key_stoplen);
 
   // commit
+  inflight->base.cb = fdbfs_unlink_commit_cb;
   fdb_future_set_callback(fdb_transaction_commit(inflight->base.transaction),
-			  fdbfs_unlink_commit_cb, p);
+			  fdbfs_error_checker, p);
 }
 
 void fdbfs_unlink_inodecheck(FDBFuture *f, void *p)
@@ -185,8 +186,9 @@ void fdbfs_unlink_inodecheck(FDBFuture *f, void *p)
   }
 
   // commit
+  inflight->base.cb = fdbfs_unlink_commit_cb;
   fdb_future_set_callback(fdb_transaction_commit(inflight->base.transaction),
-			  fdbfs_unlink_commit_cb, p);
+			  fdbfs_error_checker, p);
 
   inode_record__free_unpacked(inode, NULL);
   

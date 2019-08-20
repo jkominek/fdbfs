@@ -175,8 +175,9 @@ void fdbfs_link_check(FDBFuture *f, void *p)
 		      dirent_buffer, dirent_size);
 
   // commit
+  inflight->base.cb = fdbfs_link_commit_cb;
   fdb_future_set_callback(fdb_transaction_commit(inflight->base.transaction),
-			  fdbfs_link_commit_cb, p);
+			  fdbfs_error_checker, p);
   return;
 
 }
