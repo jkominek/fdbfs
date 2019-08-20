@@ -30,6 +30,7 @@ extern void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info 
 extern void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
 extern void fdbfs_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 extern void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
+extern void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi);
 extern void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode);
 extern void fdbfs_rmdir(fuse_req_t req, fuse_ino_t parent, const char *name);
 extern void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev);
@@ -50,6 +51,7 @@ static struct fuse_lowlevel_ops fdbfs_oper =
     .readdir	= fdbfs_readdir,
     .open	= fdbfs_open,
     .read	= fdbfs_read,
+    .write      = fdbfs_write,
     .mkdir      = fdbfs_mkdir,
     .rmdir      = fdbfs_rmdir,
     .mknod      = fdbfs_mknod,

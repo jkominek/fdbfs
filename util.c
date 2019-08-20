@@ -47,6 +47,17 @@ void pack_inode_key(fuse_ino_t ino, uint8_t *key, int *keylen)
   *keylen = kplen + 1 + sizeof(fuse_ino_t);
 }
 
+void pack_fileblock_key(fuse_ino_t ino, uint64_t block,
+			uint8_t *key, int *keylen)
+{
+  pack_inode_key(ino, key, keylen);
+
+  block = htobe64(block);
+  key[*keylen] = DATA_PREFIX;
+  bcopy(&block, key+*keylen+1, sizeof(uint64_t));
+  *keylen += 1 + sizeof(uint64_t);
+}
+
 void pack_dentry_key(fuse_ino_t ino, char *name, int namelen, uint8_t *key, int *keylen)
 {
   pack_inode_key(ino, key, keylen);
