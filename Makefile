@@ -1,4 +1,4 @@
-fs: getattr.o  inflight.o  lookup.o  main.o  read.o  util.o readdir.o open.o mknod.o unlink.o link.o values.pb-c.o readlink.o symlink.o write.o
+fs: getattr.o  inflight.o  lookup.o  main.o  read.o  util.o readdir.o open.o mknod.o unlink.o link.o values.pb-c.o readlink.o symlink.o write.o setattr.o
 	gcc -pg -g -Wall $^  `pkg-config fuse --libs` `pkg-config --libs 'libprotobuf-c >= 1.0.0'` -lfdb_c -lm -o fs
 
 values.pb-c.h: values.proto

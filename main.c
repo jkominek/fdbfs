@@ -27,6 +27,7 @@ uint32_t BLOCKSIZE; // 1<<BLOCKBITS
 
 extern void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name);
 extern void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
+extern void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, struct fuse_file_info *fi);
 extern void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
 extern void fdbfs_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 extern void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
@@ -48,6 +49,7 @@ static struct fuse_lowlevel_ops fdbfs_oper =
   {
     .lookup	= fdbfs_lookup,
     .getattr	= fdbfs_getattr,
+    .setattr	= fdbfs_setattr,
     .readdir	= fdbfs_readdir,
     .open	= fdbfs_open,
     .read	= fdbfs_read,
