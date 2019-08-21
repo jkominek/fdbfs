@@ -89,8 +89,8 @@ void fdbfs_link_check(FDBFuture *f, void *p)
     inflight->inode = inode_record__unpack(NULL, vallen, val);
     if((inflight->inode==NULL) || (!inflight->inode->has_type)) {
       // error
-    }
-    if(inflight->inode->type == S_IFDIR) {
+      err = EIO;
+    } else if(inflight->inode->type == S_IFDIR) {
       // can hardlink anything except a directory
       err = EPERM;
     }
