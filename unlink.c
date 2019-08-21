@@ -90,8 +90,6 @@ void fdbfs_rmdir_inode_dirlist_check(FDBFuture *f, void *p)
     return;
   }
 
-  fdb_future_get_keyvalue_array(inflight->directory_listing_fetch,
-				(const FDBKeyValue **)&kvs, &kvcount, &more);
   // TODO check the metadata for permission to erase
 
   // we're a directory, so we can't have extra links, so this would
@@ -123,6 +121,9 @@ void fdbfs_rmdir_inode_dirlist_check(FDBFuture *f, void *p)
   inflight->base.cb = fdbfs_unlink_commit_cb;
   fdb_future_set_callback(fdb_transaction_commit(inflight->base.transaction),
 			  fdbfs_error_checker, p);
+
+  fdb_future_destroy(inflight->directory_listing_fetch);
+  fdb_future_destroy(inflight->inode_metadata_fetch);
 }
 
 void fdbfs_unlink_inodecheck(FDBFuture *f, void *p)
