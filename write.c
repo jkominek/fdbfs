@@ -126,6 +126,8 @@ void fdbfs_write_check(FDBFuture *f, void *p)
 			  key, keylen,
 			  inode_buffer, inode_size);
     }
+
+    inode_record__free_unpacked(inode, NULL);
   } else {
     // this inode doesn't exist.
     err = EBADF;

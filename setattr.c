@@ -158,6 +158,7 @@ void fdbfs_setattr_callback(FDBFuture *f, void *p)
   int inode_size = inode_record__get_packed_size(inode);
   uint8_t inode_buffer[inode_size];
   inode_record__pack(inode, inode_buffer);
+  inode_record__free_unpacked(inode, NULL);
 
   uint8_t key[512];
   int keylen;

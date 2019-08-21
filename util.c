@@ -73,6 +73,9 @@ void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr)
   if(inode == NULL) {
     printf("got bad inode to repack into attr\n");
   }
+
+  bzero(attr, sizeof(struct stat));
+  
   attr->st_ino = inode->inode;
   attr->st_dev = 0;
   attr->st_mode = inode->mode | inode->type;
