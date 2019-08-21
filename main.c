@@ -40,6 +40,7 @@ extern void fdbfs_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, con
 extern void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino);
 extern void fdbfs_symlink(fuse_req_t req, const char *link,
 			  fuse_ino_t parent, const char *name);
+extern void fdbfs_rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent, const char *newname);
 
 /* These are our entry points for the operations. They'll set
  * up the appropriate inflight structure and make the initial
@@ -61,6 +62,7 @@ static struct fuse_lowlevel_ops fdbfs_oper =
     .link       = fdbfs_link,
     .readlink   = fdbfs_readlink,
     .symlink    = fdbfs_symlink,
+    .rename     = fdbfs_rename,
   };
 
 /* Purely to get the FoundationDB network stuff running in a
