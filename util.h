@@ -24,11 +24,12 @@ extern FDBDatabase *database;
 extern std::vector<uint8_t> key_prefix;
 extern uint8_t BLOCKBITS;
 extern uint32_t BLOCKSIZE;
+extern int fileblock_prefix_length;
 
 extern fuse_ino_t generate_inode();
-extern std::vector<uint8_t> pack_inode_key(fuse_ino_t, size_t = 0);
+extern std::vector<uint8_t> pack_inode_key(fuse_ino_t);
 extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, std::string);
-extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t, size_t = 0);
+extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t);
 extern void print_key(std::vector<uint8_t>);
 extern void unpack_stat_from_dbvalue(const uint8_t *val, int vallen, struct stat *attr);
 extern void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr);

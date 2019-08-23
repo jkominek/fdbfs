@@ -3,7 +3,6 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <assert.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -23,8 +22,8 @@
  * is done with them.
  */
 
-void fdbfs_open(fuse_req_t req, fuse_ino_t ino,
-                struct fuse_file_info *fi)
+extern "C" void fdbfs_open(fuse_req_t req, fuse_ino_t ino,
+			   struct fuse_file_info *fi)
 {
   fuse_reply_open(req, fi);
 }

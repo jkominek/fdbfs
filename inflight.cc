@@ -147,6 +147,12 @@ void Inflight::reply_attr(struct stat *attr)
   delete this;
 }
 
+void Inflight::reply_buf(char *buf, size_t size)
+{
+  fuse_reply_buf(req, buf, size);
+  delete this;
+}
+
 void Inflight::restart()
 {
   fdb_transaction_reset(transaction.get());

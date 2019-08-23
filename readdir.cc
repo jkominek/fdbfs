@@ -117,12 +117,11 @@ void Inflight_readdir::callback()
   }
 
   fuse_reply_buf(req, buf, consumed_buffer);
-  abort(0); // TODO implement method for calling reply_buf
 }
 
 void Inflight_readdir::issue()
 {
-  auto start = pack_inode_key(ino, 2);
+  auto start = pack_inode_key(ino);
   start.push_back(DENTRY_PREFIX);
   auto stop(start);
 

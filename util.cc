@@ -36,7 +36,7 @@ fuse_ino_t generate_inode()
   return (h | l);
 }
 
-std::vector<uint8_t> pack_inode_key(fuse_ino_t ino, size_t extra_size)
+std::vector<uint8_t> pack_inode_key(fuse_ino_t ino)
 {
   std::vector<uint8_t> key = key_prefix;
   key.push_back(INODE_PREFIX);
@@ -46,9 +46,10 @@ std::vector<uint8_t> pack_inode_key(fuse_ino_t ino, size_t extra_size)
   return key;
 }
 
-std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t block, size_t extra_size)
+int fileblock_prefix_length = pack_inode_key(0).size() + 1;
+std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t block)
 {
-  auto key = pack_inode_key(ino, sizeof(uint64_t) + extra_size);
+  auto key = pack_inode_key(ino);
   key.push_back(DATA_PREFIX);
   
   block = htobe64(block);
@@ -59,7 +60,7 @@ std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t block, size_t e
 
 std::vector<uint8_t> pack_dentry_key(fuse_ino_t ino, std::string name)
 {
-  auto key = pack_inode_key(ino, name.size());
+  auto key = pack_inode_key(ino);
   key.push_back(DENTRY_PREFIX);
 
   key.insert(key.end(), name.begin(), name.end());
