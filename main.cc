@@ -33,12 +33,12 @@ extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_i
 extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
 extern "C" void fdbfs_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
+extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev);
+extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode);
 /*
 extern void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, struct fuse_file_info *fi);
 extern void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi);
-extern void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode);
 extern void fdbfs_rmdir(fuse_req_t req, fuse_ino_t parent, const char *name);
-extern void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev);
 extern void fdbfs_unlink(fuse_req_t req, fuse_ino_t parent, const char *name);
 extern void fdbfs_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newname);
 extern void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino);
@@ -58,12 +58,12 @@ static struct fuse_lowlevel_ops fdbfs_oper =
     .readdir	= fdbfs_readdir,
     .open	= fdbfs_open,
     .read	= fdbfs_read,
+    .mknod      = fdbfs_mknod,
+    .mkdir      = fdbfs_mkdir,
     /*
     .setattr	= fdbfs_setattr,
     .write      = fdbfs_write,
-    .mkdir      = fdbfs_mkdir,
     .rmdir      = fdbfs_rmdir,
-    .mknod      = fdbfs_mknod,
     .unlink     = fdbfs_unlink,
     .link       = fdbfs_link,
     .readlink   = fdbfs_readlink,
