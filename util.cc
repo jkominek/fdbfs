@@ -5,7 +5,7 @@
 #include <time.h>
 #include <ctype.h>
 
-#include "values.pb-c.h"
+#include "values.pb.h"
 
 #define max(a,b) \
   ({ __typeof__ (a) _a = (a); \
@@ -17,9 +17,7 @@
     _a < _b ? _a : _b; })
 
 // will be filled out before operation begins
-FDBDatabase *database;
-char *kp;
-int kplen;
+std::vector<uint8_t> key_prefix;
 
 fuse_ino_t generate_inode()
 {
@@ -38,34 +36,42 @@ fuse_ino_t generate_inode()
   return (h | l);
 }
 
-void pack_inode_key(fuse_ino_t ino, uint8_t *key, int *keylen)
+std::vector<uint8_t> pack_inode_key(fuse_ino_t ino, size_t extra_size)
 {
-  bcopy(kp, key, kplen);
-  key[kplen] = INODE_PREFIX;
+  std::vector<uint8_t> key = key_prefix;
+  key.push_back(INODE_PREFIX);
   fuse_ino_t tmp = htobe64(ino);
-  bcopy(&tmp, key+kplen+1, sizeof(fuse_ino_t));
-  *keylen = kplen + 1 + sizeof(fuse_ino_t);
+  uint8_t *tmpp = reinterpret_cast<uint8_t *>(&tmp);
+  key.insert(key.end(), tmpp, tmpp + sizeof(fuse_ino_t));
+  return key;
 }
 
-void pack_fileblock_key(fuse_ino_t ino, uint64_t block,
-			uint8_t *key, int *keylen)
+std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t block, size_t extra_size)
 {
-  pack_inode_key(ino, key, keylen);
-
+  auto key = pack_inode_key(ino, sizeof(uint64_t) + extra_size);
+  key.push_back(DATA_PREFIX);
+  
   block = htobe64(block);
-  key[*keylen] = DATA_PREFIX;
-  bcopy(&block, key+*keylen+1, sizeof(uint64_t));
-  *keylen += 1 + sizeof(uint64_t);
+  uint8_t *tmpp = reinterpret_cast<uint8_t *>(&block);
+  key.insert(key.end(), tmpp, tmpp + sizeof(uint64_t));
+  return key;
 }
 
-void pack_dentry_key(fuse_ino_t ino, char *name, int namelen, uint8_t *key, int *keylen)
+std::vector<uint8_t> pack_dentry_key(fuse_ino_t ino, std::string name)
 {
-  pack_inode_key(ino, key, keylen);
+  auto key = pack_inode_key(ino, name.size());
+  key.push_back(DENTRY_PREFIX);
 
-  key[*keylen] = DENTRY_PREFIX;
-  bcopy(name, key+*keylen+1, namelen);
+  key.insert(key.end(), name.begin(), name.end());
+  return key;
+}
 
-  *keylen += 1 + namelen;
+void print_key(std::vector<uint8_t> v)
+{
+  printf("%zu ", v.size());
+  for (std::vector<uint8_t>::const_iterator i = v.begin(); i != v.end(); ++i)
+    printf("%02x", *i);
+  printf("\n");
 }
 
 void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr)
@@ -76,38 +82,38 @@ void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr)
 
   bzero(attr, sizeof(struct stat));
   
-  attr->st_ino = inode->inode;
+  attr->st_ino = inode->inode();
   attr->st_dev = 0;
-  attr->st_mode = inode->mode | inode->type;
-  attr->st_nlink = inode->nlinks;
-  if(inode->has_uid)
-    attr->st_uid = inode->uid;
+  attr->st_mode = inode->mode() | inode->type();
+  attr->st_nlink = inode->nlinks();
+  if(inode->has_uid())
+    attr->st_uid = inode->uid();
   else
     attr->st_uid = 0;
 
-  if(inode->has_gid)
-    attr->st_gid = inode->gid;
+  if(inode->has_gid())
+    attr->st_gid = inode->gid();
   else
     attr->st_gid = 0;
 
-  if(inode->has_size)
-    attr->st_size = inode->size;
+  if(inode->has_size())
+    attr->st_size = inode->size();
   else
     attr->st_size = 0;
 
-  if(inode->atime) {
-    attr->st_atim.tv_sec = inode->atime->sec;
-    attr->st_atim.tv_nsec = inode->atime->nsec;
+  if(inode->has_atime()) {
+    attr->st_atim.tv_sec = inode->atime().sec();
+    attr->st_atim.tv_nsec = inode->atime().nsec();
   }
 
-  if(inode->mtime) {
-    attr->st_mtim.tv_sec = inode->mtime->sec;
-    attr->st_mtim.tv_nsec = inode->mtime->nsec;
+  if(inode->has_mtime()) {
+    attr->st_mtim.tv_sec = inode->mtime().sec();
+    attr->st_mtim.tv_nsec = inode->mtime().nsec();
   }
 
-  if(inode->ctime) {
-    attr->st_ctim.tv_sec = inode->ctime->sec;
-    attr->st_ctim.tv_nsec = inode->ctime->nsec;
+  if(inode->has_ctime()) {
+    attr->st_ctim.tv_sec = inode->ctime().sec();
+    attr->st_ctim.tv_nsec = inode->ctime().nsec();
   }
 
   attr->st_blksize = BLOCKSIZE;
@@ -126,9 +132,9 @@ void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr)
 
 void unpack_stat_from_dbvalue(const uint8_t *val, int vallen, struct stat *attr)
 {
-  INodeRecord *inode = inode_record__unpack(NULL, vallen, val);
-  pack_inode_record_into_stat(inode, attr);
-  inode_record__free_unpacked(inode, NULL);
+  INodeRecord inode;
+  inode.ParseFromArray(val, vallen);
+  pack_inode_record_into_stat(&inode, attr);
 }
 
 void print_bytes(const uint8_t *str, int strlength)

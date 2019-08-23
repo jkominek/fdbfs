@@ -8,3 +8,5 @@ gmon.out
 values.pb-c.*
 values_pb2.py
 *.pyc
+values.pb.cc
+values.pb.h
