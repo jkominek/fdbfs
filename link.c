@@ -137,6 +137,7 @@ void fdbfs_link_check(FDBFuture *f, void *p)
       inode_record__free_unpacked(inflight->inode, NULL);
     fuse_reply_err(inflight->base.req, err);
     fdbfs_inflight_cleanup(p);
+    return;
   }
 
   uint8_t key[1024]; // TODO size
@@ -216,7 +217,8 @@ void fdbfs_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char
   struct fdbfs_inflight_link *inflight;
   // to just make one allocation, we'll stuff our copy of the name
   // right after the struct.
-  inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_link) + namelen + 1,
+  inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_link) +
+				   namelen + 1,
 				   req,
 				   fdbfs_link_check,
 				   fdbfs_link_issuer,
