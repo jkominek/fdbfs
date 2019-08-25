@@ -101,6 +101,12 @@ void Inflight::future_ready(FDBFuture *f)
 
   if(future_queue.empty()) {
     if(bool(cb)) {
+      // TODO I want to change these callbacks to be
+      // void -> WhatToDo(args)
+      // and then this code here will execute the
+      // instruction. that'll make all of the callbacks
+      // much safer; they can't fail to return after
+      // producing a response and/or suiciding.
       std::function<void()> f = cb.value();
       cb = std::experimental::nullopt;
       f();
