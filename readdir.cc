@@ -116,7 +116,7 @@ void Inflight_readdir::callback()
     remaining_buffer -= used;
   }
 
-  fuse_reply_buf(req, buf, consumed_buffer);
+  reply_buf(buf, consumed_buffer);
 }
 
 void Inflight_readdir::issue()
