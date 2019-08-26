@@ -31,7 +31,6 @@ extern std::vector<uint8_t> pack_inode_key(fuse_ino_t);
 extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, std::string);
 extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t);
 extern void print_key(std::vector<uint8_t>);
-extern void unpack_stat_from_dbvalue(const uint8_t *val, int vallen, struct stat *attr);
 extern void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr);
 extern void print_bytes(const uint8_t *str, int strlength);
 

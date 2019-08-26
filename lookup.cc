@@ -78,20 +78,25 @@ void Inflight_lookup::process_inode()
     restart();
 
   // and second callback, to get the attributes
-  if(present) {
-    struct fuse_entry_param e;
-
-    e.ino = target;
-    // TODO technically we need to be smarter about generations
-    e.generation = 1;
-    unpack_stat_from_dbvalue(val, vallen, &(e.attr));
-    e.attr_timeout = 0.01;
-    e.entry_timeout = 0.01;
-
-    reply_entry(&e);
-  } else {
+  if(!present) {
     abort(EIO);
   }
+
+  INodeRecord inode;
+  inode.ParseFromArray(val, vallen);
+  if(!inode.IsInitialized()) {
+    abort(EIO);
+  }
+
+  struct fuse_entry_param e;
+  e.ino = target;
+  // TODO technically we need to be smarter about generations
+  e.generation = 1;
+  pack_inode_record_into_stat(&inode, &(e.attr));
+  e.attr_timeout = 0.01;
+  e.entry_timeout = 0.01;
+
+  reply_entry(&e);
 }
 
 void Inflight_lookup::lookup_inode()

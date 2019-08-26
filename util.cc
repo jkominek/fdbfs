@@ -131,13 +131,6 @@ void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr)
   */
 }
 
-void unpack_stat_from_dbvalue(const uint8_t *val, int vallen, struct stat *attr)
-{
-  INodeRecord inode;
-  inode.ParseFromArray(val, vallen);
-  pack_inode_record_into_stat(&inode, attr);
-}
-
 void print_bytes(const uint8_t *str, int strlength)
 {
   for(int i=0; i<strlength; i++) {

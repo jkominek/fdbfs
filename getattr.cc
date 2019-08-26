@@ -64,13 +64,19 @@ void Inflight_getattr::callback()
     return;
   }
 
-  if(present) {
-    struct stat attr;
-    unpack_stat_from_dbvalue(val, vallen, &attr);
-    reply_attr(&attr);
-  } else {
+  if(!present) {
     abort(EFAULT);
   }
+
+  INodeRecord inode;
+  inode.ParseFromArray(val, vallen);
+  if(!inode.IsInitialized()) {
+    abort(EIO);
+  }
+  
+  struct stat attr;
+  pack_inode_record_into_stat(&inode, &attr);
+  reply_attr(&attr);
 }
 
 void Inflight_getattr::issue()
