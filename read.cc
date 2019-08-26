@@ -48,20 +48,20 @@ private:
   void callback();
   
   fuse_ino_t ino;
-  size_t size; //size of the read
+  size_t requested_size; //size of the read
   off_t off;   //offset into file
 };
 
 Inflight_read::Inflight_read(fuse_req_t req, fuse_ino_t ino,
 			     size_t size, off_t off,
 			     FDBTransaction *transaction)
-  : Inflight(req, false, transaction), ino(ino), size(size), off(off)
+  : Inflight(req, false, transaction), ino(ino), requested_size(size), off(off)
 {
 }
 
 Inflight_read *Inflight_read::reincarnate()
 {
-  Inflight_read *x = new Inflight_read(req, ino, size, off,
+  Inflight_read *x = new Inflight_read(req, ino, requested_size, off,
 				       transaction.release());
   delete this;
   return x;
@@ -69,26 +69,51 @@ Inflight_read *Inflight_read::reincarnate()
 
 void Inflight_read::callback()
 {
-  // TODO deal with the possibility of not getting all of the KV pairs
-  // that we want. (that is, blocks that we want exist, but aren't sent.)
+  const uint8_t *val;
+  int vallen;
+  fdb_bool_t present;
+  if(fdb_future_get_value(inode_fetch.get(), &present,
+			  &val, &vallen)) {
+    restart();
+    return;
+  }
+  if(!present) {
+    abort(EBADF);
+    return;
+  }
+  INodeRecord inode;
+  inode.ParseFromArray(val, vallen);
+  if(!inode.IsInitialized()) {
+    abort(EIO);
+    return;
+  }
 
   FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
-
   if(fdb_future_get_keyvalue_array(range_fetch.get(),
 				   (const FDBKeyValue **)&kvs, &kvcount, &more)) {
     restart();
     return;
   }
 
+  if(more) {
+    // TODO deal with the possibility of not getting all of the KV pairs
+    // that we want. (that is, blocks that we want exist, but aren't sent.)
+
+    // pretty straightforward, really. we move the buffer into the inflight
+    // object, and then if there's more to fetch, send that request while
+    // we're processing the data we already have. at the end, go back to
+    // waiting instead of return.
+  }
+
+  size_t size = std::min(requested_size, inode.size() - off);
+  
   char buffer[size];
   bzero(buffer, size);
   int actual_bytes_received=0;
 
-  debug_print("fdbfs_read_callback running, got %i records\n", kvcount);
   for(int i=0; i<kvcount; i++) {
-    debug_print("read(%i)ing from a kv!\n", 2);
     FDBKeyValue kv = kvs[i];
     uint64_t block;
     bcopy(((uint8_t*)kv.key) + fileblock_prefix_length,
@@ -110,7 +135,9 @@ void Inflight_read::callback()
     } else {
       // we need an offset into the target buffer, as our block
       // starts after the requested read area
-      int bufferoff = block * BLOCKSIZE - off;
+      size_t bufferoff = block * BLOCKSIZE - off;
+      // the most we can copy is the smaller of however much
+      // space is left, and the size of the buffer from fdb
       size_t maxcopy = size - bufferoff;
       size_t copysize = std::min(maxcopy,
 				 static_cast<size_t>(kv.value_length));
@@ -124,13 +151,26 @@ void Inflight_read::callback()
 				     buffer_last_byte);
   }
 
-  reply_buf(buffer, size);
+  if(more) {
+    // TODO see above TODO. for now, die, since we won't otherwise
+    // satisfy the contract.
+    abort(EIO);
+  } else {
+    reply_buf(buffer, size);
+  }
 }
 
 void Inflight_read::issue()
 {
+  // we need to know how large the file is, so as to not read off the end.
+  auto key = pack_inode_key(ino);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 0),
+		 &inode_fetch);
+  
   uint64_t start_block = htobe64(off >> BLOCKBITS);
-  uint64_t stop_block  = htobe64(((off + size) >> BLOCKBITS) + 0);
+  // reading off the end of what's there doesn't matter.
+  uint64_t stop_block  = htobe64(((off + requested_size) >> BLOCKBITS) + 0);
 
   auto start = pack_fileblock_key(ino, start_block);
   auto stop  = pack_fileblock_key(ino, stop_block);
