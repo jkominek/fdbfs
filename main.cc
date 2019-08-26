@@ -41,8 +41,8 @@ extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent,
 extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino);
 extern "C" void fdbfs_symlink(fuse_req_t req, const char *link,
 			      fuse_ino_t parent, const char *name);
+extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, struct fuse_file_info *fi);
 /*
-extern void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, struct fuse_file_info *fi);
 extern void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi);
 extern void fdbfs_rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent, const char *newname);
 */
@@ -65,8 +65,8 @@ static struct fuse_lowlevel_ops fdbfs_oper =
     .link       = fdbfs_link,
     .readlink   = fdbfs_readlink,
     .symlink    = fdbfs_symlink,
-    /*
     .setattr	= fdbfs_setattr,
+    /*
     .write      = fdbfs_write,
     .rename     = fdbfs_rename,
     */
