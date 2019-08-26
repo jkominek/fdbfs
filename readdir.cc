@@ -70,16 +70,13 @@ void Inflight_readdir::callback()
   size_t consumed_buffer = 0;
   size_t remaining_buffer = size;
 
-  debug_print("fdfs_readdir_callback processing response for req %p. got %i KVs\n", req, kvcount);
-  
   for(int i=0; i<kvcount; i++) {
     FDBKeyValue kv = kvs[i];
 
     char name[1024];
     if(kv.key_length <= dirent_prefix_len) {
       // serious internal error. we somehow got back a key that was too short?
-      debug_print("fdbfs_readdir_callback internal error for request %p on kv %i. key value is shorter than the prefix of a dirent!\n", req, i);
-      fuse_reply_err(req, 666);
+      abort(EIO);
       return;
     }
     int keylen = kv.key_length - dirent_prefix_len;

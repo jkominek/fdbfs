@@ -1,7 +1,7 @@
 
 #define FUSE_USE_VERSION 26
 #include <fuse_lowlevel.h>
-#define FDB_API_VERSION 600
+#define FDB_API_VERSION 610
 #include <foundationdb/fdb_c.h>
 
 #include <stdio.h>
@@ -9,7 +9,6 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <assert.h>
 
 #include "util.h"
@@ -24,61 +23,74 @@
  * REAL PLAN
  * ???
  */
-struct fdbfs_inflight_readlink {
-  struct fdbfs_inflight_base base;
+class Inflight_readlink : Inflight {
+public:
+  Inflight_readlink(fuse_req_t, fuse_ino_t, FDBTransaction * = 0);
+  Inflight_readlink *reincarnate();
+  void issue();
+private:
   fuse_ino_t ino;
+  unique_future inode_fetch;
+  void callback();
 };
 
-void fdbfs_readlink_callback(FDBFuture *f, void *p)
+Inflight_readlink::Inflight_readlink(fuse_req_t req, fuse_ino_t ino,
+				     FDBTransaction *transaction)
+  : Inflight(req, false, transaction), ino(ino)
 {
-  struct fdbfs_inflight_readlink *inflight = p;
+}
 
+Inflight_readlink *Inflight_readlink::reincarnate()
+{
+  Inflight_readlink *x = new Inflight_readlink(req, ino,
+					       transaction.release());
+  delete this;
+  return x;
+}
+
+void Inflight_readlink::callback()
+{
   fdb_bool_t present=0;
   uint8_t *val;
   int vallen;
-  fdb_future_get_value(f, &present, (const uint8_t **)&val, &vallen);
-
-  if(present) {
-    INodeRecord *inode = inode_record__unpack(NULL, vallen, val);
-    if((inode==NULL) || (inode->symlink==NULL)) {
-      // no good
-    }
-    fuse_reply_readlink(inflight->base.req, inode->symlink);
-    inode_record__free_unpacked(inode, NULL);
-  } else {
-    fuse_reply_err(inflight->base.req, ENOENT);
+  if(fdb_future_get_value(inode_fetch.get(),
+			  &present, (const uint8_t **)&val, &vallen)) {
+    restart();
+    return;
   }
 
-  fdb_future_destroy(f);
-  fdbfs_inflight_cleanup(p);
+  if(present) {
+    INodeRecord inode;
+    inode.ParseFromArray(val, vallen);
+    if(!inode.has_symlink()) {
+      if(inode.type() == symlink) {
+	abort(EIO);
+      } else {
+	abort(EINVAL);
+      }
+      return;
+    }
+    reply_readlink(inode.symlink().c_str());
+  } else {
+    abort(ENOENT);
+    return;
+  }
 }
 
-void fdbfs_readlink_issuer(void *p)
+void Inflight_readlink::issue()
 {
-  struct fdbfs_inflight_readlink *inflight = p;
-
-  // pack the inode key
-  uint8_t key[512];
-  int keylen;
-
-  pack_inode_key(inflight->ino, key, &keylen);
+  auto key = pack_inode_key(ino);
 
   // and request just that inode
-  FDBFuture *f = fdb_transaction_get(inflight->base.transaction, key, keylen, 0);
-
-  fdb_future_set_callback(f, fdbfs_error_checker, p);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 0),
+		 &inode_fetch);
+  cb.emplace(std::bind(&Inflight_readlink::callback, this));
+  begin_wait();
 }
 
-void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino)
+extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino)
 {
-  // get the file attributes of an inode
-  struct fdbfs_inflight_readlink *inflight;
-  inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_readlink),
-				   req,
-				   fdbfs_readlink_callback,
-				   fdbfs_readlink_issuer,
-				   T_READONLY);
-  inflight->ino = ino;
-
-  fdbfs_readlink_issuer(inflight);
+  Inflight_readlink *inflight = new Inflight_readlink(req, ino);
+  inflight->issue();
 }

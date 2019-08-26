@@ -1,7 +1,7 @@
 
 #define FUSE_USE_VERSION 26
 #include <fuse_lowlevel.h>
-#define FDB_API_VERSION 600
+#define FDB_API_VERSION 610
 #include <foundationdb/fdb_c.h>
 
 #include <stdio.h>
@@ -9,12 +9,11 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <assert.h>
 
 #include "util.h"
 #include "inflight.h"
-#include "values.pb-c.h"
+#include "values.pb.h"
 
 /*************************************************************
  * symlink
@@ -28,189 +27,150 @@
  * REAL PLAN
  * ???
  */
-struct fdbfs_inflight_symlink {
-  struct fdbfs_inflight_base base;
-  FDBFuture *inode_check;
-  FDBFuture *dirent_check;
+class Inflight_symlink : Inflight {
+public:
+  Inflight_symlink(fuse_req_t, std::string, fuse_ino_t, std::string,
+		   FDBTransaction * = 0);
+  Inflight_symlink *reincarnate();
+  void issue();
+private:
+  unique_future inode_check;
+  unique_future dirent_check;
+  unique_future commit;
+  std::string link;
   fuse_ino_t parent;
+  std::string name;
   fuse_ino_t ino;
   struct stat attr;
-  char *name;
-  int namelen;
-  char *link;
-  int linklen;
+
+  void postverification();
+  void commit_cb();
 };
 
-void fdbfs_symlink_commit_cb(FDBFuture *f, void *p)
+Inflight_symlink::Inflight_symlink(fuse_req_t req, std::string link,
+				   fuse_ino_t parent, std::string name,
+				   FDBTransaction *transaction)
+  : Inflight(req, true, transaction), link(link), parent(parent), name(name)
 {
-  struct fdbfs_inflight_symlink *inflight = p;
-  
+}
+
+Inflight_symlink *Inflight_symlink::reincarnate()
+{
+  Inflight_symlink *x = new Inflight_symlink(req, link, parent, name,
+					     transaction.release());
+  delete this;
+  return x;
+}
+
+void Inflight_symlink::commit_cb()
+{
   struct fuse_entry_param e;
   bzero(&e, sizeof(struct fuse_entry_param));
-  e.ino = inflight->ino;
+  e.ino = ino;
   e.generation = 1;
-  bcopy(&(inflight->attr), &(e.attr), sizeof(struct stat));
+  bcopy(&(attr), &(e.attr), sizeof(struct stat));
   e.attr_timeout = 0.01;
   e.entry_timeout = 0.01;
 
-  debug_print("fdbfs_symlink_commit_cb returning ino %lx ino %lx\n", e.ino, e.attr.st_ino);
-  
-  int ret = fuse_reply_entry(inflight->base.req, &e);
-  debug_print("fdbfs_symlink_commit_cb fuse_reply_entry returned %i\n", ret);
-  fdb_future_destroy(f);
-  fdbfs_inflight_cleanup(p);
+  reply_entry(&e);
 }
 
-void fdbfs_symlink_issueverification(void *p);
-
-void fdbfs_symlink_postverification(FDBFuture *f, void *p)
+void Inflight_symlink::postverification()
 {
-  struct fdbfs_inflight_symlink *inflight = p;
-
-  // make sure all of our futures are ready
-  if(!fdb_future_is_ready(inflight->inode_check)) {
-    fdb_future_set_callback(inflight->inode_check, fdbfs_error_checker, p);
-    return;
-  }
-  if(!fdb_future_is_ready(inflight->dirent_check)) {
-    fdb_future_set_callback(inflight->dirent_check, fdbfs_error_checker, p);
-    return;
-  }
-
   fdb_bool_t inode_present, dirent_present;
   const uint8_t *value; int valuelen;
-  fdb_future_get_value(inflight->dirent_check, &dirent_present, &value, &valuelen);
-  fdb_future_get_value(inflight->inode_check, &inode_present, &value, &valuelen);
+  if(fdb_future_get_value(dirent_check.get(),
+			  &dirent_present, &value, &valuelen) ||
+     fdb_future_get_value(inode_check.get(),
+			  &inode_present, &value, &valuelen)) {
+    restart();
+    return;
+  }
   
-  fdb_future_destroy(inflight->inode_check);
-  fdb_future_destroy(inflight->dirent_check);
-
   if(dirent_present) {
     // can't make this entry, there's already something there
-    fuse_reply_err(inflight->base.req, EEXIST);
-    fdbfs_inflight_cleanup(p);
+    abort(EEXIST);
     return;
   }
 
   if(inode_present) {
     // astonishingly we guessed an inode that already exists.
     // try this again!
-    fdbfs_symlink_issueverification(p);
+    restart();
     return;
   }
 
-  INodeRecord inode = INODE_RECORD__INIT;
-  inode.inode = inflight->ino;
-  inode.type = FILETYPE__symlink;
-  inode.nlinks = 1;
-  inode.symlink = inflight->link;
-  inode.has_nlinks = inode.has_inode = inode.has_type = 1;
+  INodeRecord inode;
+  inode.set_inode(ino);
+  inode.set_type(symlink);
+  inode.set_nlinks(1);
+  inode.set_symlink(link);
 
-  Timespec atime = TIMESPEC__INIT,
-    mtime = TIMESPEC__INIT,
-    ctime = TIMESPEC__INIT;
-  inode.atime = &atime;
-  inode.atime->sec = 1565989127;
-  inode.atime->nsec = 0;
-  inode.atime->has_sec = inode.atime->has_nsec = 1;
+  inode.mutable_atime()->set_sec(1565989127);
+  inode.mutable_atime()->set_nsec(0);
 
-  inode.mtime = &mtime;
-  inode.mtime->sec = 1565989127;
-  inode.mtime->nsec = 0;
-  inode.mtime->has_sec = inode.mtime->has_nsec = 1;
+  inode.mutable_mtime()->set_sec(1565989127);
+  inode.mutable_mtime()->set_nsec(0);
 
-  inode.ctime = &ctime;
-  inode.ctime->sec = 1565989127;
-  inode.ctime->nsec = 0;
-  inode.ctime->has_sec = inode.ctime->has_nsec = 1;
+  inode.mutable_ctime()->set_sec(1565989127);
+  inode.mutable_ctime()->set_nsec(0);
 
   // wrap it up to be returned to fuse later
-  pack_inode_record_into_stat(&inode, &(inflight->attr));
+  pack_inode_record_into_stat(&inode, &(attr));
   
   // set the inode KV pair
-  uint8_t key[2048]; int keylen;
-  pack_inode_key(inflight->ino, key, &keylen);
-  int inode_size = inode_record__get_packed_size(&inode);
+  auto key = pack_inode_key(ino);
+  int inode_size = inode.ByteSize();
   uint8_t inode_buffer[inode_size];
-  inode_record__pack(&inode, inode_buffer);
+  inode.SerializeToArray(inode_buffer, inode_size);
   
-  fdb_transaction_set(inflight->base.transaction,
-		      key, keylen,
+  fdb_transaction_set(transaction.get(),
+		      key.data(), key.size(),
 		      inode_buffer, inode_size);
   
-  DirectoryEntry dirent = DIRECTORY_ENTRY__INIT;
-  dirent.inode = inflight->ino;
-  dirent.type = FILETYPE__symlink;
-  dirent.has_inode = dirent.has_type = 1;
+  DirectoryEntry dirent;
+  dirent.set_inode(ino);
+  dirent.set_type(symlink);
 
-  int dirent_size = directory_entry__get_packed_size(&dirent);
+  int dirent_size = dirent.ByteSize();
   uint8_t dirent_buffer[dirent_size];
-  directory_entry__pack(&dirent, dirent_buffer);
+  dirent.SerializeToArray(dirent_buffer, dirent_size);
 
-  printf("SYMLINK.C dirent size %i\n", dirent_size);
-  pack_dentry_key(inflight->parent, inflight->name, inflight->namelen, key, &keylen);
-  fdb_transaction_set(inflight->base.transaction,
-		      key, keylen,
+  key = pack_dentry_key(parent, name);
+  fdb_transaction_set(transaction.get(),
+		      key.data(), key.size(),
 		      dirent_buffer, dirent_size);
 
-  // if the commit works, we can reply to fuse and clean up
-  // if it doesn't, the issuer will try again.
-  inflight->base.cb = fdbfs_symlink_commit_cb;
-  fdb_future_set_callback(fdb_transaction_commit(inflight->base.transaction),
-			  fdbfs_error_checker, p);
+  wait_on_future(fdb_transaction_commit(transaction.get()),
+		 &commit);
+  cb.emplace(std::bind(&Inflight_symlink::commit_cb, this));
+  begin_wait();
 }
 
-void fdbfs_symlink_issueverification(void *p)
+void Inflight_symlink::issue()
 {
-  struct fdbfs_inflight_symlink *inflight = p;
+  ino = generate_inode();
 
-  inflight->ino = generate_inode();
-  // reset this in case commit failed
-  inflight->base.cb = fdbfs_symlink_postverification;
+  auto key = pack_dentry_key(parent, name);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 0),
+		 &dirent_check);
 
-  uint8_t key[512];
-  int keylen;
-  pack_dentry_key(inflight->parent, inflight->name, inflight->namelen, key, &keylen);
-  inflight->dirent_check = fdb_transaction_get(inflight->base.transaction, key, keylen, 0);
+  key = pack_inode_key(ino);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 0),
+		 &inode_check);
 
-  pack_inode_key(inflight->ino, key, &keylen);
-  inflight->inode_check = fdb_transaction_get(inflight->base.transaction, key, keylen, 0);
-
-  // only call back on one of the futures; it'll chain to the other.
-  // we'll set it on the dirent as anything returned there allows us to
-  // abort and cancel the other future sooner.
-  fdb_future_set_callback(inflight->dirent_check, fdbfs_error_checker, p);
+  cb.emplace(std::bind(&Inflight_symlink::postverification, this));
+  begin_wait();
 }
 
-void fdbfs_symlink(fuse_req_t req, const char *link,
-		   fuse_ino_t parent, const char *name)
+extern "C" void fdbfs_symlink(fuse_req_t req, const char *link,
+			      fuse_ino_t parent, const char *name)
 {
-  // get the file attributes of an inode
-  struct fdbfs_inflight_symlink *inflight;
-  int namelen = strlen(name);
-  int linklen = strlen(link);
-  inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_symlink) +
-				   linklen + 1 +
-				   namelen + 1,
-				   req,
-				   fdbfs_symlink_postverification,
-				   fdbfs_symlink_issueverification,
-				   T_READWRITE);
-  inflight->parent = parent;
-
-  inflight->name = ((char *)inflight) +
-    sizeof(struct fdbfs_inflight_symlink);
-  inflight->namelen = namelen;
-
-  inflight->link = inflight->name + namelen + 1;
-  inflight->linklen = linklen;
-
-  bcopy(name, inflight->name, namelen);
-  *(inflight->name+namelen) = '\0';
-  bcopy(link, inflight->link, linklen);
-  *(inflight->link+linklen) = '\0';
-
-  debug_print("fdbfs_symlink taking off for req %p\n", inflight->base.req);
-
-  fdbfs_symlink_issueverification(inflight);
+  std::string slink(link);
+  std::string sname(name);
+  Inflight_symlink *inflight =
+    new Inflight_symlink(req, slink, parent, sname);
+  inflight->issue();
 }

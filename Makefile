@@ -1,6 +1,6 @@
 CXX=clang++-6.0 -std=c++17 -fPIC
 
-fs: main.o inflight.o util.o values.pb.o getattr.o lookup.o readdir.o read.o open.o mknod.o unlink.o #x link.o readlink.o symlink.o write.o setattr.o rename.o
+fs: main.o inflight.o util.o values.pb.o getattr.o lookup.o readdir.o read.o open.o mknod.o unlink.o link.o readlink.o symlink.o # write.o setattr.o rename.o
 	$(CXX) -pg -g -Wall $^  `pkg-config fuse --libs` `pkg-config --libs protobuf` -lfdb_c -lm -o fs
 
 values.pb.h: values.proto

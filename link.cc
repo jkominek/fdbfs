@@ -3,14 +3,13 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <assert.h>
 #include <pthread.h>
 #include <stdbool.h>
 
 #include "util.h"
 #include "inflight.h"
-#include "values.pb-c.h"
+#include "values.pb.h"
 
 /*************************************************************
  * link
@@ -26,210 +25,185 @@
  * TRANSACTIONAL BEHAVIOR
  * nothing special
  */
-struct fdbfs_inflight_link {
-  struct fdbfs_inflight_base base;
-
+class Inflight_link : Inflight {
+public:
+  Inflight_link(fuse_req_t, fuse_ino_t, fuse_ino_t, std::string,
+		FDBTransaction * = 0);
+  Inflight_link *reincarnate();
+  void issue();
+private:
   fuse_ino_t ino;
   fuse_ino_t newparent;
-  char *name;
-  int namelen;
+  std::string newname;
 
-  INodeRecord *inode;
+  INodeRecord inode;
 
+  void check();
+  void commit_cb();
+  
   // is the file to link a non-directory?
-  FDBFuture *file_lookup;
+  unique_future file_lookup;
   // is the destination location a directory?
-  FDBFuture *dir_lookup;
+  unique_future dir_lookup;
   // does the destination location already exist?
-  FDBFuture *target_lookup;
+  unique_future target_lookup;
+
+  unique_future commit;
 };
 
-void fdbfs_link_commit_cb(FDBFuture *f, void *p)
+Inflight_link::Inflight_link(fuse_req_t req, fuse_ino_t ino,
+			     fuse_ino_t newparent, std::string newname,
+			     FDBTransaction *transaction)
+  : Inflight(req, true, transaction), ino(ino),
+    newparent(newparent), newname(newname)
 {
-  struct fdbfs_inflight_link *inflight = p;
-  
-  struct fuse_entry_param e;
-  bzero(&e, sizeof(struct fuse_entry_param));
-  e.ino = inflight->ino;
-  e.generation = 1;
-  pack_inode_record_into_stat(inflight->inode, &(e.attr));
-  e.attr_timeout = 0.01;
-  e.entry_timeout = 0.01;
-
-  if(inflight->inode)
-    inode_record__free_unpacked(inflight->inode, NULL);
-  fuse_reply_entry(inflight->base.req, &e);
-  fdb_future_destroy(f);
-  fdbfs_inflight_cleanup(p);
 }
 
-void fdbfs_link_check(FDBFuture *f, void *p)
+Inflight_link *Inflight_link::reincarnate()
 {
-  struct fdbfs_inflight_link *inflight = p;
+  Inflight_link *x = new Inflight_link(req, ino, newparent, newname,
+				       transaction.release());
+  delete this;
+  return x;
+}
 
-  if(!fdb_future_is_ready(inflight->dir_lookup)) {
-    fdb_future_set_callback(inflight->dir_lookup, fdbfs_error_checker, p);
-    return;
-  }
-  if(!fdb_future_is_ready(inflight->target_lookup)) {
-    fdb_future_set_callback(inflight->target_lookup, fdbfs_error_checker, p);
-    return;
-  }
+void Inflight_link::commit_cb()
+{
+  struct fuse_entry_param e;
+  bzero(&e, sizeof(struct fuse_entry_param));
+  e.ino = ino;
+  e.generation = 1;
+  pack_inode_record_into_stat(&inode, &(e.attr));
+  e.attr_timeout = 0.01;
+  e.entry_timeout = 0.01;
+  reply_entry(&e);
+}
 
+void Inflight_link::check()
+{
   fdb_bool_t present=0;
   uint8_t *val;
   int vallen;
 
-  int err = 0; // fuse error, if there is one
-  
   // is the file a non-directory?
-  fdb_future_get_value(inflight->file_lookup, &present,
-		       (const uint8_t **)&val, &vallen);
+  if(fdb_future_get_value(file_lookup.get(), &present,
+			  (const uint8_t **)&val, &vallen)) {
+    restart();
+    return;
+  }
   if(present) {
-    inflight->inode = inode_record__unpack(NULL, vallen, val);
-    if((inflight->inode==NULL) || (!inflight->inode->has_type)) {
+    inode.ParseFromArray(val, vallen);
+    if(!inode.has_type()) {
       // error
-      err = EIO;
-    } else if(inflight->inode->type == S_IFDIR) {
+      abort(EIO);
+      return;
+    } else if(inode.type() == directory) {
       // can hardlink anything except a directory
-      err = EPERM;
+      abort(EPERM);
+      return;
     }
     // we could lift this value and save it for the
     // other dirent we need to create?
   } else {
     // apparently it isn't there. sad.
-    err = ENOENT;
+    abort(ENOENT);
   }    
 
   // is the directory a directory?
-  fdb_future_get_value(inflight->dir_lookup, &present,
-		       (const uint8_t **)&val, &vallen);
+  if(fdb_future_get_value(dir_lookup.get(), &present,
+			  (const uint8_t **)&val, &vallen)) {
+    restart();
+    return;
+  }
   if(present) {
-    INodeRecord *dirinode = inode_record__unpack(NULL, vallen, val);
-    if((dirinode==NULL) || (!dirinode->has_type)) {
+    INodeRecord dirinode;
+    dirinode.ParseFromArray(val, vallen);
+    if(!dirinode.has_type()) {
       // error
     }
-    if(dirinode->type != S_IFDIR) {
+    if(dirinode.type() != directory) {
       // have to hardlink into a directory
-      err = ENOTDIR;
+      abort(ENOTDIR);
+      return;
     }
-    inode_record__free_unpacked(dirinode, NULL);
   } else {
-    err = ENOENT;
-  }
-
-  // Does the target exist?
-  fdb_future_get_value(inflight->target_lookup, &present,
-		       (const uint8_t **)&val, &vallen);
-  if(present) {
-    // that's an error. :(
-    err = EEXIST;
-  }
-
-  // (we'll clean these up now, since we're done with them)
-  fdb_future_destroy(inflight->file_lookup);
-  fdb_future_destroy(inflight->dir_lookup);
-  fdb_future_destroy(inflight->target_lookup);
-
-  if(err) {
-    // some sort of error.
-    if(inflight->inode)
-      inode_record__free_unpacked(inflight->inode, NULL);
-    fuse_reply_err(inflight->base.req, err);
-    fdbfs_inflight_cleanup(p);
+    abort(ENOENT);
     return;
   }
 
-  uint8_t key[1024]; // TODO size
-  int keylen;
+  // Does the target exist?
+  if(fdb_future_get_value(target_lookup.get(), &present,
+			  (const uint8_t **)&val, &vallen)) {
+    restart();
+    return;
+  }
+  if(present) {
+    // that's an error. :(
+    abort(EEXIST);
+    return;
+  }
 
   // need to update the inode attributes
-  pack_inode_key(inflight->ino, key, &keylen);
-  inflight->inode->nlinks += 1;
+  auto key = pack_inode_key(ino);
+  inode.set_nlinks(inode.nlinks()+1);
   // TODO do we need to touch any other inode attributes when
   // creating a hard link?
-  uint8_t inode_buffer[2048]; // TODO size
-  int inode_size = inode_record__get_packed_size(inflight->inode);
-  inode_record__pack(inflight->inode, inode_buffer);
-  fdb_transaction_set(inflight->base.transaction,
-		      key, keylen,
+  int inode_size = inode.ByteSize();
+  uint8_t inode_buffer[inode_size];
+  inode.SerializeToArray(inode_buffer, inode_size);
+  fdb_transaction_set(transaction.get(),
+		      key.data(), key.size(),
 		      inode_buffer, inode_size);
 
   // also need to add the new directory entry
-  uint8_t dirent_buffer[2048];
-  int dirent_size;
-  {
-    DirectoryEntry dirent = DIRECTORY_ENTRY__INIT;
-    dirent.inode = inflight->ino;
-    dirent.type = inflight->inode->type;
-    dirent.has_inode = dirent.has_type = 1;
+  DirectoryEntry dirent;
+  dirent.set_inode(ino);
+  dirent.set_type(inode.type());
 
-    dirent_size = directory_entry__get_packed_size(&dirent);
-    // TODO size checking
-    directory_entry__pack(&dirent, dirent_buffer);
-  }
-  pack_dentry_key(inflight->newparent,
-		  inflight->name, inflight->namelen,
-		  key, &keylen);
-  fdb_transaction_set(inflight->base.transaction,
-		      key, keylen,
+  key = pack_dentry_key(newparent, newname);
+  int dirent_size = dirent.ByteSize();
+  uint8_t dirent_buffer[dirent_size];
+  dirent.SerializeToArray(dirent_buffer, dirent_size);
+  fdb_transaction_set(transaction.get(),
+		      key.data(), key.size(),
 		      dirent_buffer, dirent_size);
 
   // commit
-  inflight->base.cb = fdbfs_link_commit_cb;
-  fdb_future_set_callback(fdb_transaction_commit(inflight->base.transaction),
-			  fdbfs_error_checker, p);
-  return;
-
+  cb.emplace(std::bind(&Inflight_link::commit_cb, this));
+  wait_on_future(fdb_transaction_commit(transaction.get()), &commit);
+  begin_wait();
 }
 
-void fdbfs_link_issuer(void *p)
+void Inflight_link::issue()
 {
-  struct fdbfs_inflight_link *inflight = p;
-
-  // TODO ensure this is sized right.
-  uint8_t key[1024];
-  int keylen;
   // check that the file is a file
-  pack_inode_key(inflight->ino, key, &keylen);
-  inflight->file_lookup =
-    fdb_transaction_get(inflight->base.transaction, key, keylen, 0);
+  auto key = pack_inode_key(ino);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 0),
+		 &file_lookup);
 
   // check destination is a directory
-  pack_inode_key(inflight->newparent, key, &keylen);
-  inflight->dir_lookup =
-    fdb_transaction_get(inflight->base.transaction, key, keylen, 0);
+  key = pack_inode_key(newparent);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 0),
+		 &dir_lookup);
 
   // check nothing exists in the destination
-  pack_dentry_key(inflight->newparent, inflight->name, inflight->namelen,
-		  key, &keylen);
-  inflight->target_lookup =
-    fdb_transaction_get(inflight->base.transaction, key, keylen, 0);
-  
-  inflight->base.cb = fdbfs_link_check;
-  fdb_future_set_callback(inflight->file_lookup, fdbfs_error_checker, p);
+  key = pack_dentry_key(newparent, newname);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 0),
+		 &target_lookup);
+
+  cb.emplace(std::bind(&Inflight_link::check, this));
+  begin_wait();
 }
 
-void fdbfs_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newname)
+extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino,
+			   fuse_ino_t newparent,
+			   const char *newname)
 {
-  int namelen = strlen(newname);
-
-  struct fdbfs_inflight_link *inflight;
-  // to just make one allocation, we'll stuff our copy of the name
-  // right after the struct.
-  inflight = fdbfs_inflight_create(sizeof(struct fdbfs_inflight_link) +
-				   namelen + 1,
-				   req,
-				   fdbfs_link_check,
-				   fdbfs_link_issuer,
-				   T_READWRITE);
-
-  inflight->ino = ino;
-  inflight->newparent = newparent;
-  inflight->namelen = namelen;
-  inflight->name = ((char*)inflight) + sizeof(struct fdbfs_inflight_link);
-
-  strncpy(inflight->name, newname, namelen+1);
-  
-  fdbfs_link_issuer(inflight);
+  std::string snewname(newname);
+  Inflight_link *inflight =
+    new Inflight_link(req, ino, newparent, snewname);
+  inflight->issue();
 }

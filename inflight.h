@@ -65,6 +65,7 @@ class Inflight {
   void reply_entry(struct fuse_entry_param *);
   void reply_attr(struct stat *);
   void reply_buf(char *, size_t);
+  void reply_readlink(const char *);
 
   std::experimental::optional<std::function<void()>> cb;
 

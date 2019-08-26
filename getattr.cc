@@ -67,10 +67,8 @@ void Inflight_getattr::callback()
   if(present) {
     struct stat attr;
     unpack_stat_from_dbvalue(val, vallen, &attr);
-    debug_print("getattr returning for inode %016lx\n", ino);
     reply_attr(&attr);
   } else {
-    debug_print("getattr failed to find inode %016lx\n", ino);
     abort(EFAULT);
   }
 }

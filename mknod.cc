@@ -118,7 +118,6 @@ void Inflight_mknod::postverification()
   inode.set_uid(0);
   inode.set_uid(0);
 
-  Timespec atime, mtime, ctime;
   inode.mutable_atime()->set_sec(1565989127);
   inode.mutable_atime()->set_nsec(0);
 
