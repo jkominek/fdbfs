@@ -169,6 +169,12 @@ void Inflight::reply_readlink(const char *name)
   delete this;
 }
 
+void Inflight::reply_write(size_t size)
+{
+  fuse_reply_write(req, size);
+  delete this;
+}
+
 void Inflight::restart()
 {
   fdb_transaction_reset(transaction.get());
