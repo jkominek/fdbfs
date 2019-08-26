@@ -132,7 +132,7 @@ void Inflight_rename::complicated()
     // the first record had better be the inode
     INodeRecord inode;
     inode.ParseFromArray(kvs[0].value, kvs[0].value_length);
-    if(!inode.has_nlinks()) {
+    if(!inode.IsInitialized()) {
       // well, bugger
       abort(EIO);
       return;

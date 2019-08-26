@@ -86,6 +86,7 @@ void Inflight_lookup::process_inode()
   inode.ParseFromArray(val, vallen);
   if(!inode.IsInitialized()) {
     abort(EIO);
+    return;
   }
 
   struct fuse_entry_param e;

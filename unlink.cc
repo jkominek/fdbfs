@@ -156,7 +156,7 @@ void Inflight_unlink_rmdir::inode_check()
   // we're just going to pretend for now that we found the right record
   INodeRecord inode;
   inode.ParseFromArray(inode_kv.value, inode_kv.value_length);
-  if(!inode.has_nlinks()) {
+  if(!(inode.IsInitialized() && inode.has_nlinks())) {
     abort(EIO);
     return;
   }
@@ -219,8 +219,10 @@ void Inflight_unlink_rmdir::postlookup()
   {
     DirectoryEntry dirent;
     dirent.ParseFromArray(value, valuelen);
-    if((!dirent.has_inode()) || (!dirent.has_type())) {
-        // more terrible errors
+    if(!dirent.IsInitialized()) {
+      // bad record,
+      abort(EIO);
+      return;
     }
 
     ino = dirent.inode();

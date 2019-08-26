@@ -82,6 +82,11 @@ void Inflight_setattr::callback()
 
   INodeRecord inode;
   inode.ParseFromArray(val, vallen);
+  if(!inode.IsInitialized()) {
+    // bad inode
+    abort(EIO);
+    return;
+  }
 
   // update inode!
 

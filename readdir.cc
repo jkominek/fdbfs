@@ -91,8 +91,9 @@ void Inflight_readdir::callback()
       DirectoryEntry dirent;
       dirent.ParseFromArray(kv.value, kv.value_length);
 
-      if((!dirent.has_inode()) || (!dirent.has_type())) {
-	// more terrible errors
+      if(!dirent.IsInitialized()) {
+	abort(EIO);
+	return;
       }
       attr.st_ino = dirent.inode();
       attr.st_mode = dirent.type();

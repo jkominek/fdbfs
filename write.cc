@@ -99,7 +99,8 @@ void Inflight_write::check()
     INodeRecord inode;
     inode.ParseFromArray(val, vallen);
 
-    if((!inode.has_type()) || (!inode.has_size()) ||
+    if((!inode.IsInitialized()) ||
+       (!inode.has_type()) || (!inode.has_size()) ||
        (inode.type() != regular)) {
       abort(EINVAL);
       return;
