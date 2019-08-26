@@ -46,7 +46,7 @@ std::vector<uint8_t> pack_inode_key(fuse_ino_t ino)
   return key;
 }
 
-int fileblock_prefix_length = pack_inode_key(0).size() + 1;
+int fileblock_prefix_length;
 std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t block)
 {
   auto key = pack_inode_key(ino);

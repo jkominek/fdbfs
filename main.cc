@@ -95,6 +95,7 @@ int main(int argc, char *argv[])
 
   key_prefix.push_back('F');
   key_prefix.push_back('S');
+  fileblock_prefix_length = pack_inode_key(0).size() + 1;
   BLOCKBITS = 13;
   BLOCKSIZE = 1<<BLOCKBITS;
   
