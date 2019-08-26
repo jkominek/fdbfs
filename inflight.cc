@@ -13,6 +13,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <functional>
@@ -120,11 +121,14 @@ void Inflight::future_ready(FDBFuture *f)
 
 void Inflight::begin_wait()
 {
-  if(future_queue.empty())
+  if(future_queue.empty()) {
+    std::cout << "tried to start waiting on empty future queue" << std::endl;
     throw std::runtime_error("tried to start waiting on empty future queue");
+  }
   if(fdb_future_set_callback(future_queue.front(),
 			     fdbfs_error_checker,
 			     static_cast<void*>(this))) {
+    std::cout << "failed to set future callback" << std::endl;
     throw std::runtime_error("failed to set future callback");
   }
 }
