@@ -39,7 +39,7 @@ class Inflight_read : public Inflight {
 public:
   Inflight_read(fuse_req_t, fuse_ino_t, size_t, off_t,
 		FDBTransaction * = 0);
-  void issue();
+  InflightCallback issue();
   Inflight_read *reincarnate();
   
 private:
@@ -157,7 +157,7 @@ InflightAction Inflight_read::callback()
   }
 }
 
-void Inflight_read::issue()
+InflightCallback Inflight_read::issue()
 {
   // we need to know how large the file is, so as to not read off the end.
   auto key = pack_inode_key(ino);
@@ -180,7 +180,7 @@ void Inflight_read::issue()
 			      FDB_STREAMING_MODE_WANT_ALL, 0,
 			      0, 0);
   wait_on_future(f, &range_fetch);
-  cb.emplace(std::bind(&Inflight_read::callback, this));
+  return std::bind(&Inflight_read::callback, this);
 }
 
 extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,

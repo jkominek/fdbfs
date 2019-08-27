@@ -32,7 +32,7 @@ public:
   Inflight_mknod(fuse_req_t, fuse_ino_t, std::string, mode_t,
 		 filetype, dev_t, FDBTransaction * = 0);
   Inflight_mknod *reincarnate();
-  void issue();
+  InflightCallback issue();
 private:
   unique_future inode_check;
   unique_future dirent_check;
@@ -150,12 +150,11 @@ InflightAction Inflight_mknod::postverification()
 
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
-  cb.emplace(std::bind(&Inflight_mknod::commit_cb, this));
 
-  return InflightAction::BeginWait();
+  return InflightAction::BeginWait(std::bind(&Inflight_mknod::commit_cb, this));
 }
 
-void Inflight_mknod::issue()
+InflightCallback Inflight_mknod::issue()
 {
   ino = generate_inode();
 
@@ -169,7 +168,7 @@ void Inflight_mknod::issue()
 				     key.data(), key.size(), 0),
 		 &inode_check);
 
-  cb.emplace(std::bind(&Inflight_mknod::postverification, this));
+  return std::bind(&Inflight_mknod::postverification, this);
 }
 
 extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent,

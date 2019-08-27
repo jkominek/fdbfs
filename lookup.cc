@@ -36,7 +36,7 @@
 class Inflight_lookup : public Inflight {
 public:
   Inflight_lookup(fuse_req_t, fuse_ino_t, std::string, FDBTransaction * = NULL);
-  void issue();
+  InflightCallback issue();
   Inflight_lookup *reincarnate();
 private:
   fuse_ino_t parent;
@@ -127,14 +127,13 @@ InflightAction Inflight_lookup::lookup_inode()
     FDBFuture *f = fdb_transaction_get(transaction.get(),
 				       key.data(), key.size(), 1);
     wait_on_future(f, &inode_fetch);
-    cb.emplace(std::bind(&Inflight_lookup::process_inode, this));
-    return InflightAction::BeginWait();
+    return InflightAction::BeginWait(std::bind(&Inflight_lookup::process_inode, this));
   } else {
     return InflightAction::Abort(ENOENT);
   }
 }
 
-void Inflight_lookup::issue()
+InflightCallback Inflight_lookup::issue()
 {
   auto key = pack_dentry_key(parent, name);
 
@@ -142,7 +141,7 @@ void Inflight_lookup::issue()
 				     key.data(), key.size(), 1);
 
   wait_on_future(f, &dirent_fetch);
-  cb.emplace(std::bind(&Inflight_lookup::lookup_inode, this));
+  return std::bind(&Inflight_lookup::lookup_inode, this);
 }
 
 extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)

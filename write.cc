@@ -45,7 +45,7 @@ public:
   Inflight_write(fuse_req_t, fuse_ino_t, std::vector<uint8_t>, off_t,
 		 FDBTransaction * = 0);
   Inflight_write *reincarnate();
-  void issue();
+  InflightCallback issue();
 private:
   unique_future inode_fetch;
   // the future getting the two blocks that can be at the ends
@@ -173,12 +173,11 @@ InflightAction Inflight_write::check()
   // perform all of the writes
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
-  cb.emplace(std::bind(&Inflight_write::commit_cb, this));
 
-  return InflightAction::BeginWait();
+  return InflightAction::BeginWait(std::bind(&Inflight_write::commit_cb, this));
 }
 
-void Inflight_write::issue()
+InflightCallback Inflight_write::issue()
 {
   // step 1 is easy, we'll need the inode record
   auto key = pack_inode_key(ino);
@@ -228,7 +227,7 @@ void Inflight_write::issue()
 			block, BLOCKSIZE);
   }
 
-  cb.emplace(std::bind(&Inflight_write::check, this));
+  return std::bind(&Inflight_write::check, this);
 }
 
 extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,

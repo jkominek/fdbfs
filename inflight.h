@@ -29,12 +29,14 @@ typedef std::unique_ptr<FDBFuture, FDBFutureDeleter> unique_future;
 
 class InflightAction;
 
+typedef std::function<InflightAction()> InflightCallback;
+
 class Inflight {
  public:
   // issuer is what we'll have to run if the future fails.
   // it'll expect the transaction to have been reset
   // (which is guaranteed by fdb)
-  virtual void issue() = 0;
+  virtual InflightCallback issue() = 0;
 
   // makes a new fresh version of the inflight object
   // and suicides the old one.
@@ -53,7 +55,7 @@ class Inflight {
   fuse_req_t req;
 
   void start() {
-    issue();
+    cb.emplace(issue());
     begin_wait();
   }
 
@@ -63,7 +65,7 @@ class Inflight {
   
   void wait_on_future(FDBFuture *, unique_future *);
 
-  std::experimental::optional<std::function<InflightAction()>> cb;
+  std::experimental::optional<InflightCallback> cb;
 
  private:
   // whether we're intended as r/w or not.
@@ -75,13 +77,15 @@ class Inflight {
   struct timespec clockstart;
 #endif
 
-  friend class _InflightAction;
+  friend class InflightAction;
 };
 
 class InflightAction {
  public:
-  static InflightAction BeginWait() {
-    return InflightAction(false, true, false, [](Inflight *){ });
+  static InflightAction BeginWait(InflightCallback newcb) {
+    return InflightAction(false, true, false, [newcb](Inflight *i){
+	i->cb.emplace(newcb);
+      });
   }
   static InflightAction Restart() {
     return InflightAction(false, false, true, [](Inflight *){ });

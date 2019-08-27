@@ -27,7 +27,7 @@ class Inflight_readlink : public Inflight {
 public:
   Inflight_readlink(fuse_req_t, fuse_ino_t, FDBTransaction * = 0);
   Inflight_readlink *reincarnate();
-  void issue();
+  InflightCallback issue();
 private:
   fuse_ino_t ino;
   unique_future inode_fetch;
@@ -74,7 +74,7 @@ InflightAction Inflight_readlink::callback()
   }
 }
 
-void Inflight_readlink::issue()
+InflightCallback Inflight_readlink::issue()
 {
   auto key = pack_inode_key(ino);
 
@@ -82,7 +82,7 @@ void Inflight_readlink::issue()
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
 		 &inode_fetch);
-  cb.emplace(std::bind(&Inflight_readlink::callback, this));
+  return std::bind(&Inflight_readlink::callback, this);
 }
 
 extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino)

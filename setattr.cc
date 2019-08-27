@@ -31,7 +31,7 @@ public:
   Inflight_setattr(fuse_req_t, fuse_ino_t, struct stat, int,
 		   FDBTransaction * = 0);
   Inflight_setattr *reincarnate();
-  void issue();
+  InflightCallback issue();
 private:
   fuse_ino_t ino;
   struct stat attr;
@@ -163,12 +163,11 @@ InflightAction Inflight_setattr::callback()
 
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
-  cb.emplace(std::bind(&Inflight_setattr::commit_cb, this));
 
-  return InflightAction::BeginWait();
+  return InflightAction::BeginWait(std::bind(&Inflight_setattr::commit_cb, this));
 }
 
-void Inflight_setattr::issue()
+InflightCallback Inflight_setattr::issue()
 {
   auto key = pack_inode_key(ino);
 
@@ -176,7 +175,7 @@ void Inflight_setattr::issue()
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
 		 &inode_fetch);
-  cb.emplace(std::bind(&Inflight_setattr::callback, this));
+  return std::bind(&Inflight_setattr::callback, this);
 }
 
 extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino,

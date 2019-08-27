@@ -30,7 +30,7 @@ public:
   Inflight_link(fuse_req_t, fuse_ino_t, fuse_ino_t, std::string,
 		FDBTransaction * = 0);
   Inflight_link *reincarnate();
-  void issue();
+  InflightCallback issue();
 private:
   fuse_ino_t ino;
   fuse_ino_t newparent;
@@ -165,13 +165,12 @@ InflightAction Inflight_link::check()
 		      dirent_buffer, dirent_size);
 
   // commit
-  cb.emplace(std::bind(&Inflight_link::commit_cb, this));
   wait_on_future(fdb_transaction_commit(transaction.get()), &commit);
 
-  return InflightAction::BeginWait();
+  return InflightAction::BeginWait(std::bind(&Inflight_link::commit_cb, this));
 }
 
-void Inflight_link::issue()
+InflightCallback Inflight_link::issue()
 {
   // check that the file is a file
   auto key = pack_inode_key(ino);
@@ -191,7 +190,7 @@ void Inflight_link::issue()
 				     key.data(), key.size(), 0),
 		 &target_lookup);
 
-  cb.emplace(std::bind(&Inflight_link::check, this));
+  return std::bind(&Inflight_link::check, this);
 }
 
 extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino,

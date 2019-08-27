@@ -32,7 +32,7 @@ public:
   Inflight_symlink(fuse_req_t, std::string, fuse_ino_t, std::string,
 		   FDBTransaction * = 0);
   Inflight_symlink *reincarnate();
-  void issue();
+  InflightCallback issue();
 private:
   unique_future inode_check;
   unique_future dirent_check;
@@ -140,12 +140,11 @@ InflightAction Inflight_symlink::postverification()
 
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
-  cb.emplace(std::bind(&Inflight_symlink::commit_cb, this));
 
-  return InflightAction::BeginWait();
+  return InflightAction::BeginWait(std::bind(&Inflight_symlink::commit_cb, this));
 }
 
-void Inflight_symlink::issue()
+InflightCallback Inflight_symlink::issue()
 {
   ino = generate_inode();
 
@@ -159,7 +158,7 @@ void Inflight_symlink::issue()
 				     key.data(), key.size(), 0),
 		 &inode_check);
 
-  cb.emplace(std::bind(&Inflight_symlink::postverification, this));
+  return std::bind(&Inflight_symlink::postverification, this);
 }
 
 extern "C" void fdbfs_symlink(fuse_req_t req, const char *link,

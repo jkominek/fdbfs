@@ -32,7 +32,7 @@
 class Inflight_getattr : public Inflight {
 public:
   Inflight_getattr(fuse_req_t, fuse_ino_t, FDBTransaction * = NULL);
-  void issue();
+  InflightCallback issue();
   Inflight_getattr *reincarnate();
 private:
   fuse_ino_t ino;
@@ -78,7 +78,7 @@ InflightAction Inflight_getattr::callback()
   return InflightAction::Attr(std::move(attr));
 }
 
-void Inflight_getattr::issue()
+InflightCallback Inflight_getattr::issue()
 {
   auto key = pack_inode_key(ino);
 
@@ -86,8 +86,7 @@ void Inflight_getattr::issue()
   FDBFuture *f = fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0);
   wait_on_future(f, &inode_fetch);
-  cb.emplace(std::bind(&Inflight_getattr::callback, this));
-  //std::cout << type_name<decltype(std::bind(&Inflight_getattr::callback, this))>() << std::endl;
+  return std::bind(&Inflight_getattr::callback, this);
 }
 
 extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,

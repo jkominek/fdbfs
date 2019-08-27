@@ -34,7 +34,7 @@ public:
 		  fuse_ino_t, std::string,
 		  int, FDBTransaction * = 0);
   Inflight_rename *reincarnate();
-  void issue();
+  InflightCallback issue();
 private:
   fuse_ino_t oldparent;
   std::string oldname;
@@ -177,9 +177,8 @@ InflightAction Inflight_rename::complicated()
   // commit
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
-  cb.emplace(std::bind(&Inflight_rename::commit_cb, this));
 
-  return InflightAction::BeginWait();
+  return InflightAction::BeginWait(std::bind(&Inflight_rename::commit_cb, this));
 }
 
 InflightAction Inflight_rename::check()
@@ -309,8 +308,7 @@ InflightAction Inflight_rename::check()
 					     FDB_STREAMING_MODE_WANT_ALL, 0,
 					     0, 0),
 		   &inode_metadata_fetch);
-    cb.emplace(std::bind(&Inflight_rename::complicated, this));
-    return InflightAction::BeginWait();
+    return InflightAction::BeginWait(std::bind(&Inflight_rename::complicated, this));
   } else {
     return InflightAction::Abort(ENOSYS);
   }
@@ -318,11 +316,10 @@ InflightAction Inflight_rename::check()
   // commit
   wait_on_future(fdb_transaction_commit(transaction.get()),
                  &commit);
-  cb.emplace(std::bind(&Inflight_rename::commit_cb, this));
-  return InflightAction::BeginWait();
+  return InflightAction::BeginWait(std::bind(&Inflight_rename::commit_cb, this));
 }
 
-void Inflight_rename::issue()
+InflightCallback Inflight_rename::issue()
 {
   auto key = pack_dentry_key(oldparent, oldname);
 
@@ -336,7 +333,7 @@ void Inflight_rename::issue()
 				     key.data(), key.size(), 0),
 		 &destination_lookup);
 
-  cb.emplace(std::bind(&Inflight_rename::check, this));
+  return std::bind(&Inflight_rename::check, this);
 }
 
 extern "C" void fdbfs_rename(fuse_req_t req,

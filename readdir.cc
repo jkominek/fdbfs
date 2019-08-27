@@ -28,7 +28,7 @@ class Inflight_readdir : public Inflight {
 public:
   Inflight_readdir(fuse_req_t, fuse_ino_t, size_t, off_t,
 		   FDBTransaction * = NULL);
-  void issue();
+  InflightCallback issue();
   Inflight_readdir *reincarnate();
 private:
   fuse_ino_t ino;
@@ -118,7 +118,7 @@ InflightAction Inflight_readdir::callback()
   return InflightAction::Buf(buf);
 }
 
-void Inflight_readdir::issue()
+InflightCallback Inflight_readdir::issue()
 {
   auto start = pack_inode_key(ino);
   start.push_back(DENTRY_PREFIX);
@@ -142,7 +142,7 @@ void Inflight_readdir::issue()
 			      FDB_STREAMING_MODE_WANT_ALL, 0,
 			      0, 0);
   wait_on_future(f, &range_fetch);
-  cb.emplace(std::bind(&Inflight_readdir::callback, this));
+  return std::bind(&Inflight_readdir::callback, this);
 }
 
 extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,

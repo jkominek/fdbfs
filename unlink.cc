@@ -36,7 +36,7 @@ public:
   Inflight_unlink_rmdir(fuse_req_t, fuse_ino_t, std::string, bool,
 			FDBTransaction * = 0);
   Inflight_unlink_rmdir *reincarnate();
-  void issue();
+  InflightCallback issue();
 private:
   // for fetching the dirent given parent inode and path name
   unique_future dirent_lookup;
@@ -122,10 +122,9 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check()
 			      key_stop.data(),  key_stop.size());
 
   // commit
-  cb.emplace(std::bind(&Inflight_unlink_rmdir::commit_cb, this));
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
-  return InflightAction::BeginWait();
+  return InflightAction::BeginWait(std::bind(&Inflight_unlink_rmdir::commit_cb, this));
 }
 
 InflightAction Inflight_unlink_rmdir::inode_check()
@@ -192,9 +191,8 @@ InflightAction Inflight_unlink_rmdir::inode_check()
   // commit
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
-  cb.emplace(std::bind(&Inflight_unlink_rmdir::commit_cb, this));
 
-  return InflightAction::BeginWait();
+  return InflightAction::BeginWait(std::bind(&Inflight_unlink_rmdir::commit_cb, this));
 }
 
 InflightAction Inflight_unlink_rmdir::postlookup()
@@ -270,8 +268,7 @@ InflightAction Inflight_unlink_rmdir::postlookup()
 					       0, 0),
 		     &directory_listing_fetch);
 
-      cb.emplace(std::bind(&Inflight_unlink_rmdir::rmdir_inode_dirlist_check, this));
-      return InflightAction::BeginWait();
+      return InflightAction::BeginWait(std::bind(&Inflight_unlink_rmdir::rmdir_inode_dirlist_check, this));
     } else {
       // mismatch. bail.
       return InflightAction::Abort(ENOTDIR);
@@ -300,8 +297,7 @@ InflightAction Inflight_unlink_rmdir::postlookup()
 					       FDB_STREAMING_MODE_WANT_ALL, 0,
 					       0, 0),
 		     &inode_metadata_fetch);
-      cb.emplace(std::bind(&Inflight_unlink_rmdir::inode_check, this));
-      return InflightAction::BeginWait();
+      return InflightAction::BeginWait(std::bind(&Inflight_unlink_rmdir::inode_check, this));
     } else {
       // mismatch. bail.
       return InflightAction::Abort(EISDIR);
@@ -309,7 +305,7 @@ InflightAction Inflight_unlink_rmdir::postlookup()
   }
 }
 
-void Inflight_unlink_rmdir::issue()
+InflightCallback Inflight_unlink_rmdir::issue()
 {
   // TODO for correct permissions checking i think we need to also fetch
   // the inode of the containing directory so that we can see if we'll have
@@ -319,7 +315,7 @@ void Inflight_unlink_rmdir::issue()
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
 		 &dirent_lookup);
-  cb.emplace(std::bind(&Inflight_unlink_rmdir::postlookup, this));
+  return std::bind(&Inflight_unlink_rmdir::postlookup, this);
 }
 
 extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t ino, const char *name)
