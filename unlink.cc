@@ -165,6 +165,9 @@ void Inflight_unlink_rmdir::inode_check()
   // nlinks > 1? decrement and cleanup.
   if(inode.nlinks()>1) {
     inode.set_nlinks(inode.nlinks()-1);
+    struct timespec tv;
+    clock_gettime(CLOCK_REALTIME, &tv);
+    update_ctime(&inode, &tv);
 
     int inode_size = inode.ByteSize();
     uint8_t inode_buffer[inode_size];

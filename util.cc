@@ -141,3 +141,26 @@ void print_bytes(const uint8_t *str, int strlength)
     }
   }
 }
+
+void update_atime(INodeRecord *inode, struct timespec *tv)
+{
+  Timespec *atime = inode->mutable_atime();
+  atime->set_sec(tv->tv_sec);
+  atime->set_nsec(tv->tv_nsec);
+}
+
+void update_ctime(INodeRecord *inode, struct timespec *tv)
+{
+  Timespec *ctime = inode->mutable_ctime();
+  ctime->set_sec(tv->tv_sec);
+  ctime->set_nsec(tv->tv_nsec);
+  update_atime(inode, tv);
+}
+
+void update_mtime(INodeRecord *inode, struct timespec *tv)
+{
+  Timespec *mtime = inode->mutable_mtime();
+  mtime->set_sec(tv->tv_sec);
+  mtime->set_nsec(tv->tv_nsec);
+  update_ctime(inode, tv);
+}

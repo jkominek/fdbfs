@@ -146,6 +146,9 @@ void Inflight_link::check()
   // need to update the inode attributes
   auto key = pack_inode_key(ino);
   inode.set_nlinks(inode.nlinks()+1);
+  struct timespec tv;
+  clock_gettime(CLOCK_REALTIME, &tv);
+  update_ctime(&inode, &tv);
   // TODO do we need to touch any other inode attributes when
   // creating a hard link?
   int inode_size = inode.ByteSize();

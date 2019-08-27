@@ -110,14 +110,9 @@ void Inflight_write::check()
 	inode.set_size(off + buffer.size());
       }
 
-      struct timeval tv;
-      gettimeofday(&tv, NULL);
-
-      inode.mutable_atime()->set_sec(tv.tv_sec);
-      inode.mutable_atime()->set_nsec(tv.tv_usec * 1000);
-
-      inode.mutable_mtime()->set_sec(tv.tv_sec);
-      inode.mutable_mtime()->set_nsec(tv.tv_usec * 1000);
+      struct timespec tv;
+      clock_gettime(CLOCK_REALTIME, &tv);
+      update_mtime(&inode, &tv);
 
       auto key = pack_inode_key(inode.inode());
       // we've updated the inode appropriately.

@@ -34,6 +34,10 @@ extern void print_key(std::vector<uint8_t>);
 extern void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr);
 extern void print_bytes(const uint8_t *str, int strlength);
 
+extern void update_atime(INodeRecord *, struct timespec *);
+extern void update_mtime(INodeRecord *, struct timespec *);
+extern void update_ctime(INodeRecord *, struct timespec *);
+  
 #ifndef DEBUG
 #define DEBUG 0
 #endif //DEBUG
