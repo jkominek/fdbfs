@@ -27,7 +27,7 @@
  * REAL PLAN
  * ???
  */
-class Inflight_symlink : Inflight {
+class Inflight_symlink : public Inflight {
 public:
   Inflight_symlink(fuse_req_t, std::string, fuse_ino_t, std::string,
 		   FDBTransaction * = 0);
@@ -43,8 +43,8 @@ private:
   fuse_ino_t ino;
   struct stat attr;
 
-  void postverification();
-  void commit_cb();
+  InflightAction postverification();
+  InflightAction commit_cb();
 };
 
 Inflight_symlink::Inflight_symlink(fuse_req_t req, std::string link,
@@ -62,20 +62,20 @@ Inflight_symlink *Inflight_symlink::reincarnate()
   return x;
 }
 
-void Inflight_symlink::commit_cb()
+InflightAction Inflight_symlink::commit_cb()
 {
-  struct fuse_entry_param e;
-  bzero(&e, sizeof(struct fuse_entry_param));
-  e.ino = ino;
-  e.generation = 1;
-  bcopy(&(attr), &(e.attr), sizeof(struct stat));
-  e.attr_timeout = 0.01;
-  e.entry_timeout = 0.01;
+  auto e = std::make_unique<struct fuse_entry_param>();
+  bzero(e.get(), sizeof(struct fuse_entry_param));
+  e->ino = ino;
+  e->generation = 1;
+  bcopy(&(attr), &(e->attr), sizeof(struct stat));
+  e->attr_timeout = 0.01;
+  e->entry_timeout = 0.01;
 
-  reply_entry(&e);
+  return InflightAction::Entry(std::move(e));
 }
 
-void Inflight_symlink::postverification()
+InflightAction Inflight_symlink::postverification()
 {
   fdb_bool_t inode_present, dirent_present;
   const uint8_t *value; int valuelen;
@@ -83,21 +83,18 @@ void Inflight_symlink::postverification()
 			  &dirent_present, &value, &valuelen) ||
      fdb_future_get_value(inode_check.get(),
 			  &inode_present, &value, &valuelen)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
   
   if(dirent_present) {
     // can't make this entry, there's already something there
-    abort(EEXIST);
-    return;
+    return InflightAction::Abort(EEXIST);
   }
 
   if(inode_present) {
     // astonishingly we guessed an inode that already exists.
     // try this again!
-    restart();
-    return;
+    return InflightAction::Restart();
   }
 
   INodeRecord inode;
@@ -144,7 +141,8 @@ void Inflight_symlink::postverification()
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
   cb.emplace(std::bind(&Inflight_symlink::commit_cb, this));
-  begin_wait();
+
+  return InflightAction::BeginWait();
 }
 
 void Inflight_symlink::issue()
@@ -162,7 +160,6 @@ void Inflight_symlink::issue()
 		 &inode_check);
 
   cb.emplace(std::bind(&Inflight_symlink::postverification, this));
-  begin_wait();
 }
 
 extern "C" void fdbfs_symlink(fuse_req_t req, const char *link,
@@ -172,5 +169,5 @@ extern "C" void fdbfs_symlink(fuse_req_t req, const char *link,
   std::string sname(name);
   Inflight_symlink *inflight =
     new Inflight_symlink(req, slink, parent, sname);
-  inflight->issue();
+  inflight->start();
 }

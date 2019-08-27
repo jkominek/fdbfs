@@ -40,7 +40,7 @@
  * handle multiple futures in the end.
  */
 
-class Inflight_write : Inflight {
+class Inflight_write : public Inflight {
 public:
   Inflight_write(fuse_req_t, fuse_ino_t, std::vector<uint8_t>, off_t,
 		 FDBTransaction * = 0);
@@ -57,8 +57,8 @@ private:
   std::vector<uint8_t> buffer;
   off_t off;
 
-  void check();
-  void commit_cb();
+  InflightAction check();
+  InflightAction commit_cb();
   unique_future commit;
 };
 
@@ -77,12 +77,12 @@ Inflight_write *Inflight_write::reincarnate()
   return x;
 }
 
-void Inflight_write::commit_cb()
+InflightAction Inflight_write::commit_cb()
 {
-  reply_write(buffer.size());
+  return InflightAction::Write(buffer.size());
 }
 
-void Inflight_write::check()
+InflightAction Inflight_write::check()
 {
   fdb_bool_t present;
 
@@ -90,8 +90,7 @@ void Inflight_write::check()
   int vallen;
   if(fdb_future_get_value(inode_fetch.get(), &present,
 			  (const uint8_t **)&val, &vallen)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
   // check everything about the inode
   if(present)
@@ -102,8 +101,7 @@ void Inflight_write::check()
     if((!inode.IsInitialized()) ||
        (!inode.has_type()) || (!inode.has_size()) ||
        (inode.type() != regular)) {
-      abort(EINVAL);
-      return;
+      return InflightAction::Abort(EINVAL);
     } else {
       if(inode.size() < (off + buffer.size())) {
 	// we need to expand size of the file
@@ -125,15 +123,14 @@ void Inflight_write::check()
     }
   } else {
     // this inode doesn't exist.
-    abort(EBADF);
+    return InflightAction::Abort(EBADF);
   }
 
   // merge the edge writes into the blocks
   if(start_block_fetch) {
     if(fdb_future_get_value(start_block_fetch.get(), &present,
 			    (const uint8_t **)&val, &vallen)) {
-      restart();
-      return;
+      return InflightAction::Restart();
     }
 
     uint64_t copy_start_off = off % BLOCKSIZE;
@@ -155,8 +152,7 @@ void Inflight_write::check()
   if(stop_block_fetch) {
     if(fdb_future_get_value(stop_block_fetch.get(), &present,
 			    (const uint8_t **)&val, &vallen)) {
-      restart();
-      return;
+      return InflightAction::Restart();
     }
     uint64_t copysize = ((off + buffer.size()) % BLOCKSIZE);
     uint64_t bufcopystart = buffer.size() - copysize;
@@ -178,7 +174,8 @@ void Inflight_write::check()
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
   cb.emplace(std::bind(&Inflight_write::commit_cb, this));
-  begin_wait();
+
+  return InflightAction::BeginWait();
 }
 
 void Inflight_write::issue()
@@ -188,7 +185,6 @@ void Inflight_write::issue()
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
 		 &inode_fetch);
-  cb.emplace(std::bind(&Inflight_write::check, this));
 
   int iter_start, iter_stop;
   int doing_start_block = 0;
@@ -232,7 +228,7 @@ void Inflight_write::issue()
 			block, BLOCKSIZE);
   }
 
-  begin_wait();
+  cb.emplace(std::bind(&Inflight_write::check, this));
 }
 
 extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
@@ -247,5 +243,5 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
   std::vector<uint8_t> buffer(buf, buf+size);
   Inflight_write *inflight =
     new Inflight_write(req, ino, buffer, off);
-  inflight->issue();
+  inflight->start();
 }

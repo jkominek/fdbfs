@@ -29,7 +29,7 @@
  * maybe a small range read to pick up extended attributes
  * or less common values?
  */
-class Inflight_getattr : Inflight {
+class Inflight_getattr : public Inflight {
 public:
   Inflight_getattr(fuse_req_t, fuse_ino_t, FDBTransaction * = NULL);
   void issue();
@@ -38,7 +38,7 @@ private:
   fuse_ino_t ino;
 
   unique_future inode_fetch;
-  void callback();
+  InflightAction callback();
 };
 
 Inflight_getattr::Inflight_getattr(fuse_req_t req, fuse_ino_t ino, FDBTransaction *transaction)
@@ -53,30 +53,29 @@ Inflight_getattr *Inflight_getattr::reincarnate()
   return x;
 }
 
-void Inflight_getattr::callback()
+InflightAction Inflight_getattr::callback()
 {
   fdb_bool_t present=0;
   uint8_t *val;
   int vallen;
   if(fdb_future_get_value(inode_fetch.get(), &present, (const uint8_t **)&val, &vallen)) {
     // try again?
-    restart();
-    return;
+    return InflightAction::Restart();
   }
 
   if(!present) {
-    abort(EFAULT);
+    return InflightAction::Abort(EFAULT);
   }
 
   INodeRecord inode;
   inode.ParseFromArray(val, vallen);
   if(!inode.IsInitialized()) {
-    abort(EIO);
+    return InflightAction::Abort(EIO);
   }
-  
-  struct stat attr;
-  pack_inode_record_into_stat(&inode, &attr);
-  reply_attr(&attr);
+
+  auto attr = std::make_unique<struct stat>();
+  pack_inode_record_into_stat(&inode, attr.get());
+  return InflightAction::Attr(std::move(attr));
 }
 
 void Inflight_getattr::issue()
@@ -88,7 +87,7 @@ void Inflight_getattr::issue()
 				     key.data(), key.size(), 0);
   wait_on_future(f, &inode_fetch);
   cb.emplace(std::bind(&Inflight_getattr::callback, this));
-  begin_wait();
+  //std::cout << type_name<decltype(std::bind(&Inflight_getattr::callback, this))>() << std::endl;
 }
 
 extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
@@ -96,5 +95,5 @@ extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
 {
   // get the file attributes of an inode
   Inflight_getattr *inflight = new Inflight_getattr(req, ino);
-  inflight->issue();
+  inflight->start();
 }

@@ -31,7 +31,7 @@
  * REAL PLAN
  * ???
  */
-class Inflight_unlink_rmdir : Inflight {
+class Inflight_unlink_rmdir : public Inflight {
 public:
   Inflight_unlink_rmdir(fuse_req_t, fuse_ino_t, std::string, bool,
 			FDBTransaction * = 0);
@@ -46,10 +46,10 @@ private:
   unique_future directory_listing_fetch;
   unique_future commit;
   
-  void postlookup();
-  void inode_check();
-  void rmdir_inode_dirlist_check();
-  void commit_cb();
+  InflightAction postlookup();
+  InflightAction inode_check();
+  InflightAction rmdir_inode_dirlist_check();
+  InflightAction commit_cb();
   
   // parent directory
   fuse_ino_t parent;
@@ -81,12 +81,12 @@ Inflight_unlink_rmdir *Inflight_unlink_rmdir::reincarnate()
   return x;
 }
 
-void Inflight_unlink_rmdir::commit_cb()
+InflightAction Inflight_unlink_rmdir::commit_cb()
 {
-  abort(0);
+  return InflightAction::OK();
 }
 
-void Inflight_unlink_rmdir::rmdir_inode_dirlist_check()
+InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check()
 {
   // got the directory listing future back, we can check to see if we're done.
   FDBKeyValue *kvs;
@@ -95,13 +95,11 @@ void Inflight_unlink_rmdir::rmdir_inode_dirlist_check()
   if(fdb_future_get_keyvalue_array(directory_listing_fetch.get(),
 				   (const FDBKeyValue **)&kvs,
 				   &kvcount, &more)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
   if(kvcount>0) {
     // can't rmdir a directory with any amount of stuff in it.
-    abort(ENOTEMPTY);
-    return;
+    return InflightAction::Abort(ENOTEMPTY);
   }
   
   // TODO check the metadata for permission to erase
@@ -127,10 +125,10 @@ void Inflight_unlink_rmdir::rmdir_inode_dirlist_check()
   cb.emplace(std::bind(&Inflight_unlink_rmdir::commit_cb, this));
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
-  begin_wait();
+  return InflightAction::BeginWait();
 }
 
-void Inflight_unlink_rmdir::inode_check()
+InflightAction Inflight_unlink_rmdir::inode_check()
 {
   FDBKeyValue *kvs;
   int kvcount;
@@ -138,8 +136,7 @@ void Inflight_unlink_rmdir::inode_check()
   if(fdb_future_get_keyvalue_array(inode_metadata_fetch.get(),
 				   (const FDBKeyValue **)&kvs,
 				   &kvcount, &more)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
   // TODO check the metadata for permission to erase
 
@@ -147,8 +144,7 @@ void Inflight_unlink_rmdir::inode_check()
   if(kvcount<=0) {
     // uh. serious referential integrity error. some dirent pointed
     // at a non-existant inode.
-    abort(EIO);
-    return;
+    return InflightAction::Abort(EIO);
   }
 
   FDBKeyValue inode_kv = kvs[0];
@@ -157,8 +153,7 @@ void Inflight_unlink_rmdir::inode_check()
   INodeRecord inode;
   inode.ParseFromArray(inode_kv.value, inode_kv.value_length);
   if(!(inode.IsInitialized() && inode.has_nlinks())) {
-    abort(EIO);
-    return;
+    return InflightAction::Abort(EIO);
   }
 
   // check the stat structure
@@ -198,23 +193,21 @@ void Inflight_unlink_rmdir::inode_check()
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
   cb.emplace(std::bind(&Inflight_unlink_rmdir::commit_cb, this));
-  begin_wait();
-  return;
+
+  return InflightAction::BeginWait();
 }
 
-void Inflight_unlink_rmdir::postlookup()
+InflightAction Inflight_unlink_rmdir::postlookup()
 {
   fdb_bool_t dirent_present;
   const uint8_t *value; int valuelen;
   if(fdb_future_get_value(dirent_lookup.get(), &dirent_present,
 			  &value, &valuelen)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
 
   if(!dirent_present) {
-    abort(ENOENT);
-    return;
+    return InflightAction::Abort(ENOENT);
   }
 
   filetype dirent_type;
@@ -224,8 +217,7 @@ void Inflight_unlink_rmdir::postlookup()
     dirent.ParseFromArray(value, valuelen);
     if(!dirent.IsInitialized()) {
       // bad record,
-      abort(EIO);
-      return;
+      return InflightAction::Abort(EIO);
     }
 
     ino = dirent.inode();
@@ -279,12 +271,10 @@ void Inflight_unlink_rmdir::postlookup()
 		     &directory_listing_fetch);
 
       cb.emplace(std::bind(&Inflight_unlink_rmdir::rmdir_inode_dirlist_check, this));
-      begin_wait();
-      return;
+      return InflightAction::BeginWait();
     } else {
       // mismatch. bail.
-      abort(ENOTDIR);
-      return;
+      return InflightAction::Abort(ENOTDIR);
     }
   } else {
     // we want anything except a directory
@@ -311,12 +301,10 @@ void Inflight_unlink_rmdir::postlookup()
 					       0, 0),
 		     &inode_metadata_fetch);
       cb.emplace(std::bind(&Inflight_unlink_rmdir::inode_check, this));
-      begin_wait();
-      return;
+      return InflightAction::BeginWait();
     } else {
       // mismatch. bail.
-      abort(EISDIR);
-      return;
+      return InflightAction::Abort(EISDIR);
     }
   }
 }
@@ -332,19 +320,18 @@ void Inflight_unlink_rmdir::issue()
 				     key.data(), key.size(), 0),
 		 &dirent_lookup);
   cb.emplace(std::bind(&Inflight_unlink_rmdir::postlookup, this));
-  begin_wait();
 }
 
 extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t ino, const char *name)
 {
   Inflight_unlink_rmdir *inflight =
     new Inflight_unlink_rmdir(req, ino, name, false);
-  inflight->issue();
+  inflight->start();
 }
 
 extern "C" void fdbfs_rmdir(fuse_req_t req, fuse_ino_t ino, const char *name)
 {
   Inflight_unlink_rmdir *inflight =
     new Inflight_unlink_rmdir(req, ino, name, true);
-  inflight->issue();
+  inflight->start();
 }

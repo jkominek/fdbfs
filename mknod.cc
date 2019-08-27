@@ -27,7 +27,7 @@
  * REAL PLAN
  * ???
  */
-class Inflight_mknod : Inflight {
+class Inflight_mknod : public Inflight {
 public:
   Inflight_mknod(fuse_req_t, fuse_ino_t, std::string, mode_t,
 		 filetype, dev_t, FDBTransaction * = 0);
@@ -45,8 +45,8 @@ private:
   mode_t mode;
   dev_t rdev;
 
-  void commit_cb();
-  void postverification();
+  InflightAction commit_cb();
+  InflightAction postverification();
 };
 
 Inflight_mknod::Inflight_mknod(fuse_req_t req, fuse_ino_t parent,
@@ -67,45 +67,40 @@ Inflight_mknod *Inflight_mknod::reincarnate()
   return x;
 }
 
-void Inflight_mknod::commit_cb()
+InflightAction Inflight_mknod::commit_cb()
 {
-  struct fuse_entry_param e;
-  bzero(&e, sizeof(struct fuse_entry_param));
-  e.ino = ino;
-  e.generation = 1;
-  bcopy(&(attr), &(e.attr), sizeof(struct stat));
-  e.attr_timeout = 0.01;
-  e.entry_timeout = 0.01;
-
-  reply_entry(&e);
+  auto e = std::make_unique<struct fuse_entry_param>();
+  bzero(e.get(), sizeof(struct fuse_entry_param));
+  e->ino = ino;
+  e->generation = 1;
+  bcopy(&(attr), &(e->attr), sizeof(struct stat));
+  e->attr_timeout = 0.01;
+  e->entry_timeout = 0.01;
+  return InflightAction::Entry(std::move(e));
 }
 
-void Inflight_mknod::postverification()
+InflightAction Inflight_mknod::postverification()
 {
   fdb_bool_t inode_present, dirent_present;
   const uint8_t *value; int valuelen;
   if(fdb_future_get_value(dirent_check.get(), &dirent_present,
 			  &value, &valuelen)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
   if(fdb_future_get_value(inode_check.get(), &inode_present,
 			  &value, &valuelen)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
   
   if(dirent_present) {
     // can't make this entry, there's already something there
-    abort(EEXIST);
-    return;
+    return InflightAction::Abort(EEXIST);
   }
 
   if(inode_present) {
     // astonishingly we guessed an inode that already exists.
     // try this again!
-    restart();
-    return;
+    return InflightAction::Restart();
   }
 
   INodeRecord inode;
@@ -156,7 +151,8 @@ void Inflight_mknod::postverification()
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
   cb.emplace(std::bind(&Inflight_mknod::commit_cb, this));
-  begin_wait();
+
+  return InflightAction::BeginWait();
 }
 
 void Inflight_mknod::issue()
@@ -174,7 +170,6 @@ void Inflight_mknod::issue()
 		 &inode_check);
 
   cb.emplace(std::bind(&Inflight_mknod::postverification, this));
-  begin_wait();
 }
 
 extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent,
@@ -200,7 +195,7 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent,
 						mode & (~S_IFMT),
 						deduced_type,
 						rdev);
-  inflight->issue();
+  inflight->start();
 }
 
 extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent,
@@ -210,5 +205,5 @@ extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent,
   Inflight_mknod *inflight = new Inflight_mknod(req, parent, name,
 						mode & (~S_IFMT),
 						directory, 0);
-  inflight->issue();
+  inflight->start();
 }

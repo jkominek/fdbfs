@@ -25,7 +25,7 @@
  * TRANSACTIONAL BEHAVIOR
  * nothing special
  */
-class Inflight_link : Inflight {
+class Inflight_link : public Inflight {
 public:
   Inflight_link(fuse_req_t, fuse_ino_t, fuse_ino_t, std::string,
 		FDBTransaction * = 0);
@@ -38,8 +38,8 @@ private:
 
   INodeRecord inode;
 
-  void check();
-  void commit_cb();
+  InflightAction check();
+  InflightAction commit_cb();
   
   // is the file to link a non-directory?
   unique_future file_lookup;
@@ -67,19 +67,19 @@ Inflight_link *Inflight_link::reincarnate()
   return x;
 }
 
-void Inflight_link::commit_cb()
+InflightAction Inflight_link::commit_cb()
 {
-  struct fuse_entry_param e;
-  bzero(&e, sizeof(struct fuse_entry_param));
-  e.ino = ino;
-  e.generation = 1;
-  pack_inode_record_into_stat(&inode, &(e.attr));
-  e.attr_timeout = 0.01;
-  e.entry_timeout = 0.01;
-  reply_entry(&e);
+  auto e = std::make_unique<struct fuse_entry_param>();
+  bzero(e.get(), sizeof(struct fuse_entry_param));
+  e->ino = ino;
+  e->generation = 1;
+  pack_inode_record_into_stat(&inode, &(e->attr));
+  e->attr_timeout = 0.01;
+  e->entry_timeout = 0.01;
+  return InflightAction::Entry(std::move(e));
 }
 
-void Inflight_link::check()
+InflightAction Inflight_link::check()
 {
   fdb_bool_t present=0;
   uint8_t *val;
@@ -88,59 +88,52 @@ void Inflight_link::check()
   // is the file a non-directory?
   if(fdb_future_get_value(file_lookup.get(), &present,
 			  (const uint8_t **)&val, &vallen)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
   if(present) {
     inode.ParseFromArray(val, vallen);
     if(!inode.has_type()) {
       // error
-      abort(EIO);
-      return;
+      return InflightAction::Abort(EIO);
     } else if(inode.type() == directory) {
       // can hardlink anything except a directory
-      abort(EPERM);
-      return;
+      return InflightAction::Abort(EPERM);
     }
     // we could lift this value and save it for the
     // other dirent we need to create?
   } else {
     // apparently it isn't there. sad.
-    abort(ENOENT);
+    return InflightAction::Abort(ENOENT);
   }    
 
   // is the directory a directory?
   if(fdb_future_get_value(dir_lookup.get(), &present,
 			  (const uint8_t **)&val, &vallen)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
   if(present) {
     INodeRecord dirinode;
     dirinode.ParseFromArray(val, vallen);
     if(!dirinode.has_type()) {
+      return InflightAction::Abort(EIO);
       // error
     }
     if(dirinode.type() != directory) {
       // have to hardlink into a directory
-      abort(ENOTDIR);
-      return;
+      return InflightAction::Abort(ENOTDIR);
     }
   } else {
-    abort(ENOENT);
-    return;
+    return InflightAction::Abort(ENOENT);
   }
 
   // Does the target exist?
   if(fdb_future_get_value(target_lookup.get(), &present,
 			  (const uint8_t **)&val, &vallen)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
   if(present) {
     // that's an error. :(
-    abort(EEXIST);
-    return;
+    return InflightAction::Abort(EEXIST);
   }
 
   // need to update the inode attributes
@@ -174,7 +167,8 @@ void Inflight_link::check()
   // commit
   cb.emplace(std::bind(&Inflight_link::commit_cb, this));
   wait_on_future(fdb_transaction_commit(transaction.get()), &commit);
-  begin_wait();
+
+  return InflightAction::BeginWait();
 }
 
 void Inflight_link::issue()
@@ -198,7 +192,6 @@ void Inflight_link::issue()
 		 &target_lookup);
 
   cb.emplace(std::bind(&Inflight_link::check, this));
-  begin_wait();
 }
 
 extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino,
@@ -208,5 +201,5 @@ extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino,
   std::string snewname(newname);
   Inflight_link *inflight =
     new Inflight_link(req, ino, newparent, snewname);
-  inflight->issue();
+  inflight->start();
 }

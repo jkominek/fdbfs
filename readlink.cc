@@ -23,7 +23,7 @@
  * REAL PLAN
  * ???
  */
-class Inflight_readlink : Inflight {
+class Inflight_readlink : public Inflight {
 public:
   Inflight_readlink(fuse_req_t, fuse_ino_t, FDBTransaction * = 0);
   Inflight_readlink *reincarnate();
@@ -31,7 +31,7 @@ public:
 private:
   fuse_ino_t ino;
   unique_future inode_fetch;
-  void callback();
+  InflightAction callback();
 };
 
 Inflight_readlink::Inflight_readlink(fuse_req_t req, fuse_ino_t ino,
@@ -48,15 +48,14 @@ Inflight_readlink *Inflight_readlink::reincarnate()
   return x;
 }
 
-void Inflight_readlink::callback()
+InflightAction Inflight_readlink::callback()
 {
   fdb_bool_t present=0;
   uint8_t *val;
   int vallen;
   if(fdb_future_get_value(inode_fetch.get(),
 			  &present, (const uint8_t **)&val, &vallen)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
 
   if(present) {
@@ -64,16 +63,14 @@ void Inflight_readlink::callback()
     inode.ParseFromArray(val, vallen);
     if(!inode.has_symlink()) {
       if(inode.type() == symlink) {
-	abort(EIO);
+	return InflightAction::Abort(EIO);
       } else {
-	abort(EINVAL);
+	return InflightAction::Abort(EINVAL);
       }
-      return;
     }
-    reply_readlink(inode.symlink().c_str());
+    return InflightAction::Readlink(inode.symlink());
   } else {
-    abort(ENOENT);
-    return;
+    return InflightAction::Abort(ENOENT);
   }
 }
 
@@ -86,11 +83,10 @@ void Inflight_readlink::issue()
 				     key.data(), key.size(), 0),
 		 &inode_fetch);
   cb.emplace(std::bind(&Inflight_readlink::callback, this));
-  begin_wait();
 }
 
 extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino)
 {
   Inflight_readlink *inflight = new Inflight_readlink(req, ino);
-  inflight->issue();
+  inflight->start();
 }

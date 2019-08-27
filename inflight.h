@@ -27,6 +27,8 @@ struct FDBFutureDeleter {
 typedef std::unique_ptr<FDBTransaction, FDBTransactionDeleter> unique_transaction;
 typedef std::unique_ptr<FDBFuture, FDBFutureDeleter> unique_future;
 
+class InflightAction;
+
 class Inflight {
  public:
   // issuer is what we'll have to run if the future fails.
@@ -50,34 +52,89 @@ class Inflight {
   // can throw errors back to fuse.
   fuse_req_t req;
 
+  void start() {
+    issue();
+    begin_wait();
+  }
+
  protected:
   // constructor
   Inflight(fuse_req_t, bool, FDBTransaction *transaction = NULL);
   
   void wait_on_future(FDBFuture *, unique_future *);
-  void begin_wait();
-  void restart();
-  
-  // inflight objects should call one of these at the end
-  // to notify fuse of the outcome, and clean themselves up.
-  // these all include 'delete this'
-  void abort(int err);
-  void reply_entry(struct fuse_entry_param *);
-  void reply_attr(struct stat *);
-  void reply_buf(char *, size_t);
-  void reply_readlink(const char *);
-  void reply_write(size_t size);
 
-  std::experimental::optional<std::function<void()>> cb;
+  std::experimental::optional<std::function<InflightAction()>> cb;
 
  private:
   // whether we're intended as r/w or not.
   bool readwrite;
   std::queue<FDBFuture *> future_queue;
+  void begin_wait();
 
 #ifdef DEBUG
-  struct timespec start;
+  struct timespec clockstart;
 #endif
+
+  friend class _InflightAction;
+};
+
+class InflightAction {
+ public:
+  static InflightAction BeginWait() {
+    return InflightAction(false, true, false, [](Inflight *){ });
+  }
+  static InflightAction Restart() {
+    return InflightAction(false, false, true, [](Inflight *){ });
+  }
+  static InflightAction OK() {
+    return InflightAction(true, false, false, [](Inflight *i){
+	fuse_reply_err(i->req, 0);
+      });
+  };
+  static InflightAction Abort(int err) {
+    return InflightAction(true, false, false, [err](Inflight *i) {
+	fuse_reply_err(i->req, err);
+      });
+  }
+  static InflightAction Entry(std::shared_ptr<struct fuse_entry_param> e) {
+    return InflightAction(true, false, false, [e](Inflight *i) {
+	fuse_reply_entry(i->req, e.get());
+      });
+  }
+  static InflightAction Attr(std::shared_ptr<struct stat> attr) {
+    return InflightAction(true, false, false, [attr](Inflight *i) {
+	fuse_reply_attr(i->req, attr.get(), 0.0);
+      });
+  }
+  static InflightAction Buf(std::vector<uint8_t> buf) {
+    return InflightAction(true, false, false, [buf](Inflight *i) {
+	fuse_reply_buf(i->req, reinterpret_cast<const char *>(buf.data()), buf.size());
+      });
+  }
+  static InflightAction Readlink(std::string name) {
+    return InflightAction(true, false, false, [name](Inflight *i) {
+	fuse_reply_readlink(i->req, name.c_str());
+      });
+  }
+  static InflightAction Write(size_t size) {
+    return InflightAction(true, false, false, [size](Inflight *i) {
+	fuse_reply_write(i->req, size);
+      });
+  }
+protected:
+ InflightAction(bool delete_this, bool begin_wait, bool restart,
+		std::function<void(Inflight *)> perform)
+   : delete_this(delete_this), begin_wait(begin_wait), restart(restart),
+    perform(std::move(perform))
+  {
+  };
+
+  bool delete_this = false;
+  bool begin_wait = false;
+  bool restart = false;
+  std::function<void(Inflight *)> perform;
+
+  friend class Inflight;
 };
 
 extern "C" void fdbfs_error_processor(FDBFuture *, void *);

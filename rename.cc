@@ -27,7 +27,7 @@
  * TRANSACTIONAL BEHAVIOR
  * nothing special
  */
-class Inflight_rename : Inflight {
+class Inflight_rename : public Inflight {
 public:
   Inflight_rename(fuse_req_t,
 		  fuse_ino_t, std::string,
@@ -54,9 +54,9 @@ private:
 
   unique_future commit;
 
-  void check();
-  void complicated();
-  void commit_cb();
+  InflightAction check();
+  InflightAction complicated();
+  InflightAction commit_cb();
 };
 
 Inflight_rename::Inflight_rename(fuse_req_t req,
@@ -79,12 +79,12 @@ Inflight_rename *Inflight_rename::reincarnate()
   return x;
 }
 
-void Inflight_rename::commit_cb()
+InflightAction Inflight_rename::commit_cb()
 {
-  abort(0);
+  return InflightAction::OK();
 }
 
-void Inflight_rename::complicated()
+InflightAction Inflight_rename::complicated()
 {
   // remove the old dirent
   auto key = pack_dentry_key(oldparent, oldname);
@@ -98,13 +98,11 @@ void Inflight_rename::complicated()
     if(fdb_future_get_keyvalue_array(directory_listing_fetch.get(),
 				     (const FDBKeyValue **)&kvs,
 				     &kvcount, &more)) {
-      restart();
-      return;
+      return InflightAction::Restart();
     }
     if(kvcount>0) {
       // can't move over a directory with anything in it
-      abort(ENOTEMPTY);
-      return;
+      return InflightAction::Abort(ENOTEMPTY);
     }
 
     // TODO permissions checking on the directory being replaced
@@ -126,16 +124,14 @@ void Inflight_rename::complicated()
     if(fdb_future_get_keyvalue_array(inode_metadata_fetch.get(),
 				     (const FDBKeyValue **)&kvs,
 				     &kvcount, &more)) {
-      restart();
-      return;
+      return InflightAction::Restart();
     }
     // the first record had better be the inode
     INodeRecord inode;
     inode.ParseFromArray(kvs[0].value, kvs[0].value_length);
     if(!inode.IsInitialized()) {
       // well, bugger
-      abort(EIO);
-      return;
+      return InflightAction::Abort(EIO);
     }
     FDBKeyValue inode_kv = kvs[0];
 
@@ -182,10 +178,11 @@ void Inflight_rename::complicated()
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
   cb.emplace(std::bind(&Inflight_rename::commit_cb, this));
-  begin_wait();
+
+  return InflightAction::BeginWait();
 }
 
-void Inflight_rename::check()
+InflightAction Inflight_rename::check()
 {
   {
     fdb_bool_t present;
@@ -193,15 +190,13 @@ void Inflight_rename::check()
     int vallen;
 
     if(fdb_future_get_value(origin_lookup.get(), &present, &val, &vallen)) {
-      restart();
-      return;
+      return InflightAction::Restart();
     }
     if(present)
       origin_dirent.ParseFromArray(val, vallen);
     
     if(fdb_future_get_value(destination_lookup.get(), &present, &val, &vallen)) {
-      restart();
-      return;
+      return InflightAction::Restart();
     }
     if(present)
       destination_dirent.ParseFromArray(val, vallen);
@@ -211,8 +206,7 @@ void Inflight_rename::check()
     // default. we want an origin, and don't care about existance
     // of the destination, yet.
     if(!origin_dirent.has_inode()) {
-      abort(ENOENT);
-      return;
+      return InflightAction::Abort(ENOENT);
     }
     // turns out you can move a directory on top of another,
     // empty directory. look to see if we're moving a directory
@@ -220,23 +214,19 @@ void Inflight_rename::check()
        (origin_dirent.type() == directory) &&
        destination_dirent.has_type() &&
        (destination_dirent.type() != directory)) {
-      abort(EISDIR);
-      return;
+      return InflightAction::Abort(EISDIR);
     }
   } else if(flags == RENAME_EXCHANGE) {
     // need to both exist
     if((!origin_dirent.has_inode()) || (!destination_dirent.has_inode())) {
-      abort(ENOENT);
-      return;
+      return InflightAction::Abort(ENOENT);
     }
   } else if(flags == RENAME_NOREPLACE) {
     if(!origin_dirent.has_inode()) {
-      abort(ENOENT);
-      return;
+      return InflightAction::Abort(ENOENT);
     }
     if(destination_dirent.has_inode()) {
-      abort(EEXIST);
-      return;
+      return InflightAction::Abort(EEXIST);
     }
   }
 
@@ -320,19 +310,16 @@ void Inflight_rename::check()
 					     0, 0),
 		   &inode_metadata_fetch);
     cb.emplace(std::bind(&Inflight_rename::complicated, this));
-    begin_wait();
-    return;
+    return InflightAction::BeginWait();
   } else {
-    abort(ENOSYS);
-    return;
+    return InflightAction::Abort(ENOSYS);
   }
   
   // commit
   wait_on_future(fdb_transaction_commit(transaction.get()),
                  &commit);
   cb.emplace(std::bind(&Inflight_rename::commit_cb, this));
-  begin_wait();
-  return;
+  return InflightAction::BeginWait();
 }
 
 void Inflight_rename::issue()
@@ -350,7 +337,6 @@ void Inflight_rename::issue()
 		 &destination_lookup);
 
   cb.emplace(std::bind(&Inflight_rename::check, this));
-  begin_wait();
 }
 
 extern "C" void fdbfs_rename(fuse_req_t req,
@@ -360,5 +346,5 @@ extern "C" void fdbfs_rename(fuse_req_t req,
   std::string sname(name), snewname(newname);
   Inflight_rename *inflight =
     new Inflight_rename(req, parent, sname, newparent, snewname, 0);
-  inflight->issue();
+  inflight->start();
 }

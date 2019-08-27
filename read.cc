@@ -35,7 +35,7 @@
  * handle multiple futures in the end.
  */
 
-class Inflight_read : Inflight {
+class Inflight_read : public Inflight {
 public:
   Inflight_read(fuse_req_t, fuse_ino_t, size_t, off_t,
 		FDBTransaction * = 0);
@@ -45,7 +45,7 @@ public:
 private:
   unique_future inode_fetch;
   unique_future range_fetch;
-  void callback();
+  InflightAction callback();
   
   fuse_ino_t ino;
   size_t requested_size; //size of the read
@@ -67,25 +67,22 @@ Inflight_read *Inflight_read::reincarnate()
   return x;
 }
 
-void Inflight_read::callback()
+InflightAction Inflight_read::callback()
 {
   const uint8_t *val;
   int vallen;
   fdb_bool_t present;
   if(fdb_future_get_value(inode_fetch.get(), &present,
 			  &val, &vallen)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
   if(!present) {
-    abort(EBADF);
-    return;
+    return InflightAction::Abort(EBADF);
   }
   INodeRecord inode;
   inode.ParseFromArray(val, vallen);
   if(!inode.IsInitialized()) {
-    abort(EIO);
-    return;
+    return InflightAction::Abort(EIO);
   }
 
   FDBKeyValue *kvs;
@@ -93,8 +90,7 @@ void Inflight_read::callback()
   fdb_bool_t more;
   if(fdb_future_get_keyvalue_array(range_fetch.get(),
 				   (const FDBKeyValue **)&kvs, &kvcount, &more)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
 
   if(more) {
@@ -108,9 +104,9 @@ void Inflight_read::callback()
   }
 
   size_t size = std::min(requested_size, inode.size() - off);
-  
-  char buffer[size];
-  bzero(buffer, size);
+
+  std::vector<uint8_t> buffer(size);
+  std::fill(buffer.begin(), buffer.end(), 0);
   int actual_bytes_received=0;
 
   for(int i=0; i<kvcount; i++) {
@@ -129,7 +125,8 @@ void Inflight_read::callback()
       size_t copysize = std::min(size, kv.value_length - block_off);
       if(copysize>0) {
 	bcopy(static_cast<const uint8_t*>(kv.value) + block_off,
-	      buffer, copysize);
+	      buffer.data(),
+	      copysize);
 	buffer_last_byte = copysize;
       }
     } else {
@@ -141,7 +138,7 @@ void Inflight_read::callback()
       size_t maxcopy = size - bufferoff;
       size_t copysize = std::min(maxcopy,
 				 static_cast<size_t>(kv.value_length));
-      bcopy(kv.value, buffer + bufferoff, copysize);
+      bcopy(kv.value, buffer.data() + bufferoff, copysize);
       // this is the position of the last useful byte we wrote.
       buffer_last_byte = bufferoff + copysize;
     }
@@ -154,9 +151,9 @@ void Inflight_read::callback()
   if(more) {
     // TODO see above TODO. for now, die, since we won't otherwise
     // satisfy the contract.
-    abort(EIO);
+    return InflightAction::Abort(EIO);
   } else {
-    reply_buf(buffer, size);
+    return InflightAction::Buf(buffer);
   }
 }
 
@@ -184,7 +181,6 @@ void Inflight_read::issue()
 			      0, 0);
   wait_on_future(f, &range_fetch);
   cb.emplace(std::bind(&Inflight_read::callback, this));
-  begin_wait();
 }
 
 extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
@@ -195,5 +191,5 @@ extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
   // with fuse_reply_buf
   Inflight_read *inflight =
     new Inflight_read(req, ino, size, off);
-  inflight->issue();
+  inflight->start();
 }

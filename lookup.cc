@@ -33,7 +33,7 @@
  * much matter if it changes by a little or a lot. Just want to
  * ensure that we show the user something that was true.
  */
-class Inflight_lookup : Inflight {
+class Inflight_lookup : public Inflight {
 public:
   Inflight_lookup(fuse_req_t, fuse_ino_t, std::string, FDBTransaction * = NULL);
   void issue();
@@ -48,8 +48,8 @@ private:
   unique_future inode_fetch;
 
   // issue looks up the dirent and then...
-  void lookup_inode();
-  void process_inode();
+  InflightAction lookup_inode();
+  InflightAction process_inode();
 };
 
 Inflight_lookup::Inflight_lookup(fuse_req_t req,
@@ -68,46 +68,47 @@ Inflight_lookup *Inflight_lookup::reincarnate()
   return x;
 }
 
-void Inflight_lookup::process_inode()
+InflightAction Inflight_lookup::process_inode()
 {
   fdb_bool_t present=0;
   uint8_t *val;
   int vallen;
   if(fdb_future_get_value(inode_fetch.get(), &present,
-			  (const uint8_t **)&val, &vallen))
-    restart();
+			  (const uint8_t **)&val, &vallen)) {
+    return InflightAction::Restart();
+  }
 
   // and second callback, to get the attributes
   if(!present) {
-    abort(EIO);
+    return InflightAction::Abort(EIO);
   }
 
   INodeRecord inode;
   inode.ParseFromArray(val, vallen);
   if(!inode.IsInitialized()) {
-    abort(EIO);
-    return;
+    return InflightAction::Abort(EIO);
   }
 
-  struct fuse_entry_param e;
-  e.ino = target;
+  auto e = std::make_unique<struct fuse_entry_param>();
+  e->ino = target;
   // TODO technically we need to be smarter about generations
-  e.generation = 1;
-  pack_inode_record_into_stat(&inode, &(e.attr));
-  e.attr_timeout = 0.01;
-  e.entry_timeout = 0.01;
+  e->generation = 1;
+  pack_inode_record_into_stat(&inode, &(e->attr));
+  e->attr_timeout = 0.01;
+  e->entry_timeout = 0.01;
 
-  reply_entry(&e);
+  return InflightAction::Entry(std::move(e));
 }
 
-void Inflight_lookup::lookup_inode()
+InflightAction Inflight_lookup::lookup_inode()
 {
   fdb_bool_t present=0;
   uint8_t *val;
   int vallen;
   if(fdb_future_get_value(dirent_fetch.get(),
-			  &present, (const uint8_t **)&val, &vallen))
-    restart();
+			  &present, (const uint8_t **)&val, &vallen)) {
+    return InflightAction::Restart();
+  }
 
   // we're on the first callback, to get the directory entry
   if(present) {
@@ -127,9 +128,9 @@ void Inflight_lookup::lookup_inode()
 				       key.data(), key.size(), 1);
     wait_on_future(f, &inode_fetch);
     cb.emplace(std::bind(&Inflight_lookup::process_inode, this));
-    begin_wait();
+    return InflightAction::BeginWait();
   } else {
-    abort(ENOENT);
+    return InflightAction::Abort(ENOENT);
   }
 }
 
@@ -142,12 +143,11 @@ void Inflight_lookup::issue()
 
   wait_on_future(f, &dirent_fetch);
   cb.emplace(std::bind(&Inflight_lookup::lookup_inode, this));
-  begin_wait();
 }
 
 extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
   std::string sname(name);
   Inflight_lookup *inflight = new Inflight_lookup(req, parent, sname);
-  inflight->issue();
+  inflight->start();
 }

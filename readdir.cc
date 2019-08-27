@@ -24,7 +24,7 @@
  * ?
  */
 
-class Inflight_readdir : Inflight {
+class Inflight_readdir : public Inflight {
 public:
   Inflight_readdir(fuse_req_t, fuse_ino_t, size_t, off_t,
 		   FDBTransaction * = NULL);
@@ -37,7 +37,7 @@ private:
   int dirent_prefix_len;
 
   unique_future range_fetch;
-  void callback();
+  InflightAction callback();
 };
 
 Inflight_readdir::Inflight_readdir(fuse_req_t req, fuse_ino_t ino,
@@ -54,7 +54,7 @@ Inflight_readdir *Inflight_readdir::reincarnate()
   return x;
 }
 
-void Inflight_readdir::callback()
+InflightAction Inflight_readdir::callback()
 {
   FDBKeyValue *kvs;
   int kvcount;
@@ -63,10 +63,10 @@ void Inflight_readdir::callback()
   if(fdb_future_get_keyvalue_array(range_fetch.get(),
 				   (const FDBKeyValue **)&kvs, &kvcount,
 				   &more)) {
-    throw std::runtime_error("failed to get value from future");
+    return InflightAction::Restart();
   }
 
-  char buf[size];
+  std::vector<uint8_t> buf(size);
   size_t consumed_buffer = 0;
   size_t remaining_buffer = size;
 
@@ -76,8 +76,8 @@ void Inflight_readdir::callback()
     char name[1024];
     if(kv.key_length <= dirent_prefix_len) {
       // serious internal error. we somehow got back a key that was too short?
-      abort(EIO);
-      return;
+      printf("eio!\n");
+      return InflightAction::Abort(EIO);
     }
     int keylen = kv.key_length - dirent_prefix_len;
     // TOOD if keylen<=0 throw internal error.
@@ -92,15 +92,15 @@ void Inflight_readdir::callback()
       dirent.ParseFromArray(kv.value, kv.value_length);
 
       if(!dirent.IsInitialized()) {
-	abort(EIO);
-	return;
+	printf("eio!\n");
+	return InflightAction::Abort(EIO);
       }
       attr.st_ino = dirent.inode();
       attr.st_mode = dirent.type();
     }
     
     size_t used = fuse_add_direntry(req,
-				    buf + consumed_buffer,
+				    reinterpret_cast<char *>(buf.data() + consumed_buffer),
 				    remaining_buffer,
 				    name,
 				    &attr,
@@ -114,7 +114,8 @@ void Inflight_readdir::callback()
     remaining_buffer -= used;
   }
 
-  reply_buf(buf, consumed_buffer);
+  buf.resize(consumed_buffer);
+  return InflightAction::Buf(buf);
 }
 
 void Inflight_readdir::issue()
@@ -142,7 +143,6 @@ void Inflight_readdir::issue()
 			      0, 0);
   wait_on_future(f, &range_fetch);
   cb.emplace(std::bind(&Inflight_readdir::callback, this));
-  begin_wait();
 }
 
 extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
@@ -165,5 +165,5 @@ extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
   Inflight_readdir *inflight =
     new Inflight_readdir(req, ino, std::min(size, static_cast<size_t>(1<<16)), off);
 
-  inflight->issue();
+  inflight->start();
 }

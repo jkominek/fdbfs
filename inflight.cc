@@ -64,7 +64,7 @@ Inflight::Inflight(fuse_req_t req, bool readwrite,
   // we need to be more clever about this. having every single
   // operation fetch a read version is going to add a lot of latency.
 #ifdef DEBUG
-  clock_gettime(CLOCK_MONOTONIC, &start);
+  clock_gettime(CLOCK_MONOTONIC, &clockstart);
 #endif
 }
 
@@ -73,8 +73,8 @@ Inflight::~Inflight()
 #ifdef DEBUG
   struct timespec stop;
   clock_gettime(CLOCK_MONOTONIC, &stop);
-  time_t secs = (stop.tv_sec - start.tv_sec);
-  long nsecs = (stop.tv_nsec - start.tv_nsec);
+  time_t secs = (stop.tv_sec - clockstart.tv_sec);
+  long nsecs = (stop.tv_nsec - clockstart.tv_nsec);
   if(secs<5) {
     nsecs += secs * 1000000000;
     printf("inflight %p for req %p took %li ns\n", this, req, nsecs);
@@ -108,9 +108,23 @@ void Inflight::future_ready(FDBFuture *f)
       // instruction. that'll make all of the callbacks
       // much safer; they can't fail to return after
       // producing a response and/or suiciding.
-      std::function<void()> f = cb.value();
+      std::function<InflightAction()> f = cb.value();
       cb = std::experimental::nullopt;
-      f();
+      InflightAction a = f();
+      a.perform(this);
+
+      if(a.begin_wait) {
+	begin_wait();
+      }
+
+      if(a.restart) {
+	fdb_transaction_reset(transaction.get());
+	this->reincarnate()->start();
+      }
+      
+      if(a.delete_this) {
+	delete this;
+      }
     } else {
       throw std::runtime_error("no callback was set when we needed one");
     }
@@ -119,8 +133,7 @@ void Inflight::future_ready(FDBFuture *f)
   }
 }
 
-void Inflight::begin_wait()
-{
+void Inflight::begin_wait() {
   if(future_queue.empty()) {
     std::cout << "tried to start waiting on empty future queue" << std::endl;
     throw std::runtime_error("tried to start waiting on empty future queue");
@@ -137,48 +150,6 @@ void Inflight::wait_on_future(FDBFuture *f, unique_future *dest)
 {
   future_queue.push(f);
   dest->reset(f);
-}
-
-void Inflight::abort(int err)
-{
-  fuse_reply_err(req, err);
-  delete this;
-}
-
-void Inflight::reply_entry(struct fuse_entry_param *e)
-{
-  fuse_reply_entry(req, e);
-  delete this;
-}
-
-void Inflight::reply_attr(struct stat *attr)
-{
-  fuse_reply_attr(req, attr, 0.0);
-  delete this;
-}
-
-void Inflight::reply_buf(char *buf, size_t size)
-{
-  fuse_reply_buf(req, buf, size);
-  delete this;
-}
-
-void Inflight::reply_readlink(const char *name)
-{
-  fuse_reply_readlink(req, name);
-  delete this;
-}
-
-void Inflight::reply_write(size_t size)
-{
-  fuse_reply_write(req, size);
-  delete this;
-}
-
-void Inflight::restart()
-{
-  fdb_transaction_reset(transaction.get());
-  this->reincarnate()->issue();
 }
 
 extern "C" void fdbfs_error_processor(FDBFuture *f, void *p)
@@ -202,7 +173,7 @@ extern "C" void fdbfs_error_processor(FDBFuture *f, void *p)
     
   // foundationdb, perhaps after some delay, has given us the
   // goahead to start up the new transaction.
-  inflight->issue();
+  inflight->start();
 }
 
 extern "C" void fdbfs_error_checker(FDBFuture *f, void *p)

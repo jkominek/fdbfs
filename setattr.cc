@@ -26,7 +26,7 @@
  * REAL PLAN
  * ???
  */
-class Inflight_setattr : Inflight {
+class Inflight_setattr : public Inflight {
 public:
   Inflight_setattr(fuse_req_t, fuse_ino_t, struct stat, int,
 		   FDBTransaction * = 0);
@@ -35,13 +35,13 @@ public:
 private:
   fuse_ino_t ino;
   struct stat attr;
-  struct stat newattr;
+  std::unique_ptr<struct stat> newattr;
   int to_set;
 
   unique_future inode_fetch;
-  void callback();
+  InflightAction callback();
   unique_future commit;
-  void commit_cb();
+  InflightAction commit_cb();
 };
 
 Inflight_setattr::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
@@ -59,33 +59,30 @@ Inflight_setattr *Inflight_setattr::reincarnate()
   return x;
 }
 
-void Inflight_setattr::commit_cb()
+InflightAction Inflight_setattr::commit_cb()
 {
-  reply_attr(&(newattr));
+  return InflightAction::Attr(std::move(newattr));
 }
 
-void Inflight_setattr::callback()
+InflightAction Inflight_setattr::callback()
 {
   fdb_bool_t present=0;
   uint8_t *val;
   int vallen;
   if(fdb_future_get_value(inode_fetch.get(),
 			  &present, (const uint8_t **)&val, &vallen)) {
-    restart();
-    return;
+    return InflightAction::Restart();
   }
 
   if(!present) {
-    abort(EFAULT);
-    return;
+    return InflightAction::Abort(EFAULT);
   }
 
   INodeRecord inode;
   inode.ParseFromArray(val, vallen);
   if(!inode.IsInitialized()) {
     // bad inode
-    abort(EIO);
-    return;
+    return InflightAction::Abort(EIO);
   }
 
   // update inode!
@@ -151,7 +148,8 @@ void Inflight_setattr::callback()
 
 
   // repack for fuse
-  pack_inode_record_into_stat(&inode, &(newattr));
+  newattr = std::make_unique<struct stat>();
+  pack_inode_record_into_stat(&inode, newattr.get());
   
   int inode_size = inode.ByteSize();
   uint8_t inode_buffer[inode_size];
@@ -166,7 +164,8 @@ void Inflight_setattr::callback()
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 &commit);
   cb.emplace(std::bind(&Inflight_setattr::commit_cb, this));
-  begin_wait();
+
+  return InflightAction::BeginWait();
 }
 
 void Inflight_setattr::issue()
@@ -178,7 +177,6 @@ void Inflight_setattr::issue()
 				     key.data(), key.size(), 0),
 		 &inode_fetch);
   cb.emplace(std::bind(&Inflight_setattr::callback, this));
-  begin_wait();
 }
 
 extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino,
@@ -187,5 +185,5 @@ extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino,
 {
   Inflight_setattr *inflight =
     new Inflight_setattr(req, ino, *attr, to_set);
-  inflight->issue();
+  inflight->start();
 }
