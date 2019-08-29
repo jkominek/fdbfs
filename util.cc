@@ -16,6 +16,52 @@
     __typeof__ (b) _b = (b); \
     _a < _b ? _a : _b; })
 
+std::vector<uint8_t> inode_use_identifier;
+
+// tracks kernel cache of lookups, so we can avoid fdb
+// calls except when we're going from zero to not-zero
+// TODO if the FDB networking became multithreaded, or
+// we could otherwise process responses in a multithreaded
+// fashion, we'd need locking.
+std::unordered_map<fuse_ino_t, uint64_t> lookup_counts;
+
+// if this returns true, the caller is obligated to
+// insert a record adjacent to the inode to keep it alive
+bool increment_lookup_count(fuse_ino_t ino)
+{
+  auto it = lookup_counts.find(ino);
+  if(it != lookup_counts.end()) {
+    // present
+    it->second += 1;
+    return false;
+  } else {
+    // not present
+    lookup_counts[ino] = 1;
+    return true;
+  }
+}
+
+// if this returns true, the caller is obligated to
+// remove the inode adjacent record that keeps it alive
+bool decrement_lookup_count(fuse_ino_t ino, uint64_t count)
+{
+  auto it = lookup_counts.find(ino);
+  if(it == lookup_counts.end()) {
+    // well. oops. kernel knew about something that isn't there.
+    return false;
+  } else {
+    it->second -= count;
+    if(it->second > 0) {
+      // still cached, nothing to do.
+      return false;
+    } else {
+      // we're forgetting about this inode, drop it
+      lookup_counts.erase(ino);
+      return true;
+    }
+  }
+}
+
 // will be filled out before operation begins
 std::vector<uint8_t> key_prefix;
 
@@ -43,6 +89,14 @@ std::vector<uint8_t> pack_inode_key(fuse_ino_t ino)
   fuse_ino_t tmp = htobe64(ino);
   uint8_t *tmpp = reinterpret_cast<uint8_t *>(&tmp);
   key.insert(key.end(), tmpp, tmpp + sizeof(fuse_ino_t));
+  return key;
+}
+
+std::vector<uint8_t> pack_inode_use_key(fuse_ino_t ino)
+{
+  auto key = pack_inode_key(ino);
+  key.push_back(INODE_USE_PREFIX);
+  key.insert(key.end(), inode_use_identifier.begin(), inode_use_identifier.end());
   return key;
 }
 

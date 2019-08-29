@@ -44,6 +44,7 @@ extern "C" void fdbfs_symlink(fuse_req_t req, const char *link,
 extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, struct fuse_file_info *fi);
 extern "C" void fdbfs_rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent, const char *newname);
 extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi);
+extern "C" void fdbfs_forget(fuse_req_t req, fuse_ino_t ino, uint64_t ncount);
 
 /* These are our entry points for the operations. They'll set
  * up the appropriate inflight structure and make the initial
@@ -66,6 +67,7 @@ static struct fuse_lowlevel_ops fdbfs_oper =
     .setattr	= fdbfs_setattr,
     .rename     = fdbfs_rename,
     .write      = fdbfs_write,
+    .forget     = fdbfs_forget,
   };
 
 /* Purely to get the FoundationDB network stuff running in a
@@ -98,6 +100,15 @@ int main(int argc, char *argv[])
   fileblock_prefix_length = pack_inode_key(0).size() + 1;
   BLOCKBITS = 13;
   BLOCKSIZE = 1<<BLOCKBITS;
+
+  // give us some initial space.
+  lookup_counts.reserve(128);
+
+  // this probably isn't the best way to produce 128 bits in
+  // a std::vector, but, whatever.
+  for(int i=0; i<16; i++) {
+    inode_use_identifier.push_back(random() & 0xFF);
+  }
   
   if(fdb_select_api_version(610))
     return -1;

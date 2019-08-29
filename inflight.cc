@@ -151,7 +151,8 @@ extern "C" void fdbfs_error_processor(FDBFuture *f, void *p)
 		inflight->req, p, fdb_get_error(err));
     // error during an error. foundationdb says that means
     // you should give up. so we'll let fuse know they're hosed.
-    fuse_reply_err(inflight->req, EIO);
+    if(!inflight->suppress_errors)
+      fuse_reply_err(inflight->req, EIO);
 
     delete inflight;
     return;
@@ -194,4 +195,33 @@ unique_transaction make_transaction()
   }
   ut.reset(t);
   return ut;
+}
+
+// Inflight_markused
+
+Inflight_markused::Inflight_markused(fuse_req_t req, fuse_ino_t ino, unique_transaction transaction)
+  : Inflight(req, true, std::move(transaction)), ino(ino)
+{
+  // we're taking place after fuse has already received the
+  // real response. it doesn't care what we have to say, now.
+  suppress_errors = true;
+}
+
+Inflight_markused *Inflight_markused::reincarnate() {
+  Inflight_markused *x = new Inflight_markused(req, ino, std::move(transaction));
+  delete this;
+  return x;
+}
+
+InflightCallback Inflight_markused::issue() {
+  auto key = pack_inode_use_key(ino);
+  uint8_t b = 0;
+  fdb_transaction_set(transaction.get(),
+		      key.data(), key.size(),
+		      &b, 1);
+  wait_on_future(fdb_transaction_commit(transaction.get()),
+		 &commit);
+  return []() -> InflightAction {
+    return InflightAction::Ignore();
+  };
 }

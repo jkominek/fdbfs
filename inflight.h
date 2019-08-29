@@ -55,6 +55,7 @@ class Inflight {
   // always need this so that our error processing code
   // can throw errors back to fuse.
   fuse_req_t req;
+  bool suppress_errors = false;
 
   void start() {
     cb.emplace(issue());
@@ -82,6 +83,16 @@ class Inflight {
   friend class InflightAction;
 };
 
+class Inflight_markused : public Inflight {
+ public:
+  Inflight_markused(fuse_req_t, fuse_ino_t, unique_transaction);
+  Inflight_markused *reincarnate();
+  InflightCallback issue();
+ private:
+  fuse_ino_t ino;
+  unique_future commit;
+};
+
 class InflightAction {
  public:
   static InflightAction BeginWait(InflightCallback newcb) {
@@ -92,6 +103,16 @@ class InflightAction {
   static InflightAction Restart() {
     return InflightAction(false, false, true, [](Inflight *){ });
   }
+  static InflightAction None() {
+    return InflightAction(true, false, false, [](Inflight *i){
+	fuse_reply_none(i->req);
+      });
+  };
+  static InflightAction Ignore() {
+    return InflightAction(true, false, false, [](Inflight *i){
+
+      });
+  };
   static InflightAction OK() {
     return InflightAction(true, false, false, [](Inflight *i){
 	fuse_reply_err(i->req, 0);
@@ -105,6 +126,11 @@ class InflightAction {
   static InflightAction Entry(std::shared_ptr<struct fuse_entry_param> e) {
     return InflightAction(true, false, false, [e](Inflight *i) {
 	fuse_reply_entry(i->req, e.get());
+	if(increment_lookup_count(e->ino)) {
+	  // sigh. launch another background transaction to insert
+	  // the use record.
+	  (new Inflight_markused(i->req, e->ino, make_transaction()))->start();
+	}
       });
   }
   static InflightAction Attr(std::shared_ptr<struct stat> attr) {
