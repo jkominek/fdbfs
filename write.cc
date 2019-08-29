@@ -40,6 +40,26 @@
  * handle multiple futures in the end.
  */
 
+inline void set_or_clear(FDBTransaction *transaction,
+			 uint8_t *key, int keylen,
+			 uint8_t *value, int vallen)
+{
+  if(vallen>0) {
+    fdb_transaction_set(transaction, key, keylen, value, vallen);
+  } else {
+    fdb_transaction_clear(transaction, key, keylen);
+  }
+}
+
+inline void sparsify(uint8_t *block, uint64_t *write_size) {
+  // sparsify our writes, by truncating nulls from the end of
+  // blocks, and just clearing away totally null blocks 
+  for(; *(write_size)>0; *(write_size)-=1) {
+    if(block[*(write_size)-1] != 0x00)
+      break;
+  }
+}
+
 class Inflight_write : public Inflight {
 public:
   Inflight_write(fuse_req_t, fuse_ino_t, std::vector<uint8_t>, off_t,
@@ -143,11 +163,10 @@ InflightAction Inflight_write::check()
     bzero(output_buffer, total_buffer_size);
     bcopy(val, output_buffer, vallen);
     bcopy(buffer.data(), output_buffer + copy_start_off, copy_start_size);
-
+    sparsify(output_buffer, &total_buffer_size);
     auto key = pack_fileblock_key(ino, off / BLOCKSIZE);
-    fdb_transaction_set(transaction.get(),
-			key.data(), key.size(),
-			output_buffer, total_buffer_size);
+    set_or_clear(transaction.get(), key.data(), key.size(),
+		 output_buffer, total_buffer_size);
   }
 
   if(stop_block_fetch) {
@@ -164,11 +183,10 @@ InflightAction Inflight_write::check()
     bcopy(val, output_buffer, vallen);
     bcopy(buffer.data() + bufcopystart,
 	  output_buffer, copysize);
-
+    sparsify(output_buffer, &total_buffer_size);
     auto key = pack_fileblock_key(ino, (off + buffer.size()) / BLOCKSIZE);
-    fdb_transaction_set(transaction.get(),
-			key.data(), key.size(),
-			output_buffer, total_buffer_size);
+    set_or_clear(transaction.get(), key.data(), key.size(),
+		 output_buffer, total_buffer_size);
   }
 
   // perform all of the writes
@@ -223,9 +241,10 @@ InflightCallback Inflight_write::issue()
     key = pack_fileblock_key(ino, mid_block);
     uint8_t *block;
     block = buffer.data() + (off % BLOCKSIZE) + mid_block * BLOCKSIZE;
-    fdb_transaction_set(transaction.get(),
-			key.data(), key.size(),
-			block, BLOCKSIZE);
+    uint64_t actual_size = BLOCKSIZE;
+    sparsify(block, &actual_size);
+    set_or_clear(transaction.get(), key.data(), key.size(),
+		 block, actual_size);
   }
 
   return std::bind(&Inflight_write::check, this);
