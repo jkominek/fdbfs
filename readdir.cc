@@ -26,8 +26,7 @@
 
 class Inflight_readdir : public Inflight {
 public:
-  Inflight_readdir(fuse_req_t, fuse_ino_t, size_t, off_t,
-		   FDBTransaction * = NULL);
+  Inflight_readdir(fuse_req_t, fuse_ino_t, size_t, off_t, unique_transaction);
   InflightCallback issue();
   Inflight_readdir *reincarnate();
 private:
@@ -42,14 +41,14 @@ private:
 
 Inflight_readdir::Inflight_readdir(fuse_req_t req, fuse_ino_t ino,
 				   size_t size, off_t off,
-				   FDBTransaction *transaction)
-  : Inflight(req, false, transaction), ino(ino), size(size), off(off)
+				   unique_transaction transaction)
+  : Inflight(req, false, std::move(transaction)), ino(ino), size(size), off(off)
 {
 }
 
 Inflight_readdir *Inflight_readdir::reincarnate()
 {
-  Inflight_readdir *x = new Inflight_readdir(req, ino, size, off, transaction.release());
+  Inflight_readdir *x = new Inflight_readdir(req, ino, size, off, std::move(transaction));
   delete this;
   return x;
 }
@@ -163,7 +162,7 @@ extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
   
   // let's not read much more than 64k in a go.
   Inflight_readdir *inflight =
-    new Inflight_readdir(req, ino, std::min(size, static_cast<size_t>(1<<16)), off);
+    new Inflight_readdir(req, ino, std::min(size, static_cast<size_t>(1<<16)), off, make_transaction());
 
   inflight->start();
 }

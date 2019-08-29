@@ -31,7 +31,7 @@
  */
 class Inflight_getattr : public Inflight {
 public:
-  Inflight_getattr(fuse_req_t, fuse_ino_t, FDBTransaction * = NULL);
+  Inflight_getattr(fuse_req_t, fuse_ino_t, unique_transaction);
   InflightCallback issue();
   Inflight_getattr *reincarnate();
 private:
@@ -41,14 +41,14 @@ private:
   InflightAction callback();
 };
 
-Inflight_getattr::Inflight_getattr(fuse_req_t req, fuse_ino_t ino, FDBTransaction *transaction)
-  : Inflight(req, false, transaction), ino(ino)
+Inflight_getattr::Inflight_getattr(fuse_req_t req, fuse_ino_t ino, unique_transaction transaction)
+  : Inflight(req, false, std::move(transaction)), ino(ino)
 {
 }
 
 Inflight_getattr *Inflight_getattr::reincarnate()
 {
-  Inflight_getattr *x = new Inflight_getattr(req, ino, transaction.release());
+  Inflight_getattr *x = new Inflight_getattr(req, ino, std::move(transaction));
   delete this;
   return x;
 }
@@ -93,6 +93,6 @@ extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
 			      struct fuse_file_info *fi)
 {
   // get the file attributes of an inode
-  Inflight_getattr *inflight = new Inflight_getattr(req, ino);
+  Inflight_getattr *inflight = new Inflight_getattr(req, ino, make_transaction());
   inflight->start();
 }

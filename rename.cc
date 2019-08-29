@@ -32,7 +32,7 @@ public:
   Inflight_rename(fuse_req_t,
 		  fuse_ino_t, std::string,
 		  fuse_ino_t, std::string,
-		  int, FDBTransaction * = 0);
+		  int, unique_transaction transaction);
   Inflight_rename *reincarnate();
   InflightCallback issue();
 private:
@@ -62,8 +62,8 @@ private:
 Inflight_rename::Inflight_rename(fuse_req_t req,
 				 fuse_ino_t oldparent, std::string oldname,
 				 fuse_ino_t newparent, std::string newname,
-				 int flags, FDBTransaction *transaction)
-  : Inflight(req, true, transaction),
+				 int flags, unique_transaction transaction)
+  : Inflight(req, true, std::move(transaction)),
     oldparent(oldparent), oldname(oldname),
     newparent(newparent), newname(newname), flags(flags)
 {
@@ -74,7 +74,7 @@ Inflight_rename *Inflight_rename::reincarnate()
   Inflight_rename *x =
     new Inflight_rename(req, oldparent, oldname,
 			newparent, newname, flags,
-			transaction.release());
+			std::move(transaction));
   delete this;
   return x;
 }
@@ -340,8 +340,9 @@ extern "C" void fdbfs_rename(fuse_req_t req,
 			     fuse_ino_t parent, const char *name,
 			     fuse_ino_t newparent, const char *newname)
 {
-  std::string sname(name), snewname(newname);
   Inflight_rename *inflight =
-    new Inflight_rename(req, parent, sname, newparent, snewname, 0);
+    new Inflight_rename(req, parent, std::string(name),
+			newparent, std::string(newname), 0,
+			make_transaction());
   inflight->start();
 }

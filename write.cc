@@ -43,7 +43,7 @@
 class Inflight_write : public Inflight {
 public:
   Inflight_write(fuse_req_t, fuse_ino_t, std::vector<uint8_t>, off_t,
-		 FDBTransaction * = 0);
+		 unique_transaction);
   Inflight_write *reincarnate();
   InflightCallback issue();
 private:
@@ -64,15 +64,16 @@ private:
 
 Inflight_write::Inflight_write(fuse_req_t req, fuse_ino_t ino,
 			       std::vector<uint8_t> buffer, off_t off,
-			       FDBTransaction *transaction)
-  : Inflight(req, true, transaction), ino(ino), buffer(buffer), off(off)
+			       unique_transaction transaction)
+  : Inflight(req, true, std::move(transaction)),
+    ino(ino), buffer(buffer), off(off)
 {
 }
 
 Inflight_write *Inflight_write::reincarnate()
 {
   Inflight_write *x =
-    new Inflight_write(req, ino, buffer, off, transaction.release());
+    new Inflight_write(req, ino, buffer, off, std::move(transaction));
   delete this;
   return x;
 }
@@ -241,6 +242,6 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 
   std::vector<uint8_t> buffer(buf, buf+size);
   Inflight_write *inflight =
-    new Inflight_write(req, ino, buffer, off);
+    new Inflight_write(req, ino, buffer, off, make_transaction());
   inflight->start();
 }

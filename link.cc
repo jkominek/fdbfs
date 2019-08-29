@@ -28,7 +28,7 @@
 class Inflight_link : public Inflight {
 public:
   Inflight_link(fuse_req_t, fuse_ino_t, fuse_ino_t, std::string,
-		FDBTransaction * = 0);
+		unique_transaction);
   Inflight_link *reincarnate();
   InflightCallback issue();
 private:
@@ -53,8 +53,8 @@ private:
 
 Inflight_link::Inflight_link(fuse_req_t req, fuse_ino_t ino,
 			     fuse_ino_t newparent, std::string newname,
-			     FDBTransaction *transaction)
-  : Inflight(req, true, transaction), ino(ino),
+			     unique_transaction transaction)
+  : Inflight(req, true, std::move(transaction)), ino(ino),
     newparent(newparent), newname(newname)
 {
 }
@@ -62,7 +62,7 @@ Inflight_link::Inflight_link(fuse_req_t req, fuse_ino_t ino,
 Inflight_link *Inflight_link::reincarnate()
 {
   Inflight_link *x = new Inflight_link(req, ino, newparent, newname,
-				       transaction.release());
+				       std::move(transaction));
   delete this;
   return x;
 }
@@ -197,8 +197,8 @@ extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino,
 			   fuse_ino_t newparent,
 			   const char *newname)
 {
-  std::string snewname(newname);
   Inflight_link *inflight =
-    new Inflight_link(req, ino, newparent, snewname);
+    new Inflight_link(req, ino, newparent, std::string(newname),
+		      make_transaction());
   inflight->start();
 }

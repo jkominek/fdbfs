@@ -27,6 +27,8 @@ struct FDBFutureDeleter {
 typedef std::unique_ptr<FDBTransaction, FDBTransactionDeleter> unique_transaction;
 typedef std::unique_ptr<FDBFuture, FDBFutureDeleter> unique_future;
 
+unique_transaction make_transaction();
+
 class InflightAction;
 
 typedef std::function<InflightAction()> InflightCallback;
@@ -61,7 +63,7 @@ class Inflight {
 
  protected:
   // constructor
-  Inflight(fuse_req_t, bool, FDBTransaction *transaction = NULL);
+  Inflight(fuse_req_t, bool, unique_transaction);
   
   void wait_on_future(FDBFuture *, unique_future *);
 

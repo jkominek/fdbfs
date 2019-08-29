@@ -30,7 +30,7 @@
 class Inflight_mknod : public Inflight {
 public:
   Inflight_mknod(fuse_req_t, fuse_ino_t, std::string, mode_t,
-		 filetype, dev_t, FDBTransaction * = 0);
+		 filetype, dev_t, unique_transaction);
   Inflight_mknod *reincarnate();
   InflightCallback issue();
 private:
@@ -52,9 +52,9 @@ private:
 Inflight_mknod::Inflight_mknod(fuse_req_t req, fuse_ino_t parent,
 			       std::string name, mode_t mode,
 			       filetype type, dev_t rdev,
-			       FDBTransaction *transaction)
-  : Inflight(req, true, transaction), parent(parent), name(name),
-    type(type), mode(mode), rdev(rdev)
+			       unique_transaction transaction)
+  : Inflight(req, true, std::move(transaction)),
+    parent(parent), name(name), type(type), mode(mode), rdev(rdev)
 {
 }
 
@@ -62,7 +62,7 @@ Inflight_mknod *Inflight_mknod::reincarnate()
 {
   Inflight_mknod *x = new Inflight_mknod(req, parent, name, mode,
 					 type, rdev,
-					 transaction.release());
+					 std::move(transaction));
   delete this;
   return x;
 }
@@ -190,10 +190,9 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent,
   }
   }
 
-  Inflight_mknod *inflight = new Inflight_mknod(req, parent, name,
-						mode & (~S_IFMT),
-						deduced_type,
-						rdev);
+  Inflight_mknod *inflight =
+    new Inflight_mknod(req, parent, name, mode & (~S_IFMT),
+		       deduced_type, rdev, make_transaction());
   inflight->start();
 }
 
@@ -201,8 +200,8 @@ extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent,
 			    const char *name, filetype type,
 			    mode_t mode)
 {
-  Inflight_mknod *inflight = new Inflight_mknod(req, parent, name,
-						mode & (~S_IFMT),
-						directory, 0);
+  Inflight_mknod *inflight =
+    new Inflight_mknod(req, parent, name, mode & (~S_IFMT),
+		       directory, 0, make_transaction());
   inflight->start();
 }

@@ -30,7 +30,7 @@
 class Inflight_symlink : public Inflight {
 public:
   Inflight_symlink(fuse_req_t, std::string, fuse_ino_t, std::string,
-		   FDBTransaction * = 0);
+		   unique_transaction transaction);
   Inflight_symlink *reincarnate();
   InflightCallback issue();
 private:
@@ -49,15 +49,16 @@ private:
 
 Inflight_symlink::Inflight_symlink(fuse_req_t req, std::string link,
 				   fuse_ino_t parent, std::string name,
-				   FDBTransaction *transaction)
-  : Inflight(req, true, transaction), link(link), parent(parent), name(name)
+				   unique_transaction transaction)
+  : Inflight(req, true, std::move(transaction)),
+    link(link), parent(parent), name(name)
 {
 }
 
 Inflight_symlink *Inflight_symlink::reincarnate()
 {
   Inflight_symlink *x = new Inflight_symlink(req, link, parent, name,
-					     transaction.release());
+					     std::move(transaction));
   delete this;
   return x;
 }
@@ -164,9 +165,8 @@ InflightCallback Inflight_symlink::issue()
 extern "C" void fdbfs_symlink(fuse_req_t req, const char *link,
 			      fuse_ino_t parent, const char *name)
 {
-  std::string slink(link);
-  std::string sname(name);
   Inflight_symlink *inflight =
-    new Inflight_symlink(req, slink, parent, sname);
+    new Inflight_symlink(req, std::string(link),
+			 parent, std::string(name), make_transaction());
   inflight->start();
 }

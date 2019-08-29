@@ -29,7 +29,7 @@
 class Inflight_setattr : public Inflight {
 public:
   Inflight_setattr(fuse_req_t, fuse_ino_t, struct stat, int,
-		   FDBTransaction * = 0);
+		   unique_transaction);
   Inflight_setattr *reincarnate();
   InflightCallback issue();
 private:
@@ -46,15 +46,16 @@ private:
 
 Inflight_setattr::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
 				   struct stat attr, int to_set,
-				   FDBTransaction *transaction)
-  : Inflight(req, true, transaction), ino(ino), attr(attr), to_set(to_set)
+				   unique_transaction transaction)
+  : Inflight(req, true, std::move(transaction)),
+    ino(ino), attr(attr), to_set(to_set)
 {
 }
 
 Inflight_setattr *Inflight_setattr::reincarnate()
 {
   Inflight_setattr *x = new Inflight_setattr(req, ino, attr, to_set,
-					     transaction.release());
+					     std::move(transaction));
   delete this;
   return x;
 }
@@ -183,6 +184,6 @@ extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino,
 			      int to_set, struct fuse_file_info *fi)
 {
   Inflight_setattr *inflight =
-    new Inflight_setattr(req, ino, *attr, to_set);
+    new Inflight_setattr(req, ino, *attr, to_set, make_transaction());
   inflight->start();
 }

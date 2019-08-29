@@ -48,19 +48,9 @@
 
 // allocate an inflight struct and fill and out some basics.
 // readwrite specifies the transaction will include writes
-Inflight::Inflight(fuse_req_t req, bool readwrite,
-		   FDBTransaction *provided_transaction)
-  : transaction(provided_transaction, FDBTransactionDeleter()),
-    req(req), readwrite(readwrite)
+Inflight::Inflight(fuse_req_t req, bool readwrite, unique_transaction provided)
+  : transaction(std::move(provided)), req(req), readwrite(readwrite)
 {
-  if(!transaction) {
-    FDBTransaction *tmp;
-    if(fdb_database_create_transaction(database, &tmp)) {
-      throw std::runtime_error("failed to create a transaction");
-    }
-    transaction.reset(tmp);
-  }
-
   // we need to be more clever about this. having every single
   // operation fetch a read version is going to add a lot of latency.
 #ifdef DEBUG
@@ -117,6 +107,7 @@ void Inflight::future_ready(FDBFuture *f)
       }
       
       if(a.delete_this) {
+	// we're dead and done, for whatever reason
 	delete this;
       }
     } else {
@@ -168,6 +159,7 @@ extern "C" void fdbfs_error_processor(FDBFuture *f, void *p)
     
   // foundationdb, perhaps after some delay, has given us the
   // goahead to start up the new transaction.
+  fdb_transaction_reset(inflight->transaction.get());
   inflight->start();
 }
 
@@ -182,13 +174,24 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p)
     // we should call _on_error on it, and maybe we'll get to
     // try again, and maybe we won't.
     FDBFuture *nextf = fdb_transaction_on_error(inflight->transaction.get(), err);
-
-    inflight = inflight->reincarnate();
-    if(fdb_future_set_callback(nextf, fdbfs_error_processor, static_cast<void*>(inflight))) {
+    
+    if(fdb_future_set_callback(nextf, fdbfs_error_processor,
+			       static_cast<void*>(inflight->reincarnate()))) {
       throw std::runtime_error("failed to set an fdb callback");
     }
     return;
   }
 
   inflight->future_ready(f);
+}
+
+unique_transaction make_transaction()
+{
+  unique_transaction ut;
+  FDBTransaction *t;
+  if(fdb_database_create_transaction(database, &t)) {
+    throw new std::runtime_error("failed to create transaction");
+  }
+  ut.reset(t);
+  return ut;
 }

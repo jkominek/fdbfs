@@ -35,7 +35,7 @@
  */
 class Inflight_lookup : public Inflight {
 public:
-  Inflight_lookup(fuse_req_t, fuse_ino_t, std::string, FDBTransaction * = NULL);
+  Inflight_lookup(fuse_req_t, fuse_ino_t, std::string, unique_transaction);
   InflightCallback issue();
   Inflight_lookup *reincarnate();
 private:
@@ -55,15 +55,14 @@ private:
 Inflight_lookup::Inflight_lookup(fuse_req_t req,
 				 fuse_ino_t parent,
 				 std::string name,
-				 FDBTransaction *transaction)
-  : Inflight(req, false, transaction), parent(parent), name(name)
+				 unique_transaction transaction)
+  : Inflight(req, false, std::move(transaction)), parent(parent), name(name)
 {
 }
 
 Inflight_lookup *Inflight_lookup::reincarnate()
 {
-  Inflight_lookup *x = new Inflight_lookup(req, parent, name,
-					   transaction.release());
+  Inflight_lookup *x = new Inflight_lookup(req, parent, name, std::move(transaction));
   delete this;
   return x;
 }
@@ -147,6 +146,6 @@ InflightCallback Inflight_lookup::issue()
 extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
   std::string sname(name);
-  Inflight_lookup *inflight = new Inflight_lookup(req, parent, sname);
+  Inflight_lookup *inflight = new Inflight_lookup(req, parent, sname, make_transaction());
   inflight->start();
 }

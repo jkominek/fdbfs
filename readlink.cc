@@ -25,7 +25,7 @@
  */
 class Inflight_readlink : public Inflight {
 public:
-  Inflight_readlink(fuse_req_t, fuse_ino_t, FDBTransaction * = 0);
+  Inflight_readlink(fuse_req_t, fuse_ino_t, unique_transaction);
   Inflight_readlink *reincarnate();
   InflightCallback issue();
 private:
@@ -35,15 +35,15 @@ private:
 };
 
 Inflight_readlink::Inflight_readlink(fuse_req_t req, fuse_ino_t ino,
-				     FDBTransaction *transaction)
-  : Inflight(req, false, transaction), ino(ino)
+				     unique_transaction transaction)
+  : Inflight(req, false, std::move(transaction)), ino(ino)
 {
 }
 
 Inflight_readlink *Inflight_readlink::reincarnate()
 {
   Inflight_readlink *x = new Inflight_readlink(req, ino,
-					       transaction.release());
+					       std::move(transaction));
   delete this;
   return x;
 }
@@ -87,6 +87,7 @@ InflightCallback Inflight_readlink::issue()
 
 extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino)
 {
-  Inflight_readlink *inflight = new Inflight_readlink(req, ino);
+  Inflight_readlink *inflight =
+    new Inflight_readlink(req, ino, make_transaction());
   inflight->start();
 }

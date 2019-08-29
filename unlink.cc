@@ -34,7 +34,7 @@
 class Inflight_unlink_rmdir : public Inflight {
 public:
   Inflight_unlink_rmdir(fuse_req_t, fuse_ino_t, std::string, bool,
-			FDBTransaction * = 0);
+			unique_transaction);
   Inflight_unlink_rmdir *reincarnate();
   InflightCallback issue();
 private:
@@ -65,8 +65,8 @@ Inflight_unlink_rmdir::Inflight_unlink_rmdir(fuse_req_t req,
 					     fuse_ino_t parent,
 					     std::string name,
 					     bool actually_rmdir,
-					     FDBTransaction *transaction)
-  : Inflight(req, true, transaction),
+					     unique_transaction transaction)
+  : Inflight(req, true, std::move(transaction)),
     parent(parent), name(name),
     actually_rmdir(actually_rmdir)
 {
@@ -76,7 +76,7 @@ Inflight_unlink_rmdir *Inflight_unlink_rmdir::reincarnate()
 {
   Inflight_unlink_rmdir *x =
     new Inflight_unlink_rmdir(req, parent, name, actually_rmdir,
-			      transaction.release());
+			      std::move(transaction));
   delete this;
   return x;
 }
@@ -321,13 +321,13 @@ InflightCallback Inflight_unlink_rmdir::issue()
 extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t ino, const char *name)
 {
   Inflight_unlink_rmdir *inflight =
-    new Inflight_unlink_rmdir(req, ino, name, false);
+    new Inflight_unlink_rmdir(req, ino, name, false, make_transaction());
   inflight->start();
 }
 
 extern "C" void fdbfs_rmdir(fuse_req_t req, fuse_ino_t ino, const char *name)
 {
   Inflight_unlink_rmdir *inflight =
-    new Inflight_unlink_rmdir(req, ino, name, true);
+    new Inflight_unlink_rmdir(req, ino, name, true, make_transaction());
   inflight->start();
 }
