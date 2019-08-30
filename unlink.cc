@@ -255,14 +255,12 @@ InflightAction Inflight_unlink_rmdir::postlookup()
       // possible, and then get the range, limit 1.
       start = pack_inode_key(ino);
       start.push_back('d');
-      start = pack_inode_key(ino);
-      start.push_back('e');
+      stop = pack_inode_key(ino);
+      stop.push_back('e');
 
       wait_on_future(fdb_transaction_get_range(transaction.get(),
-					       start.data(),
-					       start.size(), 0, 1,
-					       stop.data(),
-					       stop.size(),  0, 1,
+					       FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start.data(), start.size()),
+					       FDB_KEYSEL_FIRST_GREATER_THAN(stop.data(), stop.size()),
 					       1, 0,
 					       FDB_STREAMING_MODE_WANT_ALL, 0,
 					       0, 0),
