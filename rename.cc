@@ -48,6 +48,7 @@ private:
   DirectoryEntry origin_dirent;
   unique_future destination_lookup;
   DirectoryEntry destination_dirent;
+  bool destination_in_use = false;
 
   unique_future directory_listing_fetch;
   unique_future inode_metadata_fetch;
@@ -84,13 +85,67 @@ InflightAction Inflight_rename::commit_cb()
   return InflightAction::OK();
 }
 
+void erase_inode(FDBTransaction *transaction, fuse_ino_t ino)
+{
+  auto key_start = pack_inode_key(ino);
+  auto key_stop = key_start;
+  key_stop.push_back('\xff');
+
+  fdb_transaction_clear_range(transaction,
+			      key_start.data(), key_start.size(),
+			      key_stop.data(),  key_stop.size());
+}
+
 InflightAction Inflight_rename::complicated()
 {
+  /**
+   * If you couldn't tell from the method name, we're in the
+   * complicated case for rename. We're in the case where we
+   * have to unlink the destination, and then do our normal
+   * work.
+   * TODO should we do the rename work up in the main function
+   * and then just somehow call unlink?
+   */
+  
   // remove the old dirent
   auto key = pack_dentry_key(oldparent, oldname);
   fdb_transaction_clear(transaction.get(),
 			key.data(), key.size());
 
+  FDBKeyValue *kvs;
+  int kvcount;
+  fdb_bool_t more;
+  if(fdb_future_get_keyvalue_array(inode_metadata_fetch.get(),
+				   (const FDBKeyValue **)&kvs,
+				   &kvcount, &more)) {
+    return InflightAction::Restart();
+  }
+  if(kvcount < 1) {
+    // referential integrity error; dirent points to missing inode
+    return InflightAction::Abort(EIO);
+  }
+  // the first record had better be the inode
+  FDBKeyValue inode_kv = kvs[0];
+
+  INodeRecord inode;
+  inode.ParseFromArray(inode_kv.value, inode_kv.value_length);
+  if(!inode.IsInitialized()) {
+    // well, bugger
+    return InflightAction::Abort(EIO);
+  }
+
+  if(kvcount>1) {
+    FDBKeyValue kv = kvs[1];
+    auto key = reinterpret_cast<const uint8_t*>(kv.key);
+    if((kv.key_length > (inode_key_length + 1)) &&
+       key[inode_key_length] == 0x01) {
+      // there's a use record present.
+      destination_in_use = true;
+    }
+  }
+
+  // TODO permissions checking on the whatever being removed
+  
   if(directory_listing_fetch) {
     FDBKeyValue *kvs;
     int kvcount;
@@ -104,64 +159,41 @@ InflightAction Inflight_rename::complicated()
       // can't move over a directory with anything in it
       return InflightAction::Abort(ENOTEMPTY);
     }
+  }
 
-    // TODO permissions checking on the directory being replaced
-
-    // erase the now-unused inode
-    auto key_start = pack_inode_key(destination_dirent.inode());
-    auto key_stop = pack_inode_key(destination_dirent.inode());
-    key_stop.push_back('\xff');
-
-    fdb_transaction_clear_range(transaction.get(),
-				key_start.data(), key_start.size(),
-				key_stop.data(),  key_stop.size());
-  } else {
-    // TODO handling of replacing a file
-
-    FDBKeyValue *kvs;
-    int kvcount;
-    fdb_bool_t more;
-    if(fdb_future_get_keyvalue_array(inode_metadata_fetch.get(),
-				     (const FDBKeyValue **)&kvs,
-				     &kvcount, &more)) {
-      return InflightAction::Restart();
-    }
-    // the first record had better be the inode
-    INodeRecord inode;
-    inode.ParseFromArray(kvs[0].value, kvs[0].value_length);
-    if(!inode.IsInitialized()) {
-      // well, bugger
-      return InflightAction::Abort(EIO);
-    }
-    FDBKeyValue inode_kv = kvs[0];
-
-    if(inode.nlinks()>1) {
-      inode.set_nlinks(inode.nlinks() - 1);
-      struct timespec tv;
-      clock_gettime(CLOCK_REALTIME, &tv);
-      update_ctime(&inode, &tv);
-      int inode_size = inode.ByteSize();
-      uint8_t inode_buffer[inode_size];
-      inode.SerializeToArray(inode_buffer, inode_size);
-      
-      fdb_transaction_set(transaction.get(),
-			  static_cast<const uint8_t*>(inode_kv.key),
-			  inode_kv.key_length,
-			  inode_buffer, inode_size);
-    } else {
-      // nlinks == 1, we can erase it
-      // TODO actually perform these checks / do these things
-      // zero locks? zero in-use records? clear the whole file.
-      // otherwise, add an entry to the async garbage collection queue
-
-      auto key_start = pack_inode_key(inode.inode());
-      auto key_stop  = pack_inode_key(inode.inode());
-      // based on our KV layout, this will cover all inode records
-      key_stop.push_back('\xff');
+  // we always decrement. that'll take directories to
+  // nlinks==1, which, if they linger around because
+  // they were held open, is how other functions know
+  // not to allow things to be created in the directory.
+  inode.set_nlinks(inode.nlinks() - 1);
+  // as such we always update the inode.
+  struct timespec tv;
+  clock_gettime(CLOCK_REALTIME, &tv);
+  update_ctime(&inode, &tv);
+  int inode_size = inode.ByteSize();
+  uint8_t inode_buffer[inode_size];
+  inode.SerializeToArray(inode_buffer, inode_size);
   
-      fdb_transaction_clear_range(transaction.get(),
-				  key_start.data(), key_start.size(),
-				  key_stop.data(),  key_stop.size());
+  fdb_transaction_set(transaction.get(),
+		      static_cast<const uint8_t*>(inode_kv.key),
+		      inode_kv.key_length,
+		      inode_buffer, inode_size);
+  
+  if((directory_listing_fetch && (inode.nlinks()<=1)) ||
+     (inode.nlinks() == 0)) {
+    // if the nlinks has dropped low enough, we may be able
+    // to erase the entire inode. even if we can't erase
+    // the whole thing, we should mark it for garbage collection.
+    
+    // TODO locking?
+    if(destination_in_use) {
+      auto key = pack_garbage_key(inode.inode());
+      uint8_t b = 0;
+      fdb_transaction_set(transaction.get(),
+			  key.data(), key.size(),
+			  &b, 1);
+    } else {
+      erase_inode(transaction.get(), inode.inode());
     }
   }
   
@@ -183,6 +215,10 @@ InflightAction Inflight_rename::complicated()
 
 InflightAction Inflight_rename::check()
 {
+
+  /****************************************************
+   * Pull the futures over into DirectoryEntrys
+   */
   {
     fdb_bool_t present;
     const uint8_t *val;
@@ -193,7 +229,7 @@ InflightAction Inflight_rename::check()
     }
     if(present)
       origin_dirent.ParseFromArray(val, vallen);
-    
+
     if(fdb_future_get_value(destination_lookup.get(), &present, &val, &vallen)) {
       return InflightAction::Restart();
     }
@@ -201,6 +237,11 @@ InflightAction Inflight_rename::check()
       destination_dirent.ParseFromArray(val, vallen);
   }
 
+  /****************************************************
+   * Compare what the futures came back with, with the
+   * stuff the flags say we need.
+   * TODO probably also the place to check permissions.
+   */
   if(flags == 0) {
     // default. we want an origin, and don't care about existance
     // of the destination, yet.
@@ -220,7 +261,9 @@ InflightAction Inflight_rename::check()
     if((!origin_dirent.has_inode()) || (!destination_dirent.has_inode())) {
       return InflightAction::Abort(ENOENT);
     }
-  } else if(flags == RENAME_NOREPLACE) {
+  }
+#ifdef RENAME_NOREPLACE
+  else if(flags == RENAME_NOREPLACE) {
     if(!origin_dirent.has_inode()) {
       return InflightAction::Abort(ENOENT);
     }
@@ -228,22 +271,34 @@ InflightAction Inflight_rename::check()
       return InflightAction::Abort(EEXIST);
     }
   }
+#endif
 
-  // ok, this is tenatively doable!
+  /****************************************************
+   * We've established that we (so far) have all of the
+   * information necessary to finish this request.
+   */
   if(((flags == 0) && (!destination_dirent.has_inode()))
 #ifdef RENAME_NOREPLACE
      || (flags == RENAME_NOREPLACE)
 #endif
      ) {
-    // easy case. there's no risk of having to unlink things.
-    int olddirent_size = origin_dirent.ByteSize();
-    uint8_t olddirent_buf[olddirent_size];
-    origin_dirent.SerializeToArray(olddirent_buf, olddirent_size);
+    /**
+     * This is the easy rename case. There's nothing at the
+     * destination, so there's no risk of having to unlink
+     * things.
+     */
 
+    // remove the old directory entry.
     auto key = pack_dentry_key(oldparent, oldname);
     fdb_transaction_clear(transaction.get(),
 			  key.data(), key.size());
 
+    // take the old directory entry contents, repack it.
+    int olddirent_size = origin_dirent.ByteSize();
+    uint8_t olddirent_buf[olddirent_size];
+    origin_dirent.SerializeToArray(olddirent_buf, olddirent_size);
+
+    // and save it into the new directory entry
     key = pack_dentry_key(newparent, newname);
     fdb_transaction_set(transaction.get(),
 			key.data(), key.size(),
@@ -251,7 +306,11 @@ InflightAction Inflight_rename::check()
   }
 #ifdef RENAME_EXCHANGE
   else if(flags == RENAME_EXCHANGE) {
-    // no problem, we're just rearranging dirents
+    /**
+     * This case is only slightly more complicated than
+     * the previous case. Here we swap the contents of the
+     * two directory entries, but nothing is unlinked.
+     */
     int olddirent_size = origin_dirent.ByteSize();
     uint8_t olddirent_buf[olddirent_size];
     origin_dirent.SerializeToArray(olddirent_buf, olddirent_size);
@@ -272,13 +331,18 @@ InflightAction Inflight_rename::check()
   }
 #endif
   else if(flags == 0) {
-    // TODO hard case.
-    // there's something in the destination, and we've got to get
-    // rid of it.
-    // TODO ugh can we share this code with unlink/rmdir?
+    /**
+     * This is the hard case. We're moving the origin
+     * over top of an existing destination.
+     * Since there's something at the destination, we'll
+     * have to get rid of it.
+     * TODO ugh can we share this code with unlink/rmdir?
+     **/
     if(destination_dirent.type() == directory) {
-      // ok, it's a directory. we need to check and see if there's
-      // anything in it.
+      /**
+       * The destination is a directory. We'll need to know
+       * if it is empty before we can remove it.
+       */
       auto key_start = pack_inode_key(destination_dirent.inode());
       key_start.push_back('d');
       auto key_stop  = pack_inode_key(destination_dirent.inode());
@@ -295,16 +359,25 @@ InflightAction Inflight_rename::check()
 		     &directory_listing_fetch);
     }
 
+    /**
+     * Regardless of what the destination is, we need to
+     * fetch its inode and use records.
+     */
     auto key_start = pack_inode_key(destination_dirent.inode());
     auto key_stop  = pack_inode_key(destination_dirent.inode());
-    key_stop.push_back('\x01');
+    // this ensures we cover the use records, located at \x01
+    key_stop.push_back('\x02');
 
     wait_on_future(fdb_transaction_get_range(transaction.get(),
 					     key_start.data(),
 					     key_start.size(), 0, 1,
 					     key_stop.data(),
 					     key_stop.size(),  0, 1,
-					     1000, 0,
+					     // we don't care how many use
+					     // records there are, we just
+					     // need to know if there are
+					     // 0, or >0. so, limit=2
+					     2, 0,
 					     FDB_STREAMING_MODE_WANT_ALL, 0,
 					     0, 0),
 		   &inode_metadata_fetch);
@@ -313,7 +386,11 @@ InflightAction Inflight_rename::check()
     return InflightAction::Abort(ENOSYS);
   }
   
-  // commit
+  /**
+   * If we've made it here, then we were in a simple case, and
+   * we're all done except for the commit. So schedule that,
+   * and head off to the commit callback when it finishes.
+   */
   wait_on_future(fdb_transaction_commit(transaction.get()),
                  &commit);
   return InflightAction::BeginWait(std::bind(&Inflight_rename::commit_cb, this));
@@ -333,6 +410,9 @@ InflightCallback Inflight_rename::issue()
 				     key.data(), key.size(), 0),
 		 &destination_lookup);
 
+  // TODO probably also need to fetch information about the parent inodes
+  // for permissions checking.
+  
   return std::bind(&Inflight_rename::check, this);
 }
 

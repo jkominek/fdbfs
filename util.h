@@ -27,6 +27,7 @@ extern std::vector<uint8_t> key_prefix;
 extern uint8_t BLOCKBITS;
 extern uint32_t BLOCKSIZE;
 extern int fileblock_prefix_length;
+extern int inode_key_length;
 extern std::vector<uint8_t> inode_use_identifier;
 extern std::unordered_map<fuse_ino_t, uint64_t> lookup_counts;
 
@@ -35,6 +36,7 @@ extern bool decrement_lookup_count(fuse_ino_t, uint64_t);
 
 extern fuse_ino_t generate_inode();
 extern std::vector<uint8_t> pack_inode_key(fuse_ino_t);
+extern std::vector<uint8_t> pack_garbage_key(fuse_ino_t);
 extern std::vector<uint8_t> pack_inode_use_key(fuse_ino_t);
 extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, std::string);
 extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t);

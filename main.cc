@@ -18,6 +18,7 @@
 
 #include "util.h"
 #include "values.pb.h"
+#include "garbage_collector.h"
 
 // will be filled out before operation begins
 FDBDatabase *database;
@@ -97,7 +98,8 @@ int main(int argc, char *argv[])
 
   key_prefix.push_back('F');
   key_prefix.push_back('S');
-  fileblock_prefix_length = pack_inode_key(0).size() + 1;
+  inode_key_length = pack_inode_key(0).size();
+  fileblock_prefix_length = inode_key_length + 1;
   BLOCKBITS = 13;
   BLOCKSIZE = 1<<BLOCKBITS;
 
@@ -109,6 +111,7 @@ int main(int argc, char *argv[])
   for(int i=0; i<16; i++) {
     inode_use_identifier.push_back(random() & 0xFF);
   }
+  // TODO put our inode_use_identifier into the pid table somehow
   
   if(fdb_select_api_version(610))
     return -1;
@@ -120,7 +123,10 @@ int main(int argc, char *argv[])
 
   if(fdb_create_database(NULL, &database))
     return -1;
-	  
+
+  pthread_t gc_thread;
+  pthread_create(&gc_thread, NULL, garbage_scanner, NULL);
+
   if ((fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1) &&
       ((ch = fuse_mount(mountpoint, &args)) != NULL))
     {
@@ -144,6 +150,7 @@ int main(int argc, char *argv[])
   fuse_opt_free_args(&args);
 
   fdb_database_destroy(database);
+  database = NULL;
   err = fdb_stop_network();
   err = err || pthread_join( network_thread, NULL );
   return err;

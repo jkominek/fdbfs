@@ -158,6 +158,11 @@ InflightCallback Inflight_mknod::issue()
 {
   ino = generate_inode();
 
+  // TODO we need to fetch the parent inode for two reasons:
+  // 1) permissions checking
+  // 2) check nlinks; if it is <=1 then we can't allow new
+  //    entries to be created here, as we've been unlinked.
+  
   auto key = pack_dentry_key(parent, name);
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),

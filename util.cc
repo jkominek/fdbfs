@@ -71,21 +71,30 @@ fuse_ino_t generate_inode()
   // it isn't trampling an existing inode.
   struct timespec tp;
   clock_gettime(CLOCK_REALTIME, &tp);
-  // we get ~30 bits from the nanoseconds. we'll leave those
-  // in the least significant bytes. the lowest 34 bits of
-  // the seconds will become the most significant bytes.
-  // since we're going to prefer LSB systems, that'll get the
-  // most rapidly varying bytes at the start of the FDB keys,
-  // spreading inode allocation uniformly across key space.
-  uint64_t h = (tp.tv_sec & 0x3FFFFFFFF) << 30;
-  uint64_t l = (tp.tv_nsec & 0x3FFFFFFF) >> 2;
+  // we get 30 bits from the nanoseconds. we'll move
+  // those up to the high end of what will be the key.
+  // the low 34 bit of the seconds will be moved to
+  // the low end of the key.
+  uint64_t l = (tp.tv_sec & 0x3FFFFFFFF);
+  uint64_t h = (tp.tv_nsec & 0x3FFFFFFF) << 34;
   return (h | l);
 }
 
+int inode_key_length;
 std::vector<uint8_t> pack_inode_key(fuse_ino_t ino)
 {
   std::vector<uint8_t> key = key_prefix;
   key.push_back(INODE_PREFIX);
+  fuse_ino_t tmp = htobe64(ino);
+  uint8_t *tmpp = reinterpret_cast<uint8_t *>(&tmp);
+  key.insert(key.end(), tmpp, tmpp + sizeof(fuse_ino_t));
+  return key;
+}
+
+std::vector<uint8_t> pack_garbage_key(fuse_ino_t ino)
+{
+  std::vector<uint8_t> key = key_prefix;
+  key.push_back(GARBAGE_PREFIX);
   fuse_ino_t tmp = htobe64(ino);
   uint8_t *tmpp = reinterpret_cast<uint8_t *>(&tmp);
   key.insert(key.end(), tmpp, tmpp + sizeof(fuse_ino_t));

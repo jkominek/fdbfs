@@ -38,6 +38,8 @@ public:
   Inflight_unlink_rmdir *reincarnate();
   InflightCallback issue();
 private:
+  // parent inode, for perms checking
+  unique_future parent_lookup;
   // for fetching the dirent given parent inode and path name
   unique_future dirent_lookup;
   // fetches inode metadata except xattrs
@@ -57,8 +59,13 @@ private:
   fuse_ino_t ino;
   // provided name and length
   std::string name;
+  // computed key of the dirent
+  std::vector<uint8_t> dirent_key;
   // true if we were called as rmdir
   bool actually_rmdir;
+
+  // if we find use records for the inode, we'll mark this
+  bool inode_in_use = false;
 };
 
 Inflight_unlink_rmdir::Inflight_unlink_rmdir(fuse_req_t req,
@@ -109,8 +116,8 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check()
 
   // dirent deletion (has to wait until we're sure we can remove the
   // entire thing)
-  auto key = pack_dentry_key(parent, name);
-  fdb_transaction_clear(transaction.get(), key.data(), key.size());
+  fdb_transaction_clear(transaction.get(),
+			dirent_key.data(), dirent_key.size());
 
   auto key_start = pack_inode_key(ino);
   auto key_stop  = pack_inode_key(ino);
@@ -155,37 +162,56 @@ InflightAction Inflight_unlink_rmdir::inode_check()
     return InflightAction::Abort(EIO);
   }
 
-  // check the stat structure
-  // nlinks > 1? decrement and cleanup.
-  if(inode.nlinks()>1) {
-    inode.set_nlinks(inode.nlinks()-1);
-    struct timespec tv;
-    clock_gettime(CLOCK_REALTIME, &tv);
-    update_ctime(&inode, &tv);
+  for(int i=1; i<kvcount; i++) {
+    // inspect the other records we got back
+    FDBKeyValue kv = kvs[i];
+    auto kv_key = reinterpret_cast<const uint8_t *>(kv.key);
+    if((kv.key_length>inode_key_length) &&
+       (kv_key[inode_key_length] == 0x01)) {
+      // there's a use record in place, we can't erase the inode.
+      inode_in_use = true;
+    }
+  }
+  
+  // update the stat structure
+  inode.set_nlinks(inode.nlinks()-1);
+  struct timespec tv;
+  clock_gettime(CLOCK_REALTIME, &tv);
+  update_ctime(&inode, &tv);
 
-    int inode_size = inode.ByteSize();
-    uint8_t inode_buffer[inode_size];
-    inode.SerializeToArray(inode_buffer, inode_size);
+  int inode_size = inode.ByteSize();
+  uint8_t inode_buffer[inode_size];
+  inode.SerializeToArray(inode_buffer, inode_size);
     
-    fdb_transaction_set(transaction.get(),
-		        static_cast<const uint8_t*>(inode_kv.key),
-			inode_kv.key_length,
-			inode_buffer, inode_size);
-  } else {
-    // nlinks == 1? we've removed the last dirent.
+  fdb_transaction_set(transaction.get(),
+		      static_cast<const uint8_t*>(inode_kv.key),
+		      inode_kv.key_length,
+		      inode_buffer, inode_size);
+  if(inode.nlinks()==0) {
+    // nlinks == 0? it might be time to clean up the inode
 
-    // TODO actually perform these checks / do these things
     // zero locks? zero in-use records? clear the whole file.
     // otherwise, add an entry to the async garbage collection queue
+    if(!inode_in_use) {
+      auto key_start = pack_inode_key(ino);
+      auto key_stop  = pack_inode_key(ino);
+      // based on our KV layout, this will cover all inode records
+      key_stop.push_back('\xff');
 
-    auto key_start = pack_inode_key(ino);
-    auto key_stop  = pack_inode_key(ino);
-    // based on our KV layout, this will cover all inode records
-    key_stop.push_back('\xff');
-  
-    fdb_transaction_clear_range(transaction.get(),
-				key_start.data(), key_start.size(),
-				key_stop.data(),  key_stop.size());
+      // this will erase the above set if we're actually dumping
+      // the whole inode
+      fdb_transaction_clear_range(transaction.get(),
+				  key_start.data(), key_start.size(),
+				  key_stop.data(),  key_stop.size());
+    } else {
+      // the inode is in use, but we've dropped its last reference.
+      auto key = pack_garbage_key(ino);
+      uint8_t b = 0x00;
+      // insert a record for the garbage collector
+      fdb_transaction_set(transaction.get(),
+			  key.data(), key.size(),
+			  &b, 1);
+    }
   }
 
   // commit
@@ -237,7 +263,7 @@ InflightAction Inflight_unlink_rmdir::postlookup()
       auto stop  = pack_inode_key(ino);
       // based on our KV layout, this will fetch all of the metadata
       // about the directory except the extended attributes.
-      stop.push_back('\x01');
+      stop.push_back('\x02');
 
       wait_on_future(fdb_transaction_get_range(transaction.get(),
 					       start.data(),
@@ -275,14 +301,14 @@ InflightAction Inflight_unlink_rmdir::postlookup()
     // we want anything except a directory
     if(dirent_type != S_IFDIR) {
       // successfully found something unlinkable.
-      auto key = pack_dentry_key(parent, name);
-      fdb_transaction_clear(transaction.get(), key.data(), key.size());
+      fdb_transaction_clear(transaction.get(),
+			    dirent_key.data(), dirent_key.size());
 
       auto start = pack_inode_key(ino);
       auto stop  = pack_inode_key(ino);
       // based on our KV layout, this will fetch all of the metadata
       // about the file except the extended attributes.
-      stop.push_back('\x01');
+      stop.push_back('\x02');
 
       // we'll use this to decrement st_nlink, check if it has reached zero
       // and if it has, and proceed with the plan.
@@ -305,13 +331,16 @@ InflightAction Inflight_unlink_rmdir::postlookup()
 
 InflightCallback Inflight_unlink_rmdir::issue()
 {
-  // TODO for correct permissions checking i think we need to also fetch
-  // the inode of the containing directory so that we can see if we'll have
-  // permission to remove the dirent.
-  // that can run in parallel to this fetch, following the normal pattern.
-  auto key = pack_dentry_key(parent, name);
+  // fetch parent inode so we can check permissions
+  auto key = pack_inode_key(parent);
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
+		 &parent_lookup);
+  
+  // convert dirent to inode
+  dirent_key = pack_dentry_key(parent, name);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     dirent_key.data(), dirent_key.size(), 0),
 		 &dirent_lookup);
   return std::bind(&Inflight_unlink_rmdir::postlookup, this);
 }
