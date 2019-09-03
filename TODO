@@ -1,0 +1,7 @@
+1 unify some of the code between rename and unlink
+2 implement the correct behavior for unlink, so that deleted files
+  aren't actually removed until the last user is gone
+3 actually use pid table, and check validity of use records
+4 maybe be more resilient in the face of failures to insert use records
+5 permissions checking
+6 locks
