@@ -181,7 +181,7 @@ void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr)
   }
 
   attr->st_blksize = BLOCKSIZE;
-  attr->st_blocks = attr->st_size / BLOCKSIZE + 1;
+  attr->st_blocks = (attr->st_size / 512) + 1;
 
   /*
   printf("stat struct\n");
