@@ -6,6 +6,18 @@
 #define FDB_API_VERSION 610
 #include <foundationdb/fdb_c.h>
 
+// Configuration-esque block, to be pulled out later
+
+#define LZ4_BLOCK_COMPRESSION
+
+#ifdef LZ4_BLOCK_COMPRESSION
+#define BLOCK_COMPRESSION
+#endif
+
+#ifdef BLOCK_COMPRESSION
+#define SPECIAL_BLOCKS
+#endif
+
 // for mode_t
 #include <sys/types.h>
 
@@ -27,6 +39,7 @@ extern std::vector<uint8_t> key_prefix;
 extern uint8_t BLOCKBITS;
 extern uint32_t BLOCKSIZE;
 extern int fileblock_prefix_length;
+extern int fileblock_key_length;
 extern int inode_key_length;
 extern std::vector<uint8_t> inode_use_identifier;
 extern std::unordered_map<fuse_ino_t, uint64_t> lookup_counts;
@@ -42,12 +55,26 @@ extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, std::string);
 extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t);
 extern void print_key(std::vector<uint8_t>);
 extern void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr);
-extern void print_bytes(const uint8_t *str, int strlength);
+template <typename T>
+void print_bytes(const T *str, int strlength)
+{
+  for(int i=0; i<strlength; i++) {
+    if(isprint(str[i])) {
+      printf("%c", str[i]);
+    } else {
+      printf("\\x%02x", str[i]);
+    }
+  }
+}
+using range_keys = std::pair<std::vector<uint8_t>, std::vector<uint8_t>>;
+range_keys offset_size_to_range_keys(fuse_ino_t, size_t, size_t);
 
 extern void update_atime(INodeRecord *, struct timespec *);
 extern void update_mtime(INodeRecord *, struct timespec *);
 extern void update_ctime(INodeRecord *, struct timespec *);
-  
+
+extern int decode_block(FDBKeyValue *, int, uint8_t *, int, int);
+
 #ifndef DEBUG
 #define DEBUG 0
 #endif //DEBUG

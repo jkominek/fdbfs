@@ -5,16 +5,11 @@
 #include <time.h>
 #include <ctype.h>
 
-#include "values.pb.h"
+#ifdef LZ4_BLOCK_COMPRESSION
+#include <lz4.h>
+#endif
 
-#define max(a,b) \
-  ({ __typeof__ (a) _a = (a); \
-    __typeof__ (b) _b = (b); \
-    _a > _b ? _a : _b; })
-#define min(a,b) \
-  ({ __typeof__ (a) _a = (a); \
-    __typeof__ (b) _b = (b); \
-    _a < _b ? _a : _b; })
+#include "values.pb.h"
 
 std::vector<uint8_t> inode_use_identifier;
 
@@ -110,11 +105,25 @@ std::vector<uint8_t> pack_inode_use_key(fuse_ino_t ino)
 }
 
 int fileblock_prefix_length;
+int fileblock_key_length;
 std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t block)
 {
   auto key = pack_inode_key(ino);
   key.push_back(DATA_PREFIX);
   
+  // TODO this is fast on our end, but every file block key now has 64
+  // bits in it, where most of those 64 bits will be 0, most of the
+  // time. which are stored redundantly and moved back and forth across
+  // the network on a regular basis.
+  // most OSes are going to limit us to 64 bit files anyways. so we
+  // really only need to go up to (64 - BLOCKBITS) here.
+  // so we should consider switching over to a variable length representation
+  // of the block number. we could even imagine replacing the DATA_PREFIX
+  // 'f' with the values 0xF8 through 0xFF, and then taking the lowest
+  // three bits as representing the number of bytes in the block number
+  // representation. (because 2^3 bytes for representing an integer is
+  // plenty.)
+
   block = htobe64(block);
   uint8_t *tmpp = reinterpret_cast<uint8_t *>(&block);
   key.insert(key.end(), tmpp, tmpp + sizeof(uint64_t));
@@ -194,15 +203,14 @@ void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr)
   */
 }
 
-void print_bytes(const uint8_t *str, int strlength)
+range_keys offset_size_to_range_keys(fuse_ino_t ino, size_t off, size_t size)
 {
-  for(int i=0; i<strlength; i++) {
-    if(isprint(str[i])) {
-      printf("%c", str[i]);
-    } else {
-      printf("\\x%02x", str[i]);
-    }
-  }
+  uint64_t start_block = off >> BLOCKBITS;
+  uint64_t stop_block  = ((off + size - 1) >> BLOCKBITS);
+  auto start = pack_fileblock_key(ino, start_block);
+  auto stop  = pack_fileblock_key(ino, stop_block);
+  stop.push_back(0xff);
+  return std::pair(start, stop);
 }
 
 void update_atime(INodeRecord *inode, struct timespec *tv)
@@ -226,4 +234,86 @@ void update_mtime(INodeRecord *inode, struct timespec *tv)
   mtime->set_sec(tv->tv_sec);
   mtime->set_nsec(tv->tv_nsec);
   update_ctime(inode, tv);
+}
+
+/**
+ * Given a block's KV pair, decode it into output, preferably to targetsize,
+ * but definitely no further than maxsize.
+ * return negative for error; positive for length
+ */
+int decode_block(FDBKeyValue *kv, int value_offset, uint8_t *output, int targetsize, int maxsize)
+{
+  const uint8_t *key = static_cast<const uint8_t*>(kv->key);
+  const char *value = static_cast<const char*>(kv->value);
+  //printf("decoding block\n");
+  //print_bytes(value, kv->value_length);printf("\n");
+  if(kv->key_length == fileblock_key_length) {
+    //printf("   plain.\n");
+    // plain block. there's no added info after the block key
+    int amount = std::min(kv->value_length - value_offset, maxsize);
+    if(amount>0) {
+      bcopy(value + value_offset, output, amount);
+      return amount;
+    } else {
+      return 0;
+    }
+  }
+
+#ifdef SPECIAL_BLOCKS
+  //printf("   not plain!\n");
+  // ah! not a plain block! there might be something interesting!
+  // ... for now we just support compression
+  int i=fileblock_key_length;
+
+#ifdef BLOCK_COMPRESSION
+  if(key[i] == 'z') {
+    //printf("   compressed\n");
+    int arglen = key[i+1];
+    if(arglen<=0) {
+      //printf("    no arg\n");
+      // no argument, but we needed to know compression type
+      return -1;
+    }
+
+#ifdef LZ4_BLOCK_COMPRESSION
+    // for now we only know how to interpret a single byte of argument
+    if(key[i+2] == 0x00) {
+      // 0x00 means LZ4
+      if(value_offset == 0) {
+	//printf("   value_offset 0\n");
+	int ret = LZ4_decompress_safe_partial(value, reinterpret_cast<char *>(output), kv->value_length, targetsize, maxsize);
+	//if(ret>=0)
+	//  print_bytes(output, ret);printf(" (((%i <= %i <= %i)))\n", ret, targetsize, maxsize);
+	return ret;
+      } else {
+	// we don't want the first part of what is decompressed. that means
+	// a temporary buffer
+	char buffer[BLOCKSIZE];
+	// we'll only ask that enough be decompressed to satisfy the request
+	int ret = LZ4_decompress_safe_partial(value, buffer, kv->value_length, targetsize + value_offset, BLOCKSIZE);
+	if(ret<0) {
+	  return -1;
+	}
+	if(ret > value_offset) {
+	  // decompression produced at least one byte worth sending back
+	  int amount = std::min(ret - value_offset, targetsize);
+	  bcopy(buffer + value_offset, output, amount);
+	  return amount;
+	} else {
+	  // there was less data in the block than necessary to reach the
+	  // start of the copy, so we don't have to do anything.
+	  return 0;
+	}
+      }
+    }
+#endif
+    // other compression would go here
+#endif
+    // unrecognized compression algorithm
+    return -1;
+  }
+#endif
+
+  // unrecognized block type.
+  return -1;
 }

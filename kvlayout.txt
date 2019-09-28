@@ -12,9 +12,12 @@ prefix 'i' inode \x02 xattr2
 prefix 'i' inode 'd' filenameA-> dirents.
 prefix 'i' inode 'd' filenameB
 prefix 'i' inode 'd' filenameC
-prefix 'i' inode 'f' offset0 -> blocks of data. offset is 64bit byte count
-prefix 'i' inode 'f' offset1
-prefix 'i' inode 'f' offset2
+prefix 'i' inode 'f' offset0 -> plain block, may be shorter than blocksize if ends in nulls
+                             -> totally null blocks can be omitted
+prefix 'i' inode 'f' offset2 'z'\x01\x00 -> block compressed with whatever algorithm is assigned to \x00
+prefix 'i' inode 'f' offset3 'p'\x02\x00... -> key contains 512 bytes of parity for the block 
+    there should be only one kv pair within a given offset(n) to offset(n+1)
+    range.
 
 we should probably move the dirent and filedata subspaces out, so that
 the entire inode space can be scanned, for fsck purposes, without reading

@@ -105,47 +105,33 @@ InflightAction Inflight_read::callback()
 
   size_t size = std::min(requested_size, inode.size() - off);
 
-  std::vector<uint8_t> buffer(size);
+  // we pad the buffer some so special block decoders have room to work
+  // without having to perform extra copies or allocations.
+  std::vector<uint8_t> buffer(size + 32);
   std::fill(buffer.begin(), buffer.end(), 0);
-  int actual_bytes_received=0;
 
   for(int i=0; i<kvcount; i++) {
     FDBKeyValue kv = kvs[i];
+    std::vector<uint8_t> key(kv.key_length);
+    bcopy(kv.key, key.data(), kv.key_length);
+    print_key(key);
     uint64_t block;
     bcopy(((uint8_t*)kv.key) + fileblock_prefix_length,
 	  &block,
 	  sizeof(uint64_t));
     block = be64toh(block);
     // TODO variable block size
-    int buffer_last_byte;
     if( (block * BLOCKSIZE) <= off ) {
       // we need an offset into the received block, since it
       // starts before (or at) the requested read area
       uint64_t block_off = off - block * BLOCKSIZE;
-      size_t copysize = std::min(size, kv.value_length - block_off);
-      if(copysize>0) {
-	bcopy(static_cast<const uint8_t*>(kv.value) + block_off,
-	      buffer.data(),
-	      copysize);
-	buffer_last_byte = copysize;
-      }
+      decode_block(&kv, block_off, buffer.data(), size - block_off, buffer.size());
     } else {
       // we need an offset into the target buffer, as our block
       // starts after the requested read area
       size_t bufferoff = block * BLOCKSIZE - off;
-      // the most we can copy is the smaller of however much
-      // space is left, and the size of the buffer from fdb
-      size_t maxcopy = size - bufferoff;
-      size_t copysize = std::min(maxcopy,
-				 static_cast<size_t>(kv.value_length));
-      bcopy(kv.value, buffer.data() + bufferoff, copysize);
-      // this is the position of the last useful byte we wrote.
-      buffer_last_byte = bufferoff + copysize;
+      decode_block(&kv, 0, buffer.data() + bufferoff, size - bufferoff, buffer.size() - bufferoff);
     }
-
-    // furthest byte in the buffer that we write a 'real' value into.
-    actual_bytes_received = std::max(actual_bytes_received,
-				     buffer_last_byte);
   }
 
   if(more) {
@@ -153,7 +139,7 @@ InflightAction Inflight_read::callback()
     // satisfy the contract.
     return InflightAction::Abort(EIO);
   } else {
-    return InflightAction::Buf(buffer);
+    return InflightAction::Buf(buffer, size);
   }
 }
 
@@ -165,17 +151,12 @@ InflightCallback Inflight_read::issue()
 				     key.data(), key.size(), 0),
 		 &inode_fetch);
   
-  uint64_t start_block = htobe64(off >> BLOCKBITS);
-  // reading off the end of what's there doesn't matter.
-  uint64_t stop_block  = htobe64(((off + requested_size) >> BLOCKBITS) + 0);
-
-  auto start = pack_fileblock_key(ino, start_block);
-  auto stop  = pack_fileblock_key(ino, stop_block);
+  range_keys r = offset_size_to_range_keys(ino, off, requested_size);
 
   FDBFuture *f =
     fdb_transaction_get_range(transaction.get(),
-			      FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start.data(), start.size()),
-			      FDB_KEYSEL_FIRST_GREATER_THAN(stop.data(), stop.size()),
+			      FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(r.first.data(), r.first.size()),
+			      FDB_KEYSEL_FIRST_GREATER_THAN(r.second.data(), r.second.size()),
 			      0, 0,
 			      FDB_STREAMING_MODE_WANT_ALL, 0,
 			      0, 0);

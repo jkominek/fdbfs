@@ -100,6 +100,7 @@ int main(int argc, char *argv[])
   key_prefix.push_back('S');
   inode_key_length = pack_inode_key(0).size();
   fileblock_prefix_length = inode_key_length + 1;
+  fileblock_key_length = pack_fileblock_key(0, 0).size();
   BLOCKBITS = 13;
   BLOCKSIZE = 1<<BLOCKBITS;
 

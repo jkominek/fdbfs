@@ -138,9 +138,11 @@ class InflightAction {
 	fuse_reply_attr(i->req, attr.get(), 0.0);
       });
   }
-  static InflightAction Buf(std::vector<uint8_t> buf) {
-    return InflightAction(true, false, false, [buf](Inflight *i) {
-	fuse_reply_buf(i->req, reinterpret_cast<const char *>(buf.data()), buf.size());
+  static InflightAction Buf(std::vector<uint8_t> buf, int actual_size=-1) {
+    return InflightAction(true, false, false, [buf, actual_size](Inflight *i) {
+	fuse_reply_buf(i->req,
+		       reinterpret_cast<const char *>(buf.data()),
+		       (actual_size >= 0) ? actual_size : buf.size());
       });
   }
   static InflightAction Readlink(std::string name) {

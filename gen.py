@@ -1,7 +1,11 @@
 #!/usr/bin/env python
 
+# this spits out commands for fdbcli so you don't have to install
+# the python module, and because it can get away with it.
+
 import values_pb2 as msgs
 import struct
+import lz4.block
 
 prefix = "FS"
 
@@ -64,7 +68,7 @@ world_dirent.type = msgs.regular
 
 print_set(dirent_key(rootdir_inode, "world"), world_dirent.SerializeToString())
 print_set(inode_key(world_inode), world_inode_value.SerializeToString())
-print_set(block_key(world_inode, 0), world_inode_data)
+print_set(block_key(world_inode, 0)+"z\x01\x00", lz4.block.compress(world_inode_data, store_size=False))
 
 
 portal_inode = 100
