@@ -53,14 +53,14 @@ Inflight::Inflight(fuse_req_t req, bool readwrite, unique_transaction provided)
 {
   // we need to be more clever about this. having every single
   // operation fetch a read version is going to add a lot of latency.
-#ifdef DEBUG
+#if DEBUG
   clock_gettime(CLOCK_MONOTONIC, &clockstart);
 #endif
 }
 
 Inflight::~Inflight()
 {
-#ifdef DEBUG
+#if DEBUG
   struct timespec stop;
   clock_gettime(CLOCK_MONOTONIC, &stop);
   time_t secs = (stop.tv_sec - clockstart.tv_sec);

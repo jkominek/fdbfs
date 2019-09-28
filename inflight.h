@@ -10,7 +10,7 @@
 #include <functional>
 #include <experimental/optional>
 
-#ifdef DEBUG
+#if DEBUG
 #include <time.h>
 #endif
 
@@ -76,7 +76,7 @@ class Inflight {
   std::queue<FDBFuture *> future_queue;
   void begin_wait();
 
-#ifdef DEBUG
+#if DEBUG
   struct timespec clockstart;
 #endif
 
