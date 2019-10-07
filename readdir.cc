@@ -33,7 +33,6 @@ private:
   fuse_ino_t ino;
   size_t size;
   off_t off;
-  int dirent_prefix_len;
 
   unique_future range_fetch;
   InflightAction callback();
@@ -73,14 +72,14 @@ InflightAction Inflight_readdir::callback()
     FDBKeyValue kv = kvs[i];
 
     char name[1024];
-    if(kv.key_length <= dirent_prefix_len) {
+    if(kv.key_length <= dirent_prefix_length) {
       // serious internal error. we somehow got back a key that was too short?
       printf("eio!\n");
       return InflightAction::Abort(EIO);
     }
-    int keylen = kv.key_length - dirent_prefix_len;
+    int keylen = kv.key_length - dirent_prefix_length;
     // TOOD if keylen<=0 throw internal error.
-    bcopy(((uint8_t*)kv.key) + dirent_prefix_len,
+    bcopy(((uint8_t*)kv.key) + dirent_prefix_length,
 	  name,
 	  keylen);
     name[keylen] = '\0'; // null terminate
@@ -119,15 +118,8 @@ InflightAction Inflight_readdir::callback()
 
 InflightCallback Inflight_readdir::issue()
 {
-  auto start = pack_inode_key(ino);
-  start.push_back(DENTRY_PREFIX);
-  auto stop(start);
-
-  // this could really just be computed once, ever
-  dirent_prefix_len = start.size();
-
-  start.push_back('\x00');
-  stop.push_back('\xFF');
+  auto start = pack_dentry_key(ino, "");
+  auto stop = pack_dentry_key(ino, "\xFF");
 
   int offset = off;
   int limit = 10; // we should try to guess this better

@@ -16,9 +16,9 @@ print "clearrange {} {}\\xFF".format(prefix, prefix)
 def inode_key(i):
     return prefix + struct.pack(">cQ", "i", i)
 def dirent_key(i, n):
-    return prefix + struct.pack(">cQc", "i", i, "d") + n
+    return prefix + struct.pack(">cQ", "d", i) + n
 def block_key(i, b):
-    return prefix + struct.pack(">cQcQ", "i", i, "f", b)
+    return prefix + struct.pack(">cQQ", "f", i, b)
 def printable(s):
     return "".join([c if c.isalnum() else ("\\x%02x" % (ord(c),)) for c in s])
 def print_set(k, v):

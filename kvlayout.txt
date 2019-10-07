@@ -9,19 +9,15 @@ prefix 'i' inode \x01 pid2    -> per fuse-process use counter (64 bit LE)
 prefix 'i' inode \x02 xattr0  -> arbitrary number of extended attributes
 prefix 'i' inode \x02 xattr1
 prefix 'i' inode \x02 xattr2
-prefix 'i' inode 'd' filenameA-> dirents.
-prefix 'i' inode 'd' filenameB
-prefix 'i' inode 'd' filenameC
-prefix 'i' inode 'f' offset0 -> plain block, may be shorter than blocksize if ends in nulls
+prefix 'd' inode filenameA-> dirents.
+prefix 'd' inode filenameB
+prefix 'd' inode filenameC
+prefix 'f' inode offset0 -> plain block, may be shorter than blocksize if ends in nulls
                              -> totally null blocks can be omitted
-prefix 'i' inode 'f' offset2 'z'\x01\x00 -> block compressed with whatever algorithm is assigned to \x00
-prefix 'i' inode 'f' offset3 'p'\x02\x00... -> key contains 512 bytes of parity for the block 
+prefix 'f' inode offset2 'z'\x01\x00 -> block compressed with whatever algorithm is assigned to \x00
+prefix 'f' inode offset3 'p'\x02\x00... -> key contains 512 bytes of parity for the block 
     there should be only one kv pair within a given offset(n) to offset(n+1)
     range.
-
-we should probably move the dirent and filedata subspaces out, so that
-the entire inode space can be scanned, for fsck purposes, without reading
-all information in the filesystem.
 
 === garbage ===
 prefix 'g' inode -> indicates that nlinks in the inode has gone to zero,

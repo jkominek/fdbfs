@@ -76,10 +76,10 @@ fuse_ino_t generate_inode()
 }
 
 int inode_key_length;
-std::vector<uint8_t> pack_inode_key(fuse_ino_t ino)
+std::vector<uint8_t> pack_inode_key(fuse_ino_t ino, char prefix)
 {
   std::vector<uint8_t> key = key_prefix;
-  key.push_back(INODE_PREFIX);
+  key.push_back(prefix);
   fuse_ino_t tmp = htobe64(ino);
   uint8_t *tmpp = reinterpret_cast<uint8_t *>(&tmp);
   key.insert(key.end(), tmpp, tmpp + sizeof(fuse_ino_t));
@@ -108,9 +108,8 @@ int fileblock_prefix_length;
 int fileblock_key_length;
 std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t block)
 {
-  auto key = pack_inode_key(ino);
-  key.push_back(DATA_PREFIX);
-  
+  auto key = pack_inode_key(ino, DATA_PREFIX);
+
   // TODO this is fast on our end, but every file block key now has 64
   // bits in it, where most of those 64 bits will be 0, most of the
   // time. which are stored redundantly and moved back and forth across
@@ -130,10 +129,10 @@ std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t block)
   return key;
 }
 
+int dirent_prefix_length;
 std::vector<uint8_t> pack_dentry_key(fuse_ino_t ino, std::string name)
 {
-  auto key = pack_inode_key(ino);
-  key.push_back(DENTRY_PREFIX);
+  auto key = pack_inode_key(ino, DENTRY_PREFIX);
 
   key.insert(key.end(), name.begin(), name.end());
   return key;

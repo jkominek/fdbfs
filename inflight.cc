@@ -216,6 +216,12 @@ Inflight_markused *Inflight_markused::reincarnate() {
 InflightCallback Inflight_markused::issue() {
   auto key = pack_inode_use_key(ino);
   uint8_t b = 0;
+  // TODO we should check to make sure the inode still exists
+  // as part of this transaction. if it doesn't exist, we should
+  // call fuse_lowlevel_notify_inval_inode. *** that function can
+  // block until other operations complete!!! *** so if we call it
+  // from within an fdb callback handler, we're deadlocked. don't do
+  // that.
   fdb_transaction_set(transaction.get(),
 		      key.data(), key.size(),
 		      &b, 1);

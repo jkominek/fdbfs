@@ -93,6 +93,10 @@ class Inflight_markused : public Inflight {
   unique_future commit;
 };
 
+// TODO consider how we might pull the FUSE bits out of these,
+// or otherwise abstract what function is being called when one
+// of these is 'executed', so that we can swap in a different
+// back end for testing, or other fancy things
 class InflightAction {
  public:
   static InflightAction BeginWait(InflightCallback newcb) {
@@ -127,8 +131,13 @@ class InflightAction {
     return InflightAction(true, false, false, [e](Inflight *i) {
 	fuse_reply_entry(i->req, e.get());
 	if(increment_lookup_count(e->ino)) {
-	  // sigh. launch another background transaction to insert
-	  // the use record.
+	  // sigh. launch another background transaction to insert the
+	  // use record.
+
+	  // TODO this is a potentially correctness-breaking
+	  // optimization/simplification, in that this write could
+	  // fail, despite us thinking that the inode will continue to
+	  // exist as long as we want it.
 	  (new Inflight_markused(i->req, e->ino, make_transaction()))->start();
 	}
       });
