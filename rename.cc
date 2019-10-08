@@ -115,11 +115,10 @@ InflightAction Inflight_rename::complicated()
   FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
-  if(fdb_future_get_keyvalue_array(inode_metadata_fetch.get(),
-				   (const FDBKeyValue **)&kvs,
-				   &kvcount, &more)) {
-    return InflightAction::Restart();
-  }
+  fdb_error_t err;
+
+  err = fdb_future_get_keyvalue_array(inode_metadata_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+  if(err) return InflightAction::FDBError(err);
   if(kvcount < 1) {
     // referential integrity error; dirent points to missing inode
     return InflightAction::Abort(EIO);
@@ -150,11 +149,10 @@ InflightAction Inflight_rename::complicated()
     FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
-    if(fdb_future_get_keyvalue_array(directory_listing_fetch.get(),
-				     (const FDBKeyValue **)&kvs,
-				     &kvcount, &more)) {
-      return InflightAction::Restart();
-    }
+    fdb_error_t err;
+
+    err = fdb_future_get_keyvalue_array(directory_listing_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+    if(err) return InflightAction::FDBError(err);
     if(kvcount>0) {
       // can't move over a directory with anything in it
       return InflightAction::Abort(ENOTEMPTY);
@@ -223,16 +221,15 @@ InflightAction Inflight_rename::check()
     fdb_bool_t present;
     const uint8_t *val;
     int vallen;
+    fdb_error_t err;
 
-    if(fdb_future_get_value(origin_lookup.get(), &present, &val, &vallen)) {
-      return InflightAction::Restart();
-    }
+    err = fdb_future_get_value(origin_lookup.get(), &present, &val, &vallen);
+    if(err) return InflightAction::FDBError(err);
     if(present)
       origin_dirent.ParseFromArray(val, vallen);
 
-    if(fdb_future_get_value(destination_lookup.get(), &present, &val, &vallen)) {
-      return InflightAction::Restart();
-    }
+    err = fdb_future_get_value(destination_lookup.get(), &present, &val, &vallen);
+    if(err) return InflightAction::FDBError(err);
     if(present)
       destination_dirent.ParseFromArray(val, vallen);
   }

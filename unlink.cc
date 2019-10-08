@@ -99,11 +99,10 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check()
   FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
-  if(fdb_future_get_keyvalue_array(directory_listing_fetch.get(),
-				   (const FDBKeyValue **)&kvs,
-				   &kvcount, &more)) {
-    return InflightAction::Restart();
-  }
+  fdb_error_t err;
+
+  err = fdb_future_get_keyvalue_array(directory_listing_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+  if(err) return InflightAction::FDBError(err);
   if(kvcount>0) {
     // can't rmdir a directory with any amount of stuff in it.
     return InflightAction::Abort(ENOTEMPTY);
@@ -139,11 +138,10 @@ InflightAction Inflight_unlink_rmdir::inode_check()
   FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
-  if(fdb_future_get_keyvalue_array(inode_metadata_fetch.get(),
-				   (const FDBKeyValue **)&kvs,
-				   &kvcount, &more)) {
-    return InflightAction::Restart();
-  }
+  fdb_error_t err;
+
+  err = fdb_future_get_keyvalue_array(inode_metadata_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+  if(err) return InflightAction::FDBError(err);
   // TODO check the metadata for permission to erase
 
   // find the inode record, should be the first kv pair
@@ -225,10 +223,10 @@ InflightAction Inflight_unlink_rmdir::postlookup()
 {
   fdb_bool_t dirent_present;
   const uint8_t *value; int valuelen;
-  if(fdb_future_get_value(dirent_lookup.get(), &dirent_present,
-			  &value, &valuelen)) {
-    return InflightAction::Restart();
-  }
+  fdb_error_t err;
+
+  err = fdb_future_get_value(dirent_lookup.get(), &dirent_present, &value, &valuelen);
+  if(err) return InflightAction::FDBError(err);
 
   if(!dirent_present) {
     return InflightAction::Abort(ENOENT);

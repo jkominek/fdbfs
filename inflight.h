@@ -104,6 +104,11 @@ class InflightAction {
 	i->cb.emplace(newcb);
       });
   }
+  static InflightAction FDBError(fdb_error_t err) {
+    // TODO for now we're just going to do the same thing as restart
+    // but really we should go into FDB error handling
+    return InflightAction(false, false, true, [](Inflight *){ });
+  }
   static InflightAction Restart() {
     return InflightAction(false, false, true, [](Inflight *){ });
   }

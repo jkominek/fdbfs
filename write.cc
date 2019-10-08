@@ -143,13 +143,12 @@ InflightAction Inflight_write::commit_cb()
 InflightAction Inflight_write::check()
 {
   fdb_bool_t present;
+  fdb_error_t err;
 
   uint8_t *val;
   int vallen;
-  if(fdb_future_get_value(inode_fetch.get(), &present,
-			  (const uint8_t **)&val, &vallen)) {
-    return InflightAction::Restart();
-  }
+  err = fdb_future_get_value(inode_fetch.get(), &present, (const uint8_t **)&val, &vallen);
+  if(err) return InflightAction::FDBError(err);
   // check everything about the inode
   if(!present)
   {
@@ -188,11 +187,9 @@ InflightAction Inflight_write::check()
     FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
-    if(fdb_future_get_keyvalue_array(start_block_fetch.get(),
-				     (const FDBKeyValue **)&kvs,
-				     &kvcount, &more)) {
-      return InflightAction::Restart();
-    }
+    fdb_error_t err;
+    err = fdb_future_get_keyvalue_array(start_block_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+    if(err) return InflightAction::FDBError(err);
 
     uint64_t copy_start_off = off % BLOCKSIZE;
     uint64_t copy_start_size = std::min(buffer.size(),
@@ -214,11 +211,10 @@ InflightAction Inflight_write::check()
     FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
-    if(fdb_future_get_keyvalue_array(stop_block_fetch.get(),
-				     (const FDBKeyValue **)&kvs,
-				     &kvcount, &more)) {
-      return InflightAction::Restart();
-    }
+    fdb_error_t err;
+
+    err = fdb_future_get_keyvalue_array(stop_block_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+    if(err) return InflightAction::FDBError(err);
 
     uint64_t copysize = ((off + buffer.size()) % BLOCKSIZE);
     uint64_t bufcopystart = buffer.size() - copysize;

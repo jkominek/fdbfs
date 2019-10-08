@@ -53,10 +53,10 @@ InflightAction Inflight_readlink::callback()
   fdb_bool_t present=0;
   uint8_t *val;
   int vallen;
-  if(fdb_future_get_value(inode_fetch.get(),
-			  &present, (const uint8_t **)&val, &vallen)) {
-    return InflightAction::Restart();
-  }
+  fdb_error_t err;
+
+  err = fdb_future_get_value(inode_fetch.get(), &present, (const uint8_t **)&val, &vallen);
+  if(err) return InflightAction::FDBError(err);
 
   if(present) {
     INodeRecord inode;

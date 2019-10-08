@@ -84,12 +84,12 @@ InflightAction Inflight_link::check()
   fdb_bool_t present=0;
   uint8_t *val;
   int vallen;
-
+  fdb_error_t err;
+  
   // is the file a non-directory?
-  if(fdb_future_get_value(file_lookup.get(), &present,
-			  (const uint8_t **)&val, &vallen)) {
-    return InflightAction::Restart();
-  }
+  err = fdb_future_get_value(file_lookup.get(), &present, (const uint8_t **)&val, &vallen);
+  if(err)
+    return InflightAction::FDBError(err);
   if(present) {
     inode.ParseFromArray(val, vallen);
     if(!inode.has_type()) {
@@ -107,10 +107,9 @@ InflightAction Inflight_link::check()
   }    
 
   // is the directory a directory?
-  if(fdb_future_get_value(dir_lookup.get(), &present,
-			  (const uint8_t **)&val, &vallen)) {
-    return InflightAction::Restart();
-  }
+  err = fdb_future_get_value(dir_lookup.get(), &present, (const uint8_t **)&val, &vallen);
+  if(err)
+    return InflightAction::FDBError(err);
   if(present) {
     INodeRecord dirinode;
     dirinode.ParseFromArray(val, vallen);
@@ -127,10 +126,9 @@ InflightAction Inflight_link::check()
   }
 
   // Does the target exist?
-  if(fdb_future_get_value(target_lookup.get(), &present,
-			  (const uint8_t **)&val, &vallen)) {
-    return InflightAction::Restart();
-  }
+  err = fdb_future_get_value(target_lookup.get(), &present, (const uint8_t **)&val, &vallen);
+  if(err)
+    return InflightAction::FDBError(err);
   if(present) {
     // that's an error. :(
     return InflightAction::Abort(EEXIST);

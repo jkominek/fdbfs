@@ -72,10 +72,10 @@ InflightAction Inflight_read::callback()
   const uint8_t *val;
   int vallen;
   fdb_bool_t present;
-  if(fdb_future_get_value(inode_fetch.get(), &present,
-			  &val, &vallen)) {
-    return InflightAction::Restart();
-  }
+  fdb_error_t err;
+  err = fdb_future_get_value(inode_fetch.get(), &present, &val, &vallen);
+  if(err)
+    return InflightAction::FDBError(err);
   if(!present) {
     return InflightAction::Abort(EBADF);
   }
@@ -88,10 +88,9 @@ InflightAction Inflight_read::callback()
   FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
-  if(fdb_future_get_keyvalue_array(range_fetch.get(),
-				   (const FDBKeyValue **)&kvs, &kvcount, &more)) {
-    return InflightAction::Restart();
-  }
+  err = fdb_future_get_keyvalue_array(range_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+  if(err)
+    return InflightAction::FDBError(err);
 
   if(more) {
     // TODO deal with the possibility of not getting all of the KV pairs

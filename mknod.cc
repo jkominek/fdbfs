@@ -83,14 +83,12 @@ InflightAction Inflight_mknod::postverification()
 {
   fdb_bool_t inode_present, dirent_present;
   const uint8_t *value; int valuelen;
-  if(fdb_future_get_value(dirent_check.get(), &dirent_present,
-			  &value, &valuelen)) {
-    return InflightAction::Restart();
-  }
-  if(fdb_future_get_value(inode_check.get(), &inode_present,
-			  &value, &valuelen)) {
-    return InflightAction::Restart();
-  }
+  fdb_error_t err;
+
+  err = fdb_future_get_value(dirent_check.get(), &dirent_present, &value, &valuelen);
+  if(err) return InflightAction::FDBError(err);
+  err = fdb_future_get_value(inode_check.get(), &inode_present, &value, &valuelen);
+  if(err) return InflightAction::FDBError(err);
   
   if(dirent_present) {
     // can't make this entry, there's already something there
