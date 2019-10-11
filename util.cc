@@ -235,6 +235,33 @@ void update_mtime(INodeRecord *inode, struct timespec *tv)
   update_ctime(inode, tv);
 }
 
+void erase_inode(FDBTransaction *transaction, fuse_ino_t ino)
+{
+  // inode data
+  auto key_start = pack_inode_key(ino);
+  auto key_stop = key_start;
+  key_stop.push_back('\xff');
+  fdb_transaction_clear_range(transaction,
+                              key_start.data(), key_start.size(),
+                              key_stop.data(),  key_stop.size());
+
+  // TODO be clever and only isse these clears based on inode type
+  // file data
+  key_start = pack_fileblock_key(ino, 0);
+  key_stop = pack_fileblock_key(ino, UINT64_MAX);
+  key_stop.push_back('\xff');
+  fdb_transaction_clear_range(transaction,
+                              key_start.data(), key_start.size(),
+                              key_stop.data(),  key_stop.size());
+
+  // directory listing
+  key_start = pack_dentry_key(ino, "");
+  key_stop = pack_dentry_key(ino, "\xff");
+  fdb_transaction_clear_range(transaction,
+                              key_start.data(), key_start.size(),
+                              key_stop.data(),  key_stop.size());
+}
+
 /**
  * Given a block's KV pair, decode it into output, preferably to targetsize,
  * but definitely no further than maxsize.

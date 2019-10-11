@@ -118,14 +118,7 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check()
   fdb_transaction_clear(transaction.get(),
 			dirent_key.data(), dirent_key.size());
 
-  auto key_start = pack_inode_key(ino);
-  auto key_stop  = pack_inode_key(ino);
-  // based on our KV layout, this will cover all inode records
-  key_stop.push_back('\xff');
-  
-  fdb_transaction_clear_range(transaction.get(),
-			      key_start.data(), key_start.size(),
-			      key_stop.data(),  key_stop.size());
+  erase_inode(transaction.get(), ino);
 
   // commit
   wait_on_future(fdb_transaction_commit(transaction.get()),
@@ -160,6 +153,8 @@ InflightAction Inflight_unlink_rmdir::inode_check()
     return InflightAction::Abort(EIO);
   }
 
+  // TODO check our own lookup_counts to see if _we're_ using the
+  // inode. if so, no sense cruising through all of the other records.
   for(int i=1; i<kvcount; i++) {
     // inspect the other records we got back
     FDBKeyValue kv = kvs[i];
@@ -191,16 +186,9 @@ InflightAction Inflight_unlink_rmdir::inode_check()
     // zero locks? zero in-use records? clear the whole file.
     // otherwise, add an entry to the async garbage collection queue
     if(!inode_in_use) {
-      auto key_start = pack_inode_key(ino);
-      auto key_stop  = pack_inode_key(ino);
-      // based on our KV layout, this will cover all inode records
-      key_stop.push_back('\xff');
-
-      // this will erase the above set if we're actually dumping
-      // the whole inode
-      fdb_transaction_clear_range(transaction.get(),
-				  key_start.data(), key_start.size(),
-				  key_stop.data(),  key_stop.size());
+      // we're basically never going to hit this, as to have found
+      // this inode, we probably caused some use records to be added.
+      erase_inode(transaction.get(), ino);
     } else {
       // the inode is in use, but we've dropped its last reference.
       auto key = pack_garbage_key(ino);

@@ -85,17 +85,6 @@ InflightAction Inflight_rename::commit_cb()
   return InflightAction::OK();
 }
 
-void erase_inode(FDBTransaction *transaction, fuse_ino_t ino)
-{
-  auto key_start = pack_inode_key(ino);
-  auto key_stop = key_start;
-  key_stop.push_back('\xff');
-
-  fdb_transaction_clear_range(transaction,
-			      key_start.data(), key_start.size(),
-			      key_stop.data(),  key_stop.size());
-}
-
 InflightAction Inflight_rename::complicated()
 {
   /**

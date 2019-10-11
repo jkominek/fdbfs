@@ -74,6 +74,8 @@ extern void update_atime(INodeRecord *, struct timespec *);
 extern void update_mtime(INodeRecord *, struct timespec *);
 extern void update_ctime(INodeRecord *, struct timespec *);
 
+extern void erase_inode(FDBTransaction *, fuse_ino_t);
+
 extern int decode_block(FDBKeyValue *, int, uint8_t *, int, int);
 
 #ifndef DEBUG

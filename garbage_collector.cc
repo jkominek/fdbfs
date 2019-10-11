@@ -125,13 +125,8 @@ void *garbage_scanner(void *ignore)
     printf("cleaning garbage inode\n");
     auto garbagekey = pack_garbage_key(ino);
     fdb_transaction_clear(t.get(), garbagekey.data(), garbagekey.size());
-    
-    start = pack_inode_key(ino);
-    stop  = start;
-    stop.push_back(0xFF);
-    fdb_transaction_clear_range(t.get(),
-				start.data(), start.size(),
-				stop.data(), stop.size());
+
+    erase_inode(t.get(), ino);
     f = fdb_transaction_commit(t.get());
     // if the commit fails, it doesn't matter. we'll try again
     // later.
