@@ -1,12 +1,13 @@
 language: cpp
-dist: xenial
+dist: bionic
 compiler:
 - clang
 os:
 - linux
 before_install:
-- sudo apt-get -y install libfuse-dev libprotobuf-dev protobuf-compiler liblz4-dev
-- wget https://www.foundationdb.org/downloads/6.2.10/ubuntu/installers/foundationdb-clients_6.2.10-1_amd64.deb
-- sudo dpkg -i foundationdb-clients_6.2.10-1_amd64.deb
+- sudo apt-get -y install libfuse-dev libprotobuf-dev protobuf-compiler liblz4-dev python-protobuf python-lz4
+- wget https://www.foundationdb.org/downloads/6.2.10/ubuntu/installers/foundationdb-clients_6.2.10-1_amd64.deb https://www.foundationdb.org/downloads/6.2.10/ubuntu/installers/foundationdb-server_6.2.10-1_amd64.deb
+- sudo dpkg -i foundationdb-clients_6.2.10-1_amd64.deb foundationdb-server_6.2.10-1_amd64.deb
 script:
 - make
+- make regen
