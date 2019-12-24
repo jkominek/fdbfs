@@ -322,7 +322,7 @@ InflightCallback Inflight_write::issue()
   for(int mid_block=iter_start; mid_block<iter_stop; mid_block++) {
     auto key = pack_fileblock_key(ino, mid_block);
     uint8_t *block;
-    block = buffer.data() + (off % BLOCKSIZE) + mid_block * BLOCKSIZE;
+    block = buffer.data() + (off % BLOCKSIZE) + (mid_block - iter_start) * BLOCKSIZE;
     set_block(transaction.get(), key, block, BLOCKSIZE);
   }
 
