@@ -8,9 +8,14 @@
 
 // Configuration-esque block, to be pulled out later
 
-#define LZ4_BLOCK_COMPRESSION
+//#define LZ4_BLOCK_COMPRESSION
+#define ZSTD_BLOCK_COMPRESSION
 
 #ifdef LZ4_BLOCK_COMPRESSION
+#define BLOCK_COMPRESSION
+#endif
+
+#ifdef ZSTD_BLOCK_COMPRESSION
 #define BLOCK_COMPRESSION
 #endif
 

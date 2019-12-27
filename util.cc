@@ -9,6 +9,10 @@
 #include <lz4.h>
 #endif
 
+#ifdef ZSTD_BLOCK_COMPRESSION
+#include <zstd.h>
+#endif
+
 #include "values.pb.h"
 
 std::vector<uint8_t> inode_use_identifier;
@@ -266,8 +270,18 @@ void erase_inode(FDBTransaction *transaction, fuse_ino_t ino)
  * Given a block's KV pair, decode it into output, preferably to targetsize,
  * but definitely no further than maxsize.
  * return negative for error; positive for length
+ *
+ * raw value:    |ccccccccccccccccccccccccccccccccc|
+ *                                                 ^ kv.value_length
+ * decompressed: |ddddddddddddddddddddddddddddddddddddddddddd|
+ *                                                           maxsize ^
+ *                                        target_size v
+ * needed:                       |--------------------|
+ *                               ^ value_offset
+ *
  */
-int decode_block(FDBKeyValue *kv, int value_offset, uint8_t *output, int targetsize, int maxsize)
+int decode_block(FDBKeyValue *kv, int block_offset,
+		 uint8_t *output, int targetsize, int maxsize)
 {
   const uint8_t *key = static_cast<const uint8_t*>(kv->key);
   const char *value = static_cast<const char*>(kv->value);
@@ -276,9 +290,9 @@ int decode_block(FDBKeyValue *kv, int value_offset, uint8_t *output, int targets
   if(kv->key_length == fileblock_key_length) {
     //printf("   plain.\n");
     // plain block. there's no added info after the block key
-    int amount = std::min(kv->value_length - value_offset, maxsize);
+    int amount = std::min(kv->value_length - block_offset, maxsize);
     if(amount>0) {
-      bcopy(value + value_offset, output, amount);
+      bcopy(value + block_offset, output, amount);
       return amount;
     } else {
       return 0;
@@ -305,39 +319,52 @@ int decode_block(FDBKeyValue *kv, int value_offset, uint8_t *output, int targets
     // for now we only know how to interpret a single byte of argument
     if(key[i+2] == 0x00) {
       // 0x00 means LZ4
-      if(value_offset == 0) {
-	//printf("   value_offset 0\n");
-	int ret = LZ4_decompress_safe_partial(value, reinterpret_cast<char *>(output), kv->value_length, targetsize, maxsize);
-	//if(ret>=0)
-	//  print_bytes(output, ret);printf(" (((%i <= %i <= %i)))\n", ret, targetsize, maxsize);
+
+      char buffer[BLOCKSIZE];
+      // we'll only ask that enough be decompressed to satisfy the request
+      int ret = LZ4_decompress_safe_partial(value, buffer, kv->value_length, BLOCKSIZE, BLOCKSIZE);
+      printf("%i\n", ret);
+      if(ret<0) {
 	return ret;
+      }
+      if(ret > block_offset) {
+	// decompression produced at least one byte worth sending back
+	int amount = std::min(ret - block_offset, targetsize);
+	bcopy(buffer + block_offset, output, amount);
+	return amount;
       } else {
-	// we don't want the first part of what is decompressed. that means
-	// a temporary buffer
-	char buffer[BLOCKSIZE];
-	// we'll only ask that enough be decompressed to satisfy the request
-	int ret = LZ4_decompress_safe_partial(value, buffer, kv->value_length, targetsize + value_offset, BLOCKSIZE);
-	if(ret<0) {
-	  return -1;
-	}
-	if(ret > value_offset) {
-	  // decompression produced at least one byte worth sending back
-	  int amount = std::min(ret - value_offset, targetsize);
-	  bcopy(buffer + value_offset, output, amount);
-	  return amount;
-	} else {
-	  // there was less data in the block than necessary to reach the
-	  // start of the copy, so we don't have to do anything.
-	  return 0;
-	}
+	// there was less data in the block than necessary to reach the
+	// start of the copy, so we don't have to do anything.
+	return 0;
       }
     }
 #endif
-    // other compression would go here
+
+#ifdef ZSTD_BLOCK_COMPRESSION
+    if(key[i+2] == 0x01) {
+      // 0x01 means ZSTD
+      uint8_t buffer[BLOCKSIZE];
+      int ret = ZSTD_decompress(buffer, BLOCKSIZE, value, kv->value_length);
+      if(ZSTD_isError(ret)) {
+	// error
+	return -1;
+      }
+
+      if(ret > block_offset) {
+	int amount = std::min(ret - block_offset, targetsize);
+	bcopy(buffer + block_offset, output, amount);
+	return amount;
+      } else {
+	// nothing to copy
+	return 0;
+      }
+    }
 #endif
     // unrecognized compression algorithm
     return -1;
   }
+#endif
+
 #endif
 
   // unrecognized block type.

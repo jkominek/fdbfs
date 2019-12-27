@@ -22,6 +22,10 @@
 #include <lz4.h>
 #endif
 
+#ifdef ZSTD_BLOCK_COMPRESSION
+#include <zstd.h>
+#endif
+
 /*************************************************************
  * write
  *************************************************************
@@ -74,15 +78,16 @@ void set_block(FDBTransaction *transaction, std::vector<uint8_t> key,
       uint8_t compressed[BLOCKSIZE];
       // we're arbitrarily saying blocks should be at least 64 bytes
       // after sparsification, before we'll attempt to compress them.
-#ifdef LZ4_BLOCK_COMPRESSION
-      int ret = LZ4_compress_default(reinterpret_cast<char*>(buffer),
-				     reinterpret_cast<char*>(compressed),
-				     size, BLOCKSIZE);
-      if((0<ret) && (ret <= acceptable_size)) {
+#ifdef ZSTD_BLOCK_COMPRESSION
+      int ret = ZSTD_compress(reinterpret_cast<char*>(compressed),
+			      BLOCKSIZE,
+			      reinterpret_cast<char*>(buffer),
+			      size, 6);
+      if((!ZSTD_isError(ret)) && (ret <= acceptable_size)) {
 	  // ok, we'll take it.
 	  key.push_back('z'); // compressed
 	  key.push_back(0x01); // 1 byte of arguments
-	  key.push_back(0x00); // LZ4 marker
+	  key.push_back(0x01); // ZSTD marker
 	  fdb_transaction_set(transaction, key.data(), key.size(),
 			      compressed, ret);
 	  return;

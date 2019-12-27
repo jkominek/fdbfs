@@ -5,7 +5,8 @@
 
 import values_pb2 as msgs
 import struct
-import lz4.block
+import zstd
+#import lz4.block
 
 prefix = "FS"
 
@@ -68,7 +69,7 @@ world_dirent.type = msgs.regular
 
 print_set(dirent_key(rootdir_inode, "world"), world_dirent.SerializeToString())
 print_set(inode_key(world_inode), world_inode_value.SerializeToString())
-print_set(block_key(world_inode, 0)+"z\x01\x00", lz4.block.compress(world_inode_data, store_size=False))
+print_set(block_key(world_inode, 0)+"z\x01\x01", zstd.ZSTD_compress(world_inode_data, 22))
 
 
 portal_inode = 100

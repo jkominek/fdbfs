@@ -31,6 +31,7 @@ here.
   full compatibility for user space code written against ext4/UFS/ZFS.
 
 * mkfs, fsck, command line options
+* coalesce multiple writes to the same kv pair
 * read-only compatibility with FDB directory layer
 * configurable compression
 * configurable per-block ECC
