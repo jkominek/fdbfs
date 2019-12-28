@@ -47,6 +47,7 @@ extern "C" void fdbfs_rename(fuse_req_t req, fuse_ino_t parent, const char *name
 extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi);
 extern "C" void fdbfs_forget(fuse_req_t req, fuse_ino_t ino, uint64_t ncount);
 extern "C" void fdbfs_forget_multi(fuse_req_t req, size_t count, struct fuse_forget_data *forgets);
+extern "C" void fdbfs_statfs(fuse_req_t req, fuse_ino_t ino);
 
 /* These are our entry points for the operations. They'll set
  * up the appropriate inflight structure and make the initial
@@ -71,6 +72,7 @@ static struct fuse_lowlevel_ops fdbfs_oper =
     .write      = fdbfs_write,
     .forget     = fdbfs_forget,
     .forget_multi= fdbfs_forget_multi,
+    .statfs     = fdbfs_statfs
   };
 
 /* Purely to get the FoundationDB network stuff running in a
