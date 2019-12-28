@@ -8,7 +8,7 @@
 #include <deque>
 #include <queue>
 #include <functional>
-#include <experimental/optional>
+#include <optional>
 
 #if DEBUG
 #include <time.h>
@@ -68,7 +68,7 @@ class Inflight {
   
   void wait_on_future(FDBFuture *, unique_future *);
 
-  std::experimental::optional<InflightCallback> cb;
+  std::optional<InflightCallback> cb;
 
  private:
   // whether we're intended as r/w or not.

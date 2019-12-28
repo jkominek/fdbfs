@@ -93,7 +93,7 @@ void Inflight::future_ready(FDBFuture *f)
   if(future_queue.empty()) {
     if(bool(cb)) {
       std::function<InflightAction()> f = cb.value();
-      cb = std::experimental::nullopt;
+      cb = std::nullopt;
       InflightAction a = f();
       a.perform(this);
 
