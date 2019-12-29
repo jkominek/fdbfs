@@ -1,3 +1,6 @@
+[![Build Status](https://travis-ci.org/jkominek/fdbfs.svg?branch=master)](https://travis-ci.org/jkominek/fdbfs)
+[![GitHub license](https://img.shields.io/badge/license-ISC-blue.svg)](https://raw.githubusercontent.com/jkominek/fdbfs/master/LICENSE)
+
 # fdbfs
 
 needs a better name.
@@ -29,13 +32,16 @@ here.
 
 * main priority: eliminate all bugs, implement all FUSE operations,
   full compatibility for user space code written against ext4/UFS/ZFS.
+  cmake, i guess?
 
-* mkfs, fsck, command line options
+* mkfs
+* fsck and command line options for the FS itself
 * coalesce multiple writes to the same kv pair
 * read-only compatibility with FDB directory layer
 * configurable compression
 * configurable per-block ECC
 * extract FS operations into non-FUSE specific library,
   while maintaining performance in FUSE case
-* samba VFS module
-* dokan support
+  * samba VFS module
+  * dokan support
+  * user space LD_PRELOAD'able library?
