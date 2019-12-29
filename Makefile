@@ -2,7 +2,7 @@ ifeq ($(origin CXX),default)
 # this better be clang>=6.0
 CXX=c++
 endif
-CXXFLAGS=-std=c++17 -fPIC -g -Wall `pkg-config fuse --cflags` `pkg-config liblz4 --cflags` `pkg-config libzstd --cflags` -DDEBUG=1 -DINDUCE_FAILURES=1
+CXXFLAGS=-std=c++17 -fPIC -g -Wall `pkg-config fuse --cflags` `pkg-config liblz4 --cflags` `pkg-config libzstd --cflags` -DDEBUG=1
 
 fs: main.o inflight.o util.o values.pb.o getattr.o lookup.o readdir.o read.o open.o mknod.o unlink.o link.o readlink.o symlink.o setattr.o rename.o write.o forget.o statfs.o garbage_collector.o
 	$(CXX) $(CXXFLAGS) -pg -g -Wall $^  `pkg-config fuse --libs` `pkg-config --libs protobuf` `pkg-config --libs liblz4` `pkg-config --libs libzstd` -lfdb_c -lm -o fs

@@ -169,6 +169,11 @@ class InflightAction {
 	fuse_reply_write(i->req, size);
       });
   }
+  static InflightAction Statfs(std::shared_ptr<struct statvfs> statbuf) {
+    return InflightAction(true, false, false, [statbuf](Inflight *i) {
+	 fuse_reply_statfs(i->req, statbuf.get());
+      });
+  }
 protected:
  InflightAction(bool delete_this, bool begin_wait, bool restart,
 		std::function<void(Inflight *)> perform)

@@ -47,7 +47,62 @@ Inflight_statfs *Inflight_statfs::reincarnate()
 
 InflightAction Inflight_statfs::process_status()
 {
-  return InflightAction::Abort(ENOSYS);
+  fdb_bool_t present = 0;
+  uint8_t *val;
+  int vallen;
+  fdb_error_t err = fdb_future_get_value(status_fetch.get(),
+					 &present,
+					 (const uint8_t **)&val, &vallen);
+  if(err)
+    return InflightAction::FDBError(err);
+  if(!present)
+    return InflightAction::Abort(EIO);
+
+  // nlohmann::json doesn't specify that it retquires
+  // null-terminated arrays, but it does.
+  uint8_t buffer[vallen+1];
+  bcopy(val, buffer, vallen);
+  buffer[vallen] = '\0';
+
+  fsblkcnt_t used_blocks = 0;
+  fsblkcnt_t min_available_blocks = 1000; //UINT64_MAX;
+
+  nlohmann::json status = nlohmann::json::parse(buffer);
+
+  // very rough estimation of space used and space available in the
+  // fdb cluster
+
+  auto processes = status["cluster"]["processes"];
+  for(auto it = processes.begin(); it != processes.end(); ++it) {
+    auto roles = it.value()["roles"];
+    for(auto jt = roles.begin(); jt != roles.end(); ++jt) {
+      if((*jt)["role"] == "storage") {
+        auto storage = *jt;
+	//std::cout << storage << std::endl;
+        used_blocks += ((unsigned long)storage["kvstore_used_bytes"])/BLOCKSIZE;
+	//std::cout << ((unsigned long)storage["kvstore_used_bytes"]) << std::endl;
+	//std::cout << ((unsigned long)storage["kvstore_available_bytes"]) << std::endl;
+        min_available_blocks = std::min(min_available_blocks, ((unsigned long)storage["kvstore_available_bytes"])/BLOCKSIZE);
+      }
+    }
+  }
+
+  auto output = std::make_unique<struct statvfs>();
+  output->f_bsize = BLOCKSIZE;
+  output->f_frsize = BLOCKSIZE;
+  output->f_blocks = used_blocks + min_available_blocks;
+  output->f_bfree = min_available_blocks;
+  output->f_bavail = min_available_blocks;
+
+  output->f_files = 1;
+  output->f_ffree = 1<<24; // "lots"
+  output->f_favail = 1<<24;
+
+  output->f_fsid = 0;
+  output->f_flag = 0;
+  output->f_namemax = 1024;
+
+  return InflightAction::Statfs(std::move(output));
 }
 
 InflightCallback Inflight_statfs::issue()
