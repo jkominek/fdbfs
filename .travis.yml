@@ -12,5 +12,5 @@ before_install:
 script:
 - make
 - make regen
-- ./fs test &
+- mkdir test ; ./fs test & sleep 3
 - ls test
