@@ -17,6 +17,7 @@
 
 #include "util.h"
 #include "inflight.h"
+#include "fdbfs_ops.h"
 
 #ifdef LZ4_BLOCK_COMPRESSION
 #include <lz4.h>

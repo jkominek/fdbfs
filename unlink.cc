@@ -14,6 +14,7 @@
 #include "util.h"
 #include "inflight.h"
 #include "values.pb.h"
+#include "fdbfs_ops.h"
 
 /*************************************************************
  * unlink

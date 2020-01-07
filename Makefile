@@ -11,7 +11,7 @@ fs: main.o inflight.o util.o values.pb.o getattr.o lookup.o readdir.o read.o ope
 values.pb.cc values.pb.h: values.proto
 	protoc $< --cpp_out=.
 
-%.o: %.cc inflight.h util.h values.pb.h
+%.o: %.cc inflight.h util.h values.pb.h fdbfs_ops.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:

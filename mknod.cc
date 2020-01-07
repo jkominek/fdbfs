@@ -14,6 +14,7 @@
 #include "util.h"
 #include "inflight.h"
 #include "values.pb.h"
+#include "fdbfs_ops.h"
 
 /*************************************************************
  * mknod
@@ -200,8 +201,7 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent,
 }
 
 extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent,
-			    const char *name, filetype type,
-			    mode_t mode)
+			    const char *name, mode_t mode)
 {
   Inflight_mknod *inflight =
     new Inflight_mknod(req, parent, name, mode & (~S_IFMT),

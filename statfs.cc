@@ -11,6 +11,7 @@
 
 #include "util.h"
 #include "inflight.h"
+#include "fdbfs_ops.h"
 
 /*************************************************************
  * statfs
