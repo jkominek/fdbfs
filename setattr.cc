@@ -89,17 +89,18 @@ InflightAction Inflight_setattr::callback()
 
   // update inode!
 
-  int mask_setuid_setgid = 0;
+  bool substantial_update = false;
   if(to_set & FUSE_SET_ATTR_MODE) {
-    inode.set_mode(attr.st_mode & 04777);
+    inode.set_mode(attr.st_mode & 07777);
+    substantial_update = true;
   }
   if(to_set & FUSE_SET_ATTR_UID) {
     inode.set_uid(attr.st_uid);
-    mask_setuid_setgid = 1;
+    substantial_update = true;
   }
   if(to_set & FUSE_SET_ATTR_GID) {
     inode.set_gid(attr.st_gid);
-    mask_setuid_setgid = 1;
+    substantial_update = true;
   }
   if(to_set & FUSE_SET_ATTR_SIZE) {
     if(attr.st_size < inode.size()) {
@@ -112,8 +113,10 @@ InflightAction Inflight_setattr::callback()
 				  start_block_key.data(), start_block_key.size(),
 				  stop_block_key.data(), stop_block_key.size());
     }
-    inode.set_size(attr.st_size);
-    mask_setuid_setgid = 1;
+    if(attr.st_size != inode.size()) {
+      inode.set_size(attr.st_size);
+      substantial_update = true;
+    }
   }
   if(to_set & FUSE_SET_ATTR_ATIME) {
     inode.mutable_atime()->set_sec(attr.st_atim.tv_sec);
@@ -129,8 +132,10 @@ InflightAction Inflight_setattr::callback()
     inode.mutable_ctime()->set_nsec(attr.st_ctim.tv_nsec);
   }
 #endif
+
   if((to_set & FUSE_SET_ATTR_ATIME_NOW) ||
-     (to_set & FUSE_SET_ATTR_MTIME_NOW)) {
+     (to_set & FUSE_SET_ATTR_MTIME_NOW) ||
+     substantial_update) {
     struct timespec tp;
     clock_gettime(CLOCK_REALTIME, &tp);
     if(to_set & FUSE_SET_ATTR_ATIME_NOW) {
@@ -141,9 +146,14 @@ InflightAction Inflight_setattr::callback()
       inode.mutable_mtime()->set_sec(tp.tv_sec);
       inode.mutable_mtime()->set_nsec(tp.tv_nsec);
     }
+    if(substantial_update) {
+      inode.mutable_ctime()->set_sec(tp.tv_sec);
+      inode.mutable_ctime()->set_nsec(tp.tv_nsec);
+    }
   }
 
-  if(mask_setuid_setgid) {
+  if(substantial_update && !(to_set & FUSE_SET_ATTR_MODE)) {
+    // strip setuid and setgid unless we just updated the mode
     inode.set_mode(inode.mode() & 01777);
   }
   // done updating inode!
