@@ -34,7 +34,9 @@ void *garbage_scanner(void *ignore)
   struct timespec ts;
   ts.tv_sec = 1;
   ts.tv_nsec = 0;
+#if DEBUG
   printf("gc starting\n");
+#endif
   while(database != NULL) {
     // TODO vary this or do something to slow things down.
     ts.tv_sec = 1; nanosleep(&ts, NULL);
@@ -97,7 +99,9 @@ void *garbage_scanner(void *ignore)
 	  &ino, sizeof(fuse_ino_t));
     ino = be64toh(ino);
 
+#if DEBUG
     printf("found garbage inode %lx\n", ino);
+#endif
     start = pack_inode_key(ino);
     start.push_back(0x01);
     stop = pack_inode_key(ino);
@@ -116,7 +120,9 @@ void *garbage_scanner(void *ignore)
        fdb_future_get_keyvalue_array(f, &kvs, &kvcount, &more) ||
        kvcount>0) {
       // welp. nothing to do.
+#if DEBUG
       printf("nothing to do on the garbage inode\n");
+#endif
       fdb_future_destroy(f);
       continue;
     }
@@ -135,6 +141,8 @@ void *garbage_scanner(void *ignore)
     }
     fdb_future_destroy(f);
   }
+#if DEBUG
   printf("gc done\n");
+#endif
   return NULL;
 }
