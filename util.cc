@@ -216,6 +216,15 @@ range_keys offset_size_to_range_keys(fuse_ino_t ino, size_t off, size_t size)
   return std::pair(start, stop);
 }
 
+bool filename_length_check(fuse_req_t req, const char *name)
+{
+  if(strnlen(name, 256)>255) {
+    fuse_reply_err(req, ENAMETOOLONG);
+    return true;
+  }
+  return false;
+}
+
 void update_atime(INodeRecord *inode, struct timespec *tv)
 {
   Timespec *atime = inode->mutable_atime();

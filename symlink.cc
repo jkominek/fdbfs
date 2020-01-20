@@ -166,6 +166,10 @@ InflightCallback Inflight_symlink::issue()
 extern "C" void fdbfs_symlink(fuse_req_t req, const char *link,
 			      fuse_ino_t parent, const char *name)
 {
+  if(filename_length_check(req, link) ||
+     filename_length_check(req, name)) {
+    return;
+  }
   Inflight_symlink *inflight =
     new Inflight_symlink(req, std::string(link),
 			 parent, std::string(name), make_transaction());

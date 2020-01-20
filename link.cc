@@ -196,6 +196,9 @@ extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino,
 			   fuse_ino_t newparent,
 			   const char *newname)
 {
+  if(filename_length_check(req, newname)) {
+    return;
+  }
   Inflight_link *inflight =
     new Inflight_link(req, ino, newparent, std::string(newname),
 		      make_transaction());

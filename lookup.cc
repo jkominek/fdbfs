@@ -149,6 +149,9 @@ InflightCallback Inflight_lookup::issue()
 
 extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
+  if(filename_length_check(req, name)) {
+    return;
+  }
   std::string sname(name);
   Inflight_lookup *inflight = new Inflight_lookup(req, parent, sname, make_transaction());
   inflight->start();

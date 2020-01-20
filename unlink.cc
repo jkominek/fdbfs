@@ -334,6 +334,9 @@ InflightCallback Inflight_unlink_rmdir::issue()
 
 extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t ino, const char *name)
 {
+  if(filename_length_check(req, name)) {
+    return;
+  }
   Inflight_unlink_rmdir *inflight =
     new Inflight_unlink_rmdir(req, ino, name, false, make_transaction());
   inflight->start();
@@ -341,6 +344,9 @@ extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t ino, const char *name)
 
 extern "C" void fdbfs_rmdir(fuse_req_t req, fuse_ino_t ino, const char *name)
 {
+  if(filename_length_check(req, name)) {
+    return;
+  }
   Inflight_unlink_rmdir *inflight =
     new Inflight_unlink_rmdir(req, ino, name, true, make_transaction());
   inflight->start();

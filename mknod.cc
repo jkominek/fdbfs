@@ -179,6 +179,9 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent,
 			    const char *name, mode_t mode,
 			    dev_t rdev)
 {
+  if(filename_length_check(req, name)) {
+    return;
+  }
   filetype deduced_type;
   // validate mode value
   switch(mode & S_IFMT) {
@@ -203,6 +206,9 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent,
 extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent,
 			    const char *name, mode_t mode)
 {
+  if(filename_length_check(req, name)) {
+    return;
+  }
   Inflight_mknod *inflight =
     new Inflight_mknod(req, parent, name, mode & (~S_IFMT),
 		       directory, 0, make_transaction());

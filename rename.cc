@@ -407,6 +407,10 @@ extern "C" void fdbfs_rename(fuse_req_t req,
 			     fuse_ino_t parent, const char *name,
 			     fuse_ino_t newparent, const char *newname)
 {
+  if(filename_length_check(req, name) ||
+     filename_length_check(req, newname)) {
+    return;
+  }
   Inflight_rename *inflight =
     new Inflight_rename(req, parent, std::string(name),
 			newparent, std::string(newname), 0,
