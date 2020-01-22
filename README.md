@@ -30,10 +30,15 @@ here.
 
 # long termish TODO
 
-* main priority: eliminate all bugs, implement all FUSE operations,
-  full compatibility for user space code written against ext4/UFS/ZFS.
-  cmake, i guess?
+* main priorities
+  * eliminate all bugs
+  * implement all FUSE operations,
+  * full compatibility for user space code written against ext4/UFS/ZFS.
+  * tests. and running under valgrind during tests.
 
+everything else is roughly descending order:
+
+* cmake, i guess?
 * mkfs
 * fsck and command line options for the FS itself
 * coalesce multiple writes to the same kv pair
