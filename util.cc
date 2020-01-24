@@ -275,6 +275,56 @@ void erase_inode(FDBTransaction *transaction, fuse_ino_t ino)
                               key_stop.data(),  key_stop.size());
 }
 
+inline void sparsify(uint8_t *block, uint64_t *write_size) {
+  // sparsify our writes, by truncating nulls from the end of
+  // blocks, and just clearing away totally null blocks
+  for(; *(write_size)>0; *(write_size)-=1) {
+    if(block[*(write_size)-1] != 0x00)
+      break;
+  }
+}
+
+void set_block(FDBTransaction *transaction, std::vector<uint8_t> key,
+	       uint8_t *buffer, uint64_t size)
+{
+  sparsify(buffer, &size);
+  if(size>0) {
+    // TODO here's where we'd implement the write-side cleverness for our
+    // block encoding schemes. they should all not only be ifdef'd, but
+    // check for whether or not the feature is enabled on the filesystem.
+    #ifdef BLOCK_COMPRESSION
+    if(size>=64) {
+      // considering that these blocks may be stored 3 times, and over
+      // their life may have to be moved repeatedly across WANs between
+      // data centers, we'll accept very small amounts of compression:
+      int acceptable_size = BLOCKSIZE - 16;
+      uint8_t compressed[BLOCKSIZE];
+      // we're arbitrarily saying blocks should be at least 64 bytes
+      // after sparsification, before we'll attempt to compress them.
+      #ifdef ZSTD_BLOCK_COMPRESSION
+      int ret = ZSTD_compress(reinterpret_cast<char*>(compressed),
+			      BLOCKSIZE,
+			      reinterpret_cast<char*>(buffer),
+			      size, 6);
+      if((!ZSTD_isError(ret)) && (ret <= acceptable_size)) {
+	// ok, we'll take it.
+	key.push_back('z'); // compressed
+	key.push_back(0x01); // 1 byte of arguments
+	key.push_back(0x01); // ZSTD marker
+	fdb_transaction_set(transaction, key.data(), key.size(),
+			    compressed, ret);
+	return;
+      }
+      #endif
+    }
+    #endif
+    // we'll fall back to this if none of the compression schemes bail out
+    fdb_transaction_set(transaction, key.data(), key.size(), buffer, size);
+  } else {
+    // storage model allows for sparsity; interprets missing blocks as nulls
+  }
+}
+
 /**
  * Given a block's KV pair, decode it into output, preferably to targetsize,
  * but definitely no further than maxsize.
