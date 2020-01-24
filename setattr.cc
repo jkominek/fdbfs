@@ -41,6 +41,9 @@ private:
 
   unique_future inode_fetch;
   InflightAction callback();
+  unique_future partial_block_fetch;
+  uint64_t partial_block_idx;
+  InflightAction partial_block_fixup();
   unique_future commit;
   InflightAction commit_cb();
 };
@@ -66,6 +69,28 @@ InflightAction Inflight_setattr::commit_cb()
   return InflightAction::Attr(std::move(newattr));
 }
 
+InflightAction Inflight_setattr::partial_block_fixup()
+{
+  FDBKeyValue *kvs;
+  int kvcount;
+  fdb_bool_t more;
+  fdb_error_t err;
+  err = fdb_future_get_keyvalue_array(partial_block_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+  if(err) return InflightAction::FDBError(err);
+
+  if(kvcount>0) {
+    // there's a block there, decode it, and rewrite a truncated version
+    uint8_t output_buffer[BLOCKSIZE];
+    int ret = decode_block(&kvs[0], 0, output_buffer, 0, BLOCKSIZE);
+    auto key = pack_fileblock_key(ino, partial_block_idx);
+    set_block(transaction.get(), key, output_buffer, attr.st_size % BLOCKSIZE);
+  }
+
+  wait_on_future(fdb_transaction_commit(transaction.get()),
+		 &commit);
+  return InflightAction::BeginWait(std::bind(&Inflight_setattr::commit_cb, this));
+}
+
 InflightAction Inflight_setattr::callback()
 {
   fdb_bool_t present=0;
@@ -79,6 +104,9 @@ InflightAction Inflight_setattr::callback()
   if(!present) {
     return InflightAction::Abort(EFAULT);
   }
+
+  bool do_commit = true;
+  auto next_action = InflightAction::BeginWait(std::bind(&Inflight_setattr::commit_cb, this));
 
   INodeRecord inode;
   inode.ParseFromArray(val, vallen);
@@ -106,12 +134,29 @@ InflightAction Inflight_setattr::callback()
     if(attr.st_size < inode.size()) {
       // they want to truncate the file. compute what blocks
       // need to be cleared.
-      auto start_block_key = pack_fileblock_key(ino, (attr.st_size / BLOCKSIZE) + 1);
+      auto start_block_key = pack_fileblock_key(ino, (attr.st_size / BLOCKSIZE));
       // we'll just clear to the last possible block
       auto stop_block_key = pack_fileblock_key(ino, UINT64_MAX);
       fdb_transaction_clear_range(transaction.get(),
 				  start_block_key.data(), start_block_key.size(),
 				  stop_block_key.data(), stop_block_key.size());
+
+      if((attr.st_size % BLOCKSIZE) != 0) {
+	// we should have a partially truncated block
+	// we're responsible for reading it and writing a corrected version
+	partial_block_idx = attr.st_size / BLOCKSIZE;
+	auto start_key = pack_fileblock_key(ino, partial_block_idx);
+	auto stop_key = pack_fileblock_key(ino, partial_block_idx + 1);
+	wait_on_future(fdb_transaction_get_range(transaction.get(),
+						 FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(), start_key.size()),
+						 FDB_KEYSEL_FIRST_GREATER_THAN(stop_key.data(), stop_key.size()),
+						 0, 0,
+						 FDB_STREAMING_MODE_WANT_ALL,
+						 0, 0, 0),
+		       &partial_block_fetch);
+	do_commit = false;
+	next_action = InflightAction::BeginWait(std::bind(&Inflight_setattr::partial_block_fixup, this));
+      }
     }
     if(attr.st_size != inode.size()) {
       inode.set_size(attr.st_size);
@@ -173,14 +218,29 @@ InflightAction Inflight_setattr::callback()
 		      key.data(), key.size(),
 		      inode_buffer, inode_size);
 
-  wait_on_future(fdb_transaction_commit(transaction.get()),
-		 &commit);
+  if(do_commit) {
+    wait_on_future(fdb_transaction_commit(transaction.get()),
+		   &commit);
+  }
 
-  return InflightAction::BeginWait(std::bind(&Inflight_setattr::commit_cb, this));
+  return next_action;
 }
 
 InflightCallback Inflight_setattr::issue()
 {
+  // turn off RYW, so there's no uncertainty about what we'll get when
+  // we interleave our reads and writes.
+  if(fdb_transaction_set_option(transaction.get(),
+				FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE,
+				NULL, 0)) {
+    // hmm.
+    // TODO how do we generate an error here?
+    return []() {
+      // i don't think this will be run, since we've registered no futures?
+      return InflightAction::Abort(EIO);
+    };
+  }
+
   auto key = pack_inode_key(ino);
 
   // and request just that inode
