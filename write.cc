@@ -233,12 +233,13 @@ InflightAction Inflight_write::check()
     }
     bcopy(buffer.data() + bufcopystart, output_buffer, copysize);
     auto key = pack_fileblock_key(ino, (off + buffer.size()) / BLOCKSIZE);
-    // we don't need to consider whatever is in the output_buffer
+    // we don't need to preserve whatever is in the output_buffer
     // past the end of the file.
-    uint64_t actual_block_size = std::min(total_buffer_size,
-					  inode.size() % BLOCKSIZE);
+    // TODO but this is totally wrong.
+    //uint64_t actual_block_size = std::min(total_buffer_size,
+    //					  inode.size() % BLOCKSIZE);
     set_block(transaction.get(), key,
-	      output_buffer, actual_block_size);
+	      output_buffer, total_buffer_size);
   }
 
   // perform all of the writes
