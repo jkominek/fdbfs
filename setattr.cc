@@ -81,7 +81,8 @@ InflightAction Inflight_setattr::partial_block_fixup()
   if(kvcount>0) {
     // there's a block there, decode it, and rewrite a truncated version
     uint8_t output_buffer[BLOCKSIZE];
-    int ret = decode_block(&kvs[0], 0, output_buffer, 0, BLOCKSIZE);
+    bzero(output_buffer, BLOCKSIZE);
+    int ret = decode_block(&kvs[0], 0, output_buffer, BLOCKSIZE, BLOCKSIZE);
     auto key = pack_fileblock_key(ino, partial_block_idx);
     set_block(transaction.get(), key, output_buffer, attr.st_size % BLOCKSIZE);
   }
@@ -146,7 +147,8 @@ InflightAction Inflight_setattr::callback()
 	// we're responsible for reading it and writing a corrected version
 	partial_block_idx = attr.st_size / BLOCKSIZE;
 	auto start_key = pack_fileblock_key(ino, partial_block_idx);
-	auto stop_key = pack_fileblock_key(ino, partial_block_idx + 1);
+	auto stop_key = start_key;
+	stop_key.push_back(0xff);
 	wait_on_future(fdb_transaction_get_range(transaction.get(),
 						 FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(), start_key.size()),
 						 FDB_KEYSEL_FIRST_GREATER_THAN(stop_key.data(), stop_key.size()),

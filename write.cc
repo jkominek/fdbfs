@@ -150,12 +150,14 @@ InflightAction Inflight_write::check()
     uint64_t copy_start_off = off % BLOCKSIZE;
     uint64_t copy_start_size = std::min(buffer.size(),
 					BLOCKSIZE - copy_start_off);
-    uint64_t total_buffer_size = copy_start_off + copy_start_size;
+    // we don't know whats in the existing block, so we've got to plan on
+    // it being full.
+    uint64_t total_buffer_size = BLOCKSIZE;
     uint8_t output_buffer[total_buffer_size];
     bzero(output_buffer, total_buffer_size);
     if(kvcount>0) {
       // TODO check for error
-      decode_block(&kvs[0], 0, output_buffer, copy_start_off, total_buffer_size);
+      decode_block(&kvs[0], 0, output_buffer, total_buffer_size, total_buffer_size);
     }
     bcopy(buffer.data(), output_buffer + copy_start_off, copy_start_size);
     auto key = pack_fileblock_key(ino, off / BLOCKSIZE);
@@ -228,11 +230,12 @@ InflightCallback Inflight_write::issue()
   if((off % BLOCKSIZE) != 0) {
     int start_block = off / BLOCKSIZE;
     auto start_key = pack_fileblock_key(ino, start_block);
-    auto stop_key  = pack_fileblock_key(ino, start_block+1);
+    auto stop_key  = start_key;
+    stop_key.push_back(0xff);
     wait_on_future(fdb_transaction_get_range(transaction.get(),
 					     FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(), start_key.size()),
 					     FDB_KEYSEL_FIRST_GREATER_THAN(stop_key.data(), stop_key.size()),
-					     0, 0,
+					     1, 0,
 					     FDB_STREAMING_MODE_WANT_ALL, 0,
 					     0, 0),
 		   &start_block_fetch);
@@ -248,11 +251,12 @@ InflightCallback Inflight_write::issue()
     // sense fetching and processing it twice.
     if((!doing_start_block) || (stop_block != (off / BLOCKSIZE))) {
       auto start_key = pack_fileblock_key(ino, stop_block);
-      auto stop_key = pack_fileblock_key(ino, stop_block+1);
+      auto stop_key = start_key;
+      stop_key.push_back(0xff);
       wait_on_future(fdb_transaction_get_range(transaction.get(),
 					       FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(), start_key.size()),
 					       FDB_KEYSEL_FIRST_GREATER_THAN(stop_key.data(), stop_key.size()),
-					       0, 0,
+					       1, 0,
 					       FDB_STREAMING_MODE_WANT_ALL, 0,
 					       0, 0),
 		     &stop_block_fetch);

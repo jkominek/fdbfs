@@ -333,7 +333,7 @@ InflightAction Inflight_rename::check()
       auto key_start = pack_inode_key(destination_dirent.inode());
       key_start.push_back('d');
       auto key_stop  = pack_inode_key(destination_dirent.inode());
-      key_stop.push_back('d' + 1);
+      key_stop.push_back('e');
       
       wait_on_future(fdb_transaction_get_range(transaction.get(),
 					       key_start.data(),
