@@ -128,7 +128,9 @@ void *garbage_scanner(void *ignore)
     }
 
     // wooo no usage, we get to erase it.
+#if DEBUG
     printf("cleaning garbage inode\n");
+#endif
     auto garbagekey = pack_garbage_key(ino);
     fdb_transaction_clear(t.get(), garbagekey.data(), garbagekey.size());
 

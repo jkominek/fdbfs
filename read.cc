@@ -114,7 +114,9 @@ InflightAction Inflight_read::callback()
     FDBKeyValue kv = kvs[i];
     std::vector<uint8_t> key(kv.key_length);
     bcopy(kv.key, key.data(), kv.key_length);
+#if DEBUG
     print_key(key);
+#endif
     uint64_t block;
     bcopy(((uint8_t*)kv.key) + fileblock_prefix_length,
 	  &block,
