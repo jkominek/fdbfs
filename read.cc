@@ -50,13 +50,20 @@ private:
   fuse_ino_t ino;
   size_t requested_size; //size of the read
   off_t off;   //offset into file
+
+  range_keys requested_range;
+
+  // we pad the buffer some so special block decoders have room to work
+  // without having to perform extra copies or allocations.
+  std::vector<uint8_t> buffer;
+  bool buffer_inited = false;
 };
 
 Inflight_read::Inflight_read(fuse_req_t req, fuse_ino_t ino,
 			     size_t size, off_t off,
 			     unique_transaction transaction)
   : Inflight(req, false, std::move(transaction)),
-    ino(ino), requested_size(size), off(off)
+    ino(ino), requested_size(size), off(off), buffer(size + 32)
 {
 }
 
@@ -93,27 +100,40 @@ InflightAction Inflight_read::callback()
   if(err)
     return InflightAction::FDBError(err);
 
+  unique_future next_range_fetch;
   if(more) {
-    // TODO deal with the possibility of not getting all of the KV pairs
-    // that we want. (that is, blocks that we want exist, but aren't sent.)
+    FDBKeyValue *last_kv;
+    if(kvcount==0) {
+      // probably shouldn't be possible for (more)&&(kvcount==0), but, eh
+      return InflightAction::Abort(EIO);
+    }
+    last_kv = &kvs[kvcount-1];
 
-    // pretty straightforward, really. we move the buffer into the inflight
-    // object, and then if there's more to fetch, send that request while
-    // we're processing the data we already have. at the end, go back to
-    // waiting instead of return.
+    FDBFuture *f =
+      fdb_transaction_get_range(transaction.get(),
+				FDB_KEYSEL_FIRST_GREATER_THAN(static_cast<const uint8_t*>(last_kv->key), last_kv->key_length),
+				FDB_KEYSEL_FIRST_GREATER_THAN(requested_range.second.data(), requested_range.second.size()),
+				0, 0,
+				FDB_STREAMING_MODE_WANT_ALL, 0,
+			      0, 0);
+    // we store into a new unique_future so that the old one won't
+    // be deallocated while we're still using the FDBKeyValue* from it
+    wait_on_future(f, &next_range_fetch);
+  } else {
+    // normal
   }
 
   size_t size = std::min(requested_size, inode.size() - off);
 
-  // we pad the buffer some so special block decoders have room to work
-  // without having to perform extra copies or allocations.
-  std::vector<uint8_t> buffer(size + 32);
-  std::fill(buffer.begin(), buffer.end(), 0);
+  if(!buffer_inited) {
+    std::fill(buffer.begin(), buffer.end(), 0);
+    buffer_inited = true;
+  }
 
   for(int i=0; i<kvcount; i++) {
     FDBKeyValue kv = kvs[i];
-    std::vector<uint8_t> key(kv.key_length);
-    bcopy(kv.key, key.data(), kv.key_length);
+    std::vector<uint8_t> key(static_cast<const uint8_t*>(kv.key),
+			     static_cast<const uint8_t*>(kv.key) + kv.key_length);
 #if DEBUG
     print_key(key);
 #endif
@@ -128,22 +148,24 @@ InflightAction Inflight_read::callback()
       // starts before (or at) the requested read area
       uint64_t block_off = off - block * BLOCKSIZE;
       int d = decode_block(&kv, block_off, buffer.data(), size, buffer.size());
-      if(d<0)
+      if(d<0) {
 	return InflightAction::Abort(EIO);
+      }
     } else {
       // we need an offset into the target buffer, as our block
       // starts after the requested read area.
       size_t bufferoff = block * BLOCKSIZE - off;
-      int d = decode_block(&kv, 0, buffer.data() + bufferoff, size - bufferoff, buffer.size() - bufferoff);
-      if(d<0)
+      int d = decode_block(&kv, 0, buffer.data() + bufferoff,
+			   size - bufferoff, buffer.size() - bufferoff);
+      if(d<0) {
 	return InflightAction::Abort(EIO);
+      }
     }
   }
 
   if(more) {
-    // TODO see above TODO. for now, die, since we won't otherwise
-    // satisfy the contract.
-    return InflightAction::Abort(EIO);
+    range_fetch = std::move(next_range_fetch);
+    return InflightAction::BeginWait(std::bind(&Inflight_read::callback, this));
   } else {
     return InflightAction::Buf(buffer, size);
   }
@@ -156,13 +178,13 @@ InflightCallback Inflight_read::issue()
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
 		 &inode_fetch);
-  
-  range_keys r = offset_size_to_range_keys(ino, off, requested_size);
+
+  requested_range = offset_size_to_range_keys(ino, off, requested_size);
 
   FDBFuture *f =
     fdb_transaction_get_range(transaction.get(),
-			      FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(r.first.data(), r.first.size()),
-			      FDB_KEYSEL_FIRST_GREATER_THAN(r.second.data(), r.second.size()),
+			      FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(requested_range.first.data(), requested_range.first.size()),
+			      FDB_KEYSEL_FIRST_GREATER_THAN(requested_range.second.data(), requested_range.second.size()),
 			      0, 0,
 			      FDB_STREAMING_MODE_WANT_ALL, 0,
 			      0, 0);
