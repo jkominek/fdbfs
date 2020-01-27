@@ -124,6 +124,11 @@ InflightAction Inflight_write::check()
       inode.set_size(off + buffer.size());
     }
 
+    if(inode.mode() & 06000) {
+      // check for setuid/setgid and wipe them
+      inode.set_mode(inode.mode() & 01777);
+    }
+
     struct timespec tv;
     clock_gettime(CLOCK_REALTIME, &tv);
     update_mtime(&inode, &tv);
