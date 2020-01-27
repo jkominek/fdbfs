@@ -189,7 +189,7 @@ InflightAction Inflight_setattr::callback()
       inode.mutable_atime()->set_sec(tp.tv_sec);
       inode.mutable_atime()->set_nsec(tp.tv_nsec);
     }
-    if(to_set & FUSE_SET_ATTR_MTIME_NOW) {
+    if((to_set & FUSE_SET_ATTR_MTIME_NOW) || substantial_update) {
       inode.mutable_mtime()->set_sec(tp.tv_sec);
       inode.mutable_mtime()->set_nsec(tp.tv_nsec);
     }

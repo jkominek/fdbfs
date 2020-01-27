@@ -35,6 +35,7 @@ public:
   Inflight_mknod *reincarnate();
   InflightCallback issue();
 private:
+  unique_future dirinode_fetch;
   unique_future inode_check;
   unique_future dirent_check;
   unique_future commit;
@@ -82,15 +83,27 @@ InflightAction Inflight_mknod::commit_cb()
 
 InflightAction Inflight_mknod::postverification()
 {
-  fdb_bool_t inode_present, dirent_present;
+  fdb_bool_t dirinode_present, inode_present, dirent_present;
   const uint8_t *value; int valuelen;
   fdb_error_t err;
 
+  err = fdb_future_get_value(dirinode_fetch.get(), &dirinode_present, &value, &valuelen);
+  if(err) return InflightAction::FDBError(err);
+
+  if(!dirinode_present) {
+    // the parent directory doesn't exist
+    return InflightAction::Abort(ENOENT);
+  }
+
+  INodeRecord parentinode;
+  parentinode.ParseFromArray(value, valuelen);
+
   err = fdb_future_get_value(dirent_check.get(), &dirent_present, &value, &valuelen);
   if(err) return InflightAction::FDBError(err);
+
   err = fdb_future_get_value(inode_check.get(), &inode_present, &value, &valuelen);
   if(err) return InflightAction::FDBError(err);
-  
+
   if(dirent_present) {
     // can't make this entry, there's already something there
     return InflightAction::Abort(EEXIST);
@@ -101,6 +114,15 @@ InflightAction Inflight_mknod::postverification()
     // try this again!
     return InflightAction::Restart();
   }
+
+  // TODO we need to fetch the parent inode for permissions checking
+  if(parentinode.nlinks() <= 1) {
+    // directory is unlinked, no new entries to be created
+    return InflightAction::Abort(ENOENT);
+  }
+
+  // update the containing directory entry
+  update_directory_times(transaction.get(), parentinode);
 
   INodeRecord inode;
   inode.set_inode(ino);
@@ -129,7 +151,7 @@ InflightAction Inflight_mknod::postverification()
   int inode_size = inode.ByteSize();
   uint8_t inode_buffer[inode_size];
   inode.SerializeToArray(inode_buffer, inode_size);
-  
+
   fdb_transaction_set(transaction.get(),
 		      key.data(), key.size(),
 		      inode_buffer, inode_size);
@@ -157,12 +179,12 @@ InflightCallback Inflight_mknod::issue()
 {
   ino = generate_inode();
 
-  // TODO we need to fetch the parent inode for two reasons:
-  // 1) permissions checking
-  // 2) check nlinks; if it is <=1 then we can't allow new
-  //    entries to be created here, as we've been unlinked.
-  
-  auto key = pack_dentry_key(parent, name);
+  auto key = pack_inode_key(parent);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 0),
+		 &dirinode_fetch);
+
+  key = pack_dentry_key(parent, name);
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
 		 &dirent_check);

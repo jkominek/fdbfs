@@ -248,6 +248,23 @@ void update_mtime(INodeRecord *inode, struct timespec *tv)
   update_ctime(inode, tv);
 }
 
+void update_directory_times(FDBTransaction *transaction, INodeRecord &inode)
+{
+  struct timespec tp;
+  clock_gettime(CLOCK_REALTIME, &tp);
+  inode.mutable_ctime()->set_sec(tp.tv_sec);
+  inode.mutable_ctime()->set_nsec(tp.tv_nsec);
+  inode.mutable_mtime()->set_sec(tp.tv_sec);
+  inode.mutable_mtime()->set_nsec(tp.tv_nsec);
+  auto key = pack_inode_key(inode.inode());
+  int inode_size = inode.ByteSize();
+  uint8_t inode_buffer[inode_size];
+  inode.SerializeToArray(inode_buffer, inode_size);
+  fdb_transaction_set(transaction,
+		      key.data(), key.size(),
+		      inode_buffer, inode_size);
+}
+
 void erase_inode(FDBTransaction *transaction, fuse_ino_t ino)
 {
   // inode data

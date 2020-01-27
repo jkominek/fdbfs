@@ -81,6 +81,7 @@ extern bool filename_length_check(fuse_req_t, const char *);
 extern void update_atime(INodeRecord *, struct timespec *);
 extern void update_mtime(INodeRecord *, struct timespec *);
 extern void update_ctime(INodeRecord *, struct timespec *);
+extern void update_directory_times(FDBTransaction *, INodeRecord &);
 
 extern void erase_inode(FDBTransaction *, fuse_ino_t);
 

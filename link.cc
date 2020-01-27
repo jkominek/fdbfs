@@ -122,6 +122,8 @@ InflightAction Inflight_link::check()
       // have to hardlink into a directory
       return InflightAction::Abort(ENOTDIR);
     }
+    // update times on destination dir
+    update_directory_times(transaction.get(), dirinode);
   } else {
     return InflightAction::Abort(ENOENT);
   }
@@ -177,7 +179,7 @@ InflightCallback Inflight_link::issue()
 				     key.data(), key.size(), 0),
 		 &file_lookup);
 
-  // check destination is a directory
+  // check/update destination directory
   key = pack_inode_key(newparent);
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),

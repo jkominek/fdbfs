@@ -210,9 +210,20 @@ InflightAction Inflight_unlink_rmdir::inode_check()
 
 InflightAction Inflight_unlink_rmdir::postlookup()
 {
-  fdb_bool_t dirent_present;
+  fdb_bool_t dirinode_present, dirent_present;
   const uint8_t *value; int valuelen;
   fdb_error_t err;
+
+  err = fdb_future_get_value(parent_lookup.get(), &dirinode_present, &value, &valuelen);
+  if(err) return InflightAction::FDBError(err);
+
+  if(!dirinode_present) {
+    return InflightAction::Abort(ENOENT);
+  }
+
+  INodeRecord parent;
+  parent.ParseFromArray(value, valuelen);
+  update_directory_times(transaction.get(), parent);
 
   err = fdb_future_get_value(dirent_lookup.get(), &dirent_present, &value, &valuelen);
   if(err) return InflightAction::FDBError(err);

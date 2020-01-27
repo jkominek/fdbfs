@@ -45,6 +45,9 @@ private:
   
   unsigned int flags;
 
+  unique_future oldparent_inode_lookup;
+  unique_future newparent_inode_lookup;
+
   unique_future origin_lookup;
   DirectoryEntry origin_dirent;
   unique_future destination_lookup;
@@ -224,6 +227,32 @@ InflightAction Inflight_rename::check()
       destination_dirent.ParseFromArray(val, vallen);
   }
 
+  {
+    fdb_bool_t present;
+    const uint8_t *val;
+    int vallen;
+    fdb_error_t err;
+
+    err = fdb_future_get_value(oldparent_inode_lookup.get(), &present, &val, &vallen);
+    if(err) return InflightAction::FDBError(err);
+    if(!present)
+      return InflightAction::Abort(ENOENT);
+
+    INodeRecord oldparent;
+    oldparent.ParseFromArray(val, vallen);
+    update_directory_times(transaction.get(), oldparent);
+
+    err = fdb_future_get_value(newparent_inode_lookup.get(), &present, &val, &vallen);
+    if(err) return InflightAction::FDBError(err);
+    if(!present)
+      return InflightAction::Abort(ENOENT);
+
+    INodeRecord newparent;
+    newparent.ParseFromArray(val, vallen);
+    if(oldparent.inode() != newparent.inode())
+      update_directory_times(transaction.get(), newparent);
+  }
+
   /****************************************************
    * Compare what the futures came back with, with the
    * stuff the flags say we need.
@@ -385,7 +414,17 @@ InflightAction Inflight_rename::check()
 
 InflightCallback Inflight_rename::issue()
 {
-  auto key = pack_dentry_key(oldparent, oldname);
+  auto key = pack_inode_key(oldparent);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 0),
+		 &oldparent_inode_lookup);
+
+  key = pack_inode_key(newparent);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 0),
+		 &newparent_inode_lookup);
+
+  key = pack_dentry_key(oldparent, oldname);
 
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
