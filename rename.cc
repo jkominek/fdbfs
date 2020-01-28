@@ -359,10 +359,8 @@ InflightAction Inflight_rename::check()
        * The destination is a directory. We'll need to know
        * if it is empty before we can remove it.
        */
-      auto key_start = pack_inode_key(destination_dirent.inode());
-      key_start.push_back('d');
-      auto key_stop  = pack_inode_key(destination_dirent.inode());
-      key_stop.push_back('e');
+      auto key_start = pack_dentry_key(destination_dirent.inode(), "");
+      auto key_stop  = pack_dentry_key(destination_dirent.inode(), "\xff");
       
       wait_on_future(fdb_transaction_get_range(transaction.get(),
 					       key_start.data(),

@@ -277,10 +277,8 @@ InflightAction Inflight_unlink_rmdir::postlookup()
       // directory. so we'll produce a key from before the first
       // possible directory entry, and one for after the last
       // possible, and then get the range, limit 1.
-      start = pack_inode_key(ino);
-      start.push_back('d');
-      stop = pack_inode_key(ino);
-      stop.push_back('e');
+      start = pack_dentry_key(ino, "");
+      stop = pack_dentry_key(ino, "\xff");
 
       wait_on_future(fdb_transaction_get_range(transaction.get(),
 					       FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start.data(), start.size()),
