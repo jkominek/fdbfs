@@ -131,8 +131,9 @@ InflightAction Inflight_mknod::postverification()
   inode.set_nlinks((type == directory) ? 2 : 1);
   inode.set_size(0);
   inode.set_rdev(rdev);
-  inode.set_uid(0);
-  inode.set_uid(0);
+  const fuse_ctx *ctx = fuse_req_ctx(req);
+  inode.set_uid(ctx->uid);
+  inode.set_gid(ctx->gid);
 
   inode.mutable_atime()->set_sec(1565989127);
   inode.mutable_atime()->set_nsec(0);
