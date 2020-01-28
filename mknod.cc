@@ -135,14 +135,14 @@ InflightAction Inflight_mknod::postverification()
   inode.set_uid(ctx->uid);
   inode.set_gid(ctx->gid);
 
-  inode.mutable_atime()->set_sec(1565989127);
-  inode.mutable_atime()->set_nsec(0);
-
-  inode.mutable_mtime()->set_sec(1565989127);
-  inode.mutable_mtime()->set_nsec(0);
-
-  inode.mutable_ctime()->set_sec(1565989127);
-  inode.mutable_ctime()->set_nsec(0);
+  struct timespec tp;
+  clock_gettime(CLOCK_REALTIME, &tp);
+  inode.mutable_atime()->set_sec(tp.tv_sec);
+  inode.mutable_atime()->set_nsec(tp.tv_nsec);
+  inode.mutable_mtime()->set_sec(tp.tv_sec);
+  inode.mutable_mtime()->set_nsec(tp.tv_nsec);
+  inode.mutable_ctime()->set_sec(tp.tv_sec);
+  inode.mutable_ctime()->set_nsec(tp.tv_nsec);
 
   // wrap it up to be returned to fuse later
   pack_inode_record_into_stat(&inode, &(attr));

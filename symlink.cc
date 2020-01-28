@@ -116,16 +116,18 @@ InflightAction Inflight_symlink::postverification()
   inode.set_type(symlink);
   inode.set_nlinks(1);
   inode.set_symlink(link);
+  const fuse_ctx *ctx = fuse_req_ctx(req);
+  inode.set_uid(ctx->uid);
+  inode.set_gid(ctx->gid);
 
-  // TODO i guess we could set these to something real sooner or later
-  inode.mutable_atime()->set_sec(1565989127);
-  inode.mutable_atime()->set_nsec(0);
-
-  inode.mutable_mtime()->set_sec(1565989127);
-  inode.mutable_mtime()->set_nsec(0);
-
-  inode.mutable_ctime()->set_sec(1565989127);
-  inode.mutable_ctime()->set_nsec(0);
+  struct timespec tp;
+  clock_gettime(CLOCK_REALTIME, &tp);
+  inode.mutable_atime()->set_sec(tp.tv_sec);
+  inode.mutable_atime()->set_nsec(tp.tv_nsec);
+  inode.mutable_mtime()->set_sec(tp.tv_sec);
+  inode.mutable_mtime()->set_nsec(tp.tv_nsec);
+  inode.mutable_ctime()->set_sec(tp.tv_sec);
+  inode.mutable_ctime()->set_nsec(tp.tv_nsec);
 
   // wrap it up to be returned to fuse later
   pack_inode_record_into_stat(&inode, &(attr));
