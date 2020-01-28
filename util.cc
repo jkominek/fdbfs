@@ -216,9 +216,9 @@ range_keys offset_size_to_range_keys(fuse_ino_t ino, size_t off, size_t size)
   return std::pair(start, stop);
 }
 
-bool filename_length_check(fuse_req_t req, const char *name)
+bool filename_length_check(fuse_req_t req, const char *name, size_t maxlength)
 {
-  if(strnlen(name, 256)>255) {
+  if(strnlen(name, maxlength+1)>maxlength) {
     fuse_reply_err(req, ENAMETOOLONG);
     return true;
   }

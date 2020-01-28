@@ -76,7 +76,7 @@ void print_bytes(const T *str, int strlength)
 using range_keys = std::pair<std::vector<uint8_t>, std::vector<uint8_t>>;
 range_keys offset_size_to_range_keys(fuse_ino_t, size_t, size_t);
 
-extern bool filename_length_check(fuse_req_t, const char *);
+extern bool filename_length_check(fuse_req_t, const char *, size_t maxlength=255);
 
 extern void update_atime(INodeRecord *, struct timespec *);
 extern void update_mtime(INodeRecord *, struct timespec *);
