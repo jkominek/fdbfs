@@ -40,6 +40,7 @@ static struct fuse_lowlevel_ops fdbfs_oper =
     .getattr	= fdbfs_getattr,
     .readdir	= fdbfs_readdir,
     .open	= fdbfs_open,
+    .release	= fdbfs_release,
     .read	= fdbfs_read,
     .mknod      = fdbfs_mknod,
     .mkdir      = fdbfs_mkdir,

@@ -8,6 +8,7 @@ extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name
 extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
 extern "C" void fdbfs_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
+extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
 extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev);
 extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode);

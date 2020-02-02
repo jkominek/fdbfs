@@ -12,22 +12,19 @@
 #include "fdbfs_ops.h"
 
 /*************************************************************
- * open
+ * release
  *************************************************************
  * INITIAL PLAN
  * always succeed.
  *
  * REAL PLAN?
- * set up our internal structure.
- * in-use records are handled by lookup & forget, not open & release.
+ * not much
  */
 
-extern "C" void fdbfs_open(fuse_req_t req, fuse_ino_t ino,
-			   struct fuse_file_info *fi)
+extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
+			      struct fuse_file_info *fi)
 {
-  struct fdbfs_filehandle *fh = new fdbfs_filehandle;
+  delete *(extract_fdbfs_filehandle(fi));
 
-  *(extract_fdbfs_filehandle(fi)) = fh;
-
-  fuse_reply_open(req, fi);
+  fuse_reply_err(req, 0);
 }

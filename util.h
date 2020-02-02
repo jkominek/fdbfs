@@ -54,6 +54,10 @@ extern std::unordered_map<fuse_ino_t, uint64_t> lookup_counts;
 extern bool increment_lookup_count(fuse_ino_t);
 extern bool decrement_lookup_count(fuse_ino_t, uint64_t);
 
+struct fdbfs_filehandle {
+};
+extern struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *);
+
 extern fuse_ino_t generate_inode();
 extern std::vector<uint8_t> pack_inode_key(fuse_ino_t, char=INODE_PREFIX);
 extern std::vector<uint8_t> pack_garbage_key(fuse_ino_t);

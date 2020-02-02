@@ -15,6 +15,13 @@
 
 #include "values.pb.h"
 
+struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *fi)
+{
+  static_assert(sizeof(fi->fh) >= sizeof(struct fdbfs_filehandle *),
+		"FUSE File handle can't hold a pointer to our structure");
+  return reinterpret_cast<struct fdbfs_filehandle **>(&(fi->fh));
+}
+
 std::vector<uint8_t> inode_use_identifier;
 
 // tracks kernel cache of lookups, so we can avoid fdb
