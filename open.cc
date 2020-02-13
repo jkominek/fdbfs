@@ -29,5 +29,9 @@ extern "C" void fdbfs_open(fuse_req_t req, fuse_ino_t ino,
 
   *(extract_fdbfs_filehandle(fi)) = fh;
 
-  fuse_reply_open(req, fi);
+  if(fuse_reply_open(req, fi) == -ENOENT) {
+    // release will never be called, we'll leak memory if we don't
+    // clean up right now.
+    delete fh;
+  }
 }
