@@ -46,3 +46,12 @@ message INodeRecord {
   // 1000... unix weirdness
   optional string symlink = 1000;
 }
+
+message XAttrRecord {
+  // 0.. fundamentals
+  required fixed64 xnode = 1;
+
+  // why do we have a message to store just one value?
+  // we might want to add permissions, or per-xattr metadata,
+  // or keep the size in the node
+}

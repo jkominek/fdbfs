@@ -38,6 +38,8 @@
 #define DATA_PREFIX     'f'
 #define GARBAGE_PREFIX  'g'
 #define METADATA_PREFIX 'M'
+#define XATTR_NODE_PREFIX 'x'
+#define XATTR_DATA_PREFIX 'X'
 
 // will be filled out before operation begins
 extern FDBDatabase *database;
@@ -62,8 +64,10 @@ extern fuse_ino_t generate_inode();
 extern std::vector<uint8_t> pack_inode_key(fuse_ino_t, char=INODE_PREFIX);
 extern std::vector<uint8_t> pack_garbage_key(fuse_ino_t);
 extern std::vector<uint8_t> pack_inode_use_key(fuse_ino_t);
-extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, std::string);
 extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t);
+extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, const std::string&);
+extern std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name=0);
+extern std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, uint64_t xnode);
 extern void print_key(std::vector<uint8_t>);
 extern void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr);
 template <typename T>

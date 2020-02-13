@@ -141,7 +141,7 @@ std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t block)
 }
 
 int dirent_prefix_length;
-std::vector<uint8_t> pack_dentry_key(fuse_ino_t ino, std::string name)
+std::vector<uint8_t> pack_dentry_key(fuse_ino_t ino, const std::string &name)
 {
   auto key = pack_inode_key(ino, DENTRY_PREFIX);
 
@@ -149,11 +149,31 @@ std::vector<uint8_t> pack_dentry_key(fuse_ino_t ino, std::string name)
   return key;
 }
 
+std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name)
+{
+  auto key = pack_inode_key(ino, XATTR_NODE_PREFIX);
+  if(!name.empty())
+    key.insert(key.end(), name.begin(), name.end());
+  return key;
+}
+
+std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, uint64_t xnode)
+{
+  auto key = pack_inode_key(ino, XATTR_DATA_PREFIX);
+  uint64_t tmp = htobe64(xnode);
+  uint8_t *tmpp = reinterpret_cast<uint8_t *>(&tmp);
+  key.insert(key.end(), tmpp, tmpp + sizeof(uint64_t));
+  return key;
+}
+
 void print_key(std::vector<uint8_t> v)
 {
   printf("%zu ", v.size());
   for (std::vector<uint8_t>::const_iterator i = v.begin(); i != v.end(); ++i)
-    printf("%02x", *i);
+    if(isprint(*i))
+      printf("%c", *i);
+    else
+      printf("\\x%02x", *i);
   printf("\n");
 }
 
@@ -294,6 +314,21 @@ void erase_inode(FDBTransaction *transaction, fuse_ino_t ino)
   // directory listing
   key_start = pack_dentry_key(ino, "");
   key_stop = pack_dentry_key(ino, "\xff");
+  fdb_transaction_clear_range(transaction,
+                              key_start.data(), key_start.size(),
+                              key_stop.data(),  key_stop.size());
+
+  // xattr nodes
+  key_start = pack_xattr_key(ino, "");
+  key_stop = pack_xattr_key(ino, "\xff");
+  fdb_transaction_clear_range(transaction,
+                              key_start.data(), key_start.size(),
+                              key_stop.data(),  key_stop.size());
+
+  // xattr data
+  key_start = pack_xattr_data_key(ino, 0);
+  key_stop = pack_xattr_data_key(ino, UINT64_MAX);
+  key_stop.push_back(0xff);
   fdb_transaction_clear_range(transaction,
                               key_start.data(), key_start.size(),
                               key_stop.data(),  key_stop.size());

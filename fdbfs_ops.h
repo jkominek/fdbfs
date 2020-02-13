@@ -24,5 +24,6 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf, siz
 extern "C" void fdbfs_forget(fuse_req_t req, fuse_ino_t ino, uint64_t ncount);
 extern "C" void fdbfs_forget_multi(fuse_req_t req, size_t count, struct fuse_forget_data *forgets);
 extern "C" void fdbfs_statfs(fuse_req_t req, fuse_ino_t ino);
+extern "C" void fdbfs_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name, size_t size);
 
 #endif

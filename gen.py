@@ -20,6 +20,10 @@ def dirent_key(i, n):
     return prefix + struct.pack(">cQ", "d", i) + n
 def block_key(i, b):
     return prefix + struct.pack(">cQQ", "f", i, b)
+def xattr_node_key(i, n=''):
+    return prefix + struct.pack(">cQ", "x", i) + n
+def xattr_data_key(i, x):
+    return prefix + struct.pack(">cQQ", "X", i, x)
 def printable(s):
     return "".join([c if c.isalnum() else ("\\x%02x" % (ord(c),)) for c in s])
 def print_set(k, v):
@@ -45,6 +49,13 @@ hello_inode_value.size = len(hello_inode_data)
 hello_inode_value.type = msgs.regular
 hello_inode_value.nlinks = 1
 hello_inode_value.mode = 0666
+
+hello_xattr_node = msgs.XAttrRecord()
+hello_xattr_node.xnode = 4200
+print_set(xattr_node_key(hello_inode, "greeting"),
+          hello_xattr_node.SerializeToString())
+print_set(xattr_data_key(hello_inode, hello_xattr_node.xnode),
+          "bonjour!")
 
 hello_dirent = msgs.DirectoryEntry()
 hello_dirent.inode = hello_inode

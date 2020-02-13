@@ -174,6 +174,11 @@ class InflightAction {
 	 fuse_reply_statfs(i->req, statbuf.get());
       });
   }
+  static InflightAction XattrSize(ssize_t size) {
+    return InflightAction(true, false, false, [size](Inflight *i) {
+						fuse_reply_xattr(i->req, size);
+      });
+  }
 protected:
  InflightAction(bool delete_this, bool begin_wait, bool restart,
 		std::function<void(Inflight *)> perform)
