@@ -56,7 +56,8 @@ static struct fuse_lowlevel_ops fdbfs_oper =
     .forget_multi= fdbfs_forget_multi,
     .statfs     = fdbfs_statfs,
     .getxattr   = fdbfs_getxattr,
-    .setxattr   = fdbfs_setxattr
+    .setxattr   = fdbfs_setxattr,
+    .removexattr= fdbfs_removexattr
   };
 
 /* Purely to get the FoundationDB network stuff running in a
