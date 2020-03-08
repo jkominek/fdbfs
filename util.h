@@ -67,7 +67,7 @@ extern std::vector<uint8_t> pack_inode_use_key(fuse_ino_t);
 extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t);
 extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, const std::string&);
 extern std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name=0);
-extern std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, uint64_t xnode);
+extern std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, const std::string &name=0);
 extern void print_key(std::vector<uint8_t>);
 extern void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr);
 template <typename T>

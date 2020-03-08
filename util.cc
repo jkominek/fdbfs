@@ -83,6 +83,11 @@ fuse_ino_t generate_inode()
   // the low end of the key.
   uint64_t l = (tp.tv_sec & 0x3FFFFFFFF);
   uint64_t h = (tp.tv_nsec & 0x3FFFFFFF) << 34;
+
+  // returning MAX_UINT64 would probably be bad, because i'm
+  // not convinced we've correctly covered all of the edge
+  // cases around that. but considering our generation method,
+  // i don't think it'll be a concern
   return (h | l);
 }
 
@@ -157,12 +162,11 @@ std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name)
   return key;
 }
 
-std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, uint64_t xnode)
+std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, const std::string &name)
 {
   auto key = pack_inode_key(ino, XATTR_DATA_PREFIX);
-  uint64_t tmp = htobe64(xnode);
-  uint8_t *tmpp = reinterpret_cast<uint8_t *>(&tmp);
-  key.insert(key.end(), tmpp, tmpp + sizeof(uint64_t));
+  if(!name.empty())
+    key.insert(key.end(), name.begin(), name.end());
   return key;
 }
 
@@ -326,9 +330,8 @@ void erase_inode(FDBTransaction *transaction, fuse_ino_t ino)
                               key_stop.data(),  key_stop.size());
 
   // xattr data
-  key_start = pack_xattr_data_key(ino, 0);
-  key_stop = pack_xattr_data_key(ino, UINT64_MAX);
-  key_stop.push_back(0xff);
+  key_start = pack_xattr_data_key(ino, "");
+  key_stop = pack_xattr_data_key(ino, "\xff");
   fdb_transaction_clear_range(transaction,
                               key_start.data(), key_start.size(),
                               key_stop.data(),  key_stop.size());

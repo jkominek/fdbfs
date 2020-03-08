@@ -49,9 +49,8 @@ message INodeRecord {
 
 message XAttrRecord {
   // 0.. fundamentals
-  required fixed64 xnode = 1;
 
-  // why do we have a message to store just one value?
+  // why do we have a message to store nothing?
   // we might want to add permissions, or per-xattr metadata,
-  // or keep the size in the node
+  // or keep the size in the node, etc
 }

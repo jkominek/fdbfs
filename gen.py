@@ -22,8 +22,8 @@ def block_key(i, b):
     return prefix + struct.pack(">cQQ", "f", i, b)
 def xattr_node_key(i, n=''):
     return prefix + struct.pack(">cQ", "x", i) + n
-def xattr_data_key(i, x):
-    return prefix + struct.pack(">cQQ", "X", i, x)
+def xattr_data_key(i, n=''):
+    return prefix + struct.pack(">cQ", "X", i) + n
 def printable(s):
     return "".join([c if c.isalnum() else ("\\x%02x" % (ord(c),)) for c in s])
 def print_set(k, v):
@@ -51,10 +51,9 @@ hello_inode_value.nlinks = 1
 hello_inode_value.mode = 0666
 
 hello_xattr_node = msgs.XAttrRecord()
-hello_xattr_node.xnode = 4200
 print_set(xattr_node_key(hello_inode, "greeting"),
           hello_xattr_node.SerializeToString())
-print_set(xattr_data_key(hello_inode, hello_xattr_node.xnode),
+print_set(xattr_data_key(hello_inode, "greeting"),
           "bonjour!")
 
 hello_dirent = msgs.DirectoryEntry()

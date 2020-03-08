@@ -38,7 +38,6 @@ private:
   unique_future xattr_node_fetch;
   unique_future xattr_data_fetch;
   InflightAction process();
-  InflightAction callback();
 };
 
 Inflight_getxattr::Inflight_getxattr(fuse_req_t req, fuse_ino_t ino,
@@ -55,36 +54,6 @@ Inflight_getxattr *Inflight_getxattr::reincarnate()
 					       std::move(transaction));
   delete this;
   return x;
-}
-
-InflightAction Inflight_getxattr::callback()
-{
-  fdb_bool_t present=0;
-  uint8_t *val;
-  int vallen;
-  fdb_error_t err;
-
-  err = fdb_future_get_value(xattr_data_fetch.get(), &present, (const uint8_t **)&val, &vallen);
-  if(err) return InflightAction::FDBError(err);
-
-  if(present) {
-    // decode
-    if(maxsize==0) {
-      // just want the decoded size
-      return InflightAction::XattrSize(vallen);
-    } else {
-      std::vector<uint8_t> buffer;
-      buffer.assign(val, val+vallen);
-      return InflightAction::Buf(buffer);
-    }
-  } else {
-    if(maxsize==0) {
-      return InflightAction::XattrSize(0);
-    } else {
-      std::vector<uint8_t> buffer;
-      return InflightAction::Buf(buffer);
-    }
-  }
 }
 
 InflightAction Inflight_getxattr::process()
@@ -104,11 +73,28 @@ InflightAction Inflight_getxattr::process()
     if(!xattr.IsInitialized()) {
       return InflightAction::Abort(EIO);
     }
-    auto key = pack_xattr_data_key(ino, xattr.xnode());
-    wait_on_future(fdb_transaction_get(transaction.get(),
-				       key.data(), key.size(), 0),
-		   &xattr_data_fetch);
-    return InflightAction::BeginWait(std::bind(&Inflight_getxattr::callback, this));
+
+    err = fdb_future_get_value(xattr_data_fetch.get(), &present, (const uint8_t **)&val, &vallen);
+    if(err) return InflightAction::FDBError(err);
+
+    if(present) {
+      // decode
+      if(maxsize==0) {
+	// just want the decoded size
+	return InflightAction::XattrSize(vallen);
+      } else {
+	std::vector<uint8_t> buffer;
+	buffer.assign(val, val+vallen);
+	return InflightAction::Buf(buffer);
+      }
+    } else {
+      if(maxsize==0) {
+	return InflightAction::XattrSize(0);
+      } else {
+	std::vector<uint8_t> buffer;
+	return InflightAction::Buf(buffer);
+      }
+    }
   } else {
     return InflightAction::Abort(ENOATTR);
   }
@@ -116,17 +102,28 @@ InflightAction Inflight_getxattr::process()
 
 InflightCallback Inflight_getxattr::issue()
 {
+  // we could just not fetch the node, since it doesn't
+  // currently make any difference. but, we'll maybe need it
+  // sooner or later, so we'll leave it.
   auto key = pack_xattr_key(ino, name);
-  // and request just that xattr node
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
 		 &xattr_node_fetch);
+
+  key = pack_xattr_data_key(ino, name);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 0),
+		 &xattr_data_fetch);
+
   return std::bind(&Inflight_getxattr::process, this);
 }
 
 extern "C" void fdbfs_getxattr(fuse_req_t req, fuse_ino_t ino,
 			       const char *name, size_t size)
 {
+  if(filename_length_check(req, name))
+    return;
+
   Inflight_getxattr *inflight =
     new Inflight_getxattr(req, ino, name, size, make_transaction());
   inflight->start();

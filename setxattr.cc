@@ -96,7 +96,7 @@ InflightAction Inflight_setxattr::process()
   } else { // xattr not present
     if(behavior & CanCreate) {
       // set the xattr node
-      xattr.set_xnode(generate_inode());
+
       auto node_key = pack_xattr_key(ino, name);
       int xattr_size = xattr.ByteSize();
       uint8_t xattr_buffer[xattr_size];
@@ -111,7 +111,7 @@ InflightAction Inflight_setxattr::process()
   }
 
   // set the xattr data
-  auto data_key = pack_xattr_data_key(ino, xattr.xnode());
+  auto data_key = pack_xattr_data_key(ino, name);
   fdb_transaction_set(transaction.get(),
 		      data_key.data(), data_key.size(),
 		      xattr_value.data(), xattr_value.size());
@@ -127,9 +127,6 @@ InflightCallback Inflight_setxattr::issue()
 {
   auto key = pack_xattr_key(ino, name);
 
-  // if CanCreate, then maybe preemptively guess an inode number and see if it
-  // exists?
-
   // and request just that xattr node
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
@@ -142,6 +139,9 @@ extern "C" void fdbfs_setxattr(fuse_req_t req, fuse_ino_t ino,
 			       const char *name, const char *value,
 			       size_t size, int flags)
 {
+  if(filename_length_check(req, name))
+    return;
+
   SetXattrBehavior behavior = CreateOrReplace;
   if(flags == XATTR_CREATE)
     behavior = CanCreate;
