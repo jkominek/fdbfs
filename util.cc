@@ -347,10 +347,15 @@ inline void sparsify(uint8_t *block, uint64_t *write_size) {
 }
 
 void set_block(FDBTransaction *transaction, std::vector<uint8_t> key,
-	       uint8_t *buffer, uint64_t size)
+	       uint8_t *buffer, uint64_t size, bool write_conflict)
 {
   sparsify(buffer, &size);
   if(size>0) {
+    if(!write_conflict)
+      if(fdb_transaction_set_option(transaction, FDB_TR_OPTION_NEXT_WRITE_NO_WRITE_CONFLICT_RANGE, NULL, 0))
+	/* it doesn't matter if this fails. semantics will be preserved,
+	   there will just be some performance loss. */;
+
     // TODO here's where we'd implement the write-side cleverness for our
     // block encoding schemes. they should all not only be ifdef'd, but
     // check for whether or not the feature is enabled on the filesystem.

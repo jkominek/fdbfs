@@ -43,6 +43,7 @@
 
 // will be filled out before operation begins
 extern FDBDatabase *database;
+// must NOT be modified after it is set.
 extern std::vector<uint8_t> key_prefix;
 extern uint8_t BLOCKBITS;
 extern uint32_t BLOCKSIZE;
@@ -94,7 +95,7 @@ extern void update_directory_times(FDBTransaction *, INodeRecord &);
 extern void erase_inode(FDBTransaction *, fuse_ino_t);
 
 extern void set_block(FDBTransaction *, std::vector<uint8_t>,
-		      uint8_t *, uint64_t);
+		      uint8_t *, uint64_t, bool=true);
 extern int decode_block(FDBKeyValue *, int, uint8_t *, int, int);
 
 #ifndef DEBUG

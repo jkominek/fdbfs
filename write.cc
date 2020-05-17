@@ -167,7 +167,7 @@ InflightAction Inflight_write::check()
     bcopy(buffer.data(), output_buffer + copy_start_off, copy_start_size);
     auto key = pack_fileblock_key(ino, off / BLOCKSIZE);
     set_block(transaction.get(), key,
-	      output_buffer, total_buffer_size);
+	      output_buffer, total_buffer_size, false);
   }
 
   if(stop_block_fetch) {
@@ -196,7 +196,7 @@ InflightAction Inflight_write::check()
     //uint64_t actual_block_size = std::min(total_buffer_size,
     //					  inode.size() % BLOCKSIZE);
     set_block(transaction.get(), key,
-	      output_buffer, total_buffer_size);
+	      output_buffer, total_buffer_size, false);
   }
 
   // perform all of the writes
@@ -229,12 +229,32 @@ InflightCallback Inflight_write::issue()
 		   &inode_fetch);
   }
 
+  const auto conflict_start_key = pack_fileblock_key(ino, off / BLOCKSIZE);
+  auto conflict_stop_key = pack_fileblock_key(ino, (off + buffer.size()) / BLOCKSIZE);
+  // go past the end of the useful stop fileblock's subspace
+  conflict_stop_key.push_back('\xff');
+  // we're generating just a single conflict range for all of
+  // the fileblocks that we're writing to: less to send across
+  // the network, and for the resolver to process.
+  if(fdb_transaction_add_conflict_range(transaction.get(),
+					conflict_start_key.data(),
+					conflict_start_key.size(),
+					conflict_stop_key.data(),
+					conflict_stop_key.size(),
+					FDB_CONFLICT_RANGE_TYPE_WRITE)) {
+    // hm, if we can't add our conflict range, we can't guarantee correctness.
+    // guess we'll try again?
+    return []() {
+	     return InflightAction::Restart();
+	   };
+  }
+
   int iter_start, iter_stop;
   int doing_start_block = 0;
   // now, are we doing block-partial writes?
   if((off % BLOCKSIZE) != 0) {
     int start_block = off / BLOCKSIZE;
-    auto start_key = pack_fileblock_key(ino, start_block);
+    const auto start_key = pack_fileblock_key(ino, start_block);
     auto stop_key  = start_key;
     stop_key.push_back(0xff);
     wait_on_future(fdb_transaction_get_range(transaction.get(),
@@ -255,7 +275,7 @@ InflightCallback Inflight_write::issue()
     // if the block is identical to the start block, there's no
     // sense fetching and processing it twice.
     if((!doing_start_block) || (stop_block != (off / BLOCKSIZE))) {
-      auto start_key = pack_fileblock_key(ino, stop_block);
+      const auto start_key = pack_fileblock_key(ino, stop_block);
       auto stop_key = start_key;
       stop_key.push_back(0xff);
       wait_on_future(fdb_transaction_get_range(transaction.get(),
@@ -286,10 +306,10 @@ InflightCallback Inflight_write::issue()
   // process the whole blocks in the middle of the write, that don't
   // require a read-write cycle.
   for(int mid_block=iter_start; mid_block<iter_stop; mid_block++) {
-    auto key = pack_fileblock_key(ino, mid_block);
+    const auto key = pack_fileblock_key(ino, mid_block);
     uint8_t *block;
     block = buffer.data() + (off % BLOCKSIZE) + (mid_block - iter_start) * BLOCKSIZE;
-    set_block(transaction.get(), key, block, BLOCKSIZE);
+    set_block(transaction.get(), key, block, BLOCKSIZE, false);
   }
 
   return std::bind(&Inflight_write::check, this);
