@@ -5,7 +5,7 @@ compiler:
 os:
 - linux
 before_install:
-- sudo apt-get -y install libfuse-dev fuse libprotobuf-dev protobuf-compiler liblz4-dev python-protobuf python-lz4 libzstd1 libzstd-dev nlohmann-json-dev libattr1-dev
+- sudo apt-get -y install libfuse-dev fuse libprotobuf-dev protobuf-compiler liblz4-dev python-protobuf python-lz4 libzstd1 libzstd-dev nlohmann-json-dev libattr1-dev perl libacl1-dev
 - sudo env PATH=$PATH pip install zstd
 - wget https://www.foundationdb.org/downloads/6.2.25/ubuntu/installers/foundationdb-clients_6.2.25-1_amd64.deb https://www.foundationdb.org/downloads/6.2.25/ubuntu/installers/foundationdb-server_6.2.25-1_amd64.deb
 - sudo dpkg -i foundationdb-clients_6.2.25-1_amd64.deb foundationdb-server_6.2.25-1_amd64.deb
@@ -13,3 +13,4 @@ script:
 - make
 - make regen
 - ./test.sh
+- ./secfstest.sh
