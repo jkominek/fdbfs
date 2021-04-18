@@ -37,28 +37,30 @@ uint32_t BLOCKSIZE; // 1<<BLOCKBITS
 static struct fuse_lowlevel_ops fdbfs_oper =
   {
     .lookup	= fdbfs_lookup,
+    .forget     = fdbfs_forget,
     .getattr	= fdbfs_getattr,
-    .readdir	= fdbfs_readdir,
-    .open	= fdbfs_open,
-    .release	= fdbfs_release,
-    .read	= fdbfs_read,
+    .setattr	= fdbfs_setattr,
+    .readlink   = fdbfs_readlink,
     .mknod      = fdbfs_mknod,
     .mkdir      = fdbfs_mkdir,
     .unlink     = fdbfs_unlink,
     .rmdir      = fdbfs_rmdir,
-    .link       = fdbfs_link,
-    .readlink   = fdbfs_readlink,
     .symlink    = fdbfs_symlink,
-    .setattr	= fdbfs_setattr,
     .rename     = fdbfs_rename,
+    .link       = fdbfs_link,
+    .open	= fdbfs_open,
+    .read	= fdbfs_read,
     .write      = fdbfs_write,
-    .forget     = fdbfs_forget,
-    .forget_multi= fdbfs_forget_multi,
+    //    .flush      = fdbfs_flush,
+    .release	= fdbfs_release,
+    .readdir	= fdbfs_readdir,
     .statfs     = fdbfs_statfs,
-    .getxattr   = fdbfs_getxattr,
     .setxattr   = fdbfs_setxattr,
+    .getxattr   = fdbfs_getxattr,
+    .listxattr  = fdbfs_listxattr,
     .removexattr= fdbfs_removexattr,
-    .listxattr  = fdbfs_listxattr
+    .forget_multi= fdbfs_forget_multi,
+    //    .flock      = fdbfs_flock
   };
 
 /* Purely to get the FoundationDB network stuff running in a
