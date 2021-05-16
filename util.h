@@ -3,7 +3,7 @@
 
 #define FUSE_USE_VERSION 26
 #include <fuse_lowlevel.h>
-#define FDB_API_VERSION 610
+#define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
 
 // Configuration-esque block, to be pulled out later

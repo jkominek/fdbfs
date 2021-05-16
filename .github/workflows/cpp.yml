@@ -18,11 +18,11 @@ jobs:
     - name: nlohmann/json
       run: sudo mkdir -p /usr/include/nlohmann ; sudo wget -nv -O /usr/include/nlohmann/json.hpp https://github.com/nlohmann/json/releases/download/v2.1.1/json.hpp
     - name: pip
-      run: sudo env PATH=$PATH pip install zstd
+      run: sudo env PATH=$PATH pip install zstd==1.4.9.1
     - name: fetch fdb
-      run: wget -nv https://www.foundationdb.org/downloads/6.2.25/ubuntu/installers/foundationdb-clients_6.2.25-1_amd64.deb https://www.foundationdb.org/downloads/6.2.25/ubuntu/installers/foundationdb-server_6.2.25-1_amd64.deb
+      run: wget -nv https://www.foundationdb.org/downloads/6.3.12/ubuntu/installers/foundationdb-clients_6.3.12-1_amd64.deb https://www.foundationdb.org/downloads/6.3.12/ubuntu/installers/foundationdb-server_6.3.12-1_amd64.deb
     - name: dpkg install
-      run: sudo dpkg -i foundationdb-clients_6.2.25-1_amd64.deb foundationdb-server_6.2.25-1_amd64.deb
+      run: sudo dpkg -i foundationdb-clients_6.3.12-1_amd64.deb foundationdb-server_6.3.12-1_amd64.deb
     - name: make
       run: make
     - name: make regen

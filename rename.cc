@@ -128,9 +128,8 @@ InflightAction Inflight_rename::complicated()
 
   if(kvcount>1) {
     FDBKeyValue kv = kvs[1];
-    auto key = reinterpret_cast<const uint8_t*>(kv.key);
     if((kv.key_length > (inode_key_length + 1)) &&
-       key[inode_key_length] == 0x01) {
+       kv.key[inode_key_length] == 0x01) {
       // there's a use record present.
       destination_in_use = true;
     }
@@ -166,7 +165,7 @@ InflightAction Inflight_rename::complicated()
   inode.SerializeToArray(inode_buffer, inode_size);
   
   fdb_transaction_set(transaction.get(),
-		      static_cast<const uint8_t*>(inode_kv.key),
+		      inode_kv.key,
 		      inode_kv.key_length,
 		      inode_buffer, inode_size);
   

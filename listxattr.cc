@@ -1,7 +1,7 @@
 
 #define FUSE_USE_VERSION 26
 #include <fuse_lowlevel.h>
-#define FDB_API_VERSION 610
+#define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
 
 #include <stdio.h>
@@ -85,7 +85,7 @@ InflightAction Inflight_listxattr::process()
       return InflightAction::Abort(ERANGE);
     }
 
-    auto k = reinterpret_cast<const uint8_t *>(kv->key) + empty_xattr_name_length;
+    auto k = kv->key + empty_xattr_name_length;
     buf.insert(buf.end(), k, k + remaining_length);
     buf.push_back(0);
   }
@@ -100,7 +100,7 @@ InflightAction Inflight_listxattr::process()
 
   // apparently, there is more, and we've got space
   wait_on_future(fdb_transaction_get_range(transaction.get(),
-					   reinterpret_cast<const uint8_t *>(lastkv->key),
+					   lastkv->key,
 					   lastkv->key_length, 0, 1,
 					   stop.data(), stop.size(), 0, 1,
 					   maxsize - buf.size(), 0,
@@ -179,7 +179,7 @@ InflightAction Inflight_listxattr_count::process()
 
   if(more) {
     wait_on_future(fdb_transaction_get_range(transaction.get(),
-					     reinterpret_cast<const uint8_t *>(lastkv->key),
+					     lastkv->key,
 					     lastkv->key_length, 0, 1,
 					     stop.data(), stop.size(), 0, 1,
 					     0, 0,

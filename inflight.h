@@ -1,7 +1,7 @@
 #ifndef __INFLIGHT_H_
 #define __INFLIGHT_H_
 
-#define FDB_API_VERSION 610
+#define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
 
 #include <memory>

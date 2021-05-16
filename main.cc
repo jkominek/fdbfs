@@ -1,7 +1,7 @@
 
 #define FUSE_USE_VERSION 26
 #include <fuse_lowlevel.h>
-#define FDB_API_VERSION 610
+#define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
 
 #include <stdio.h>
@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
   }
   // TODO put our inode_use_identifier into the pid table somehow
   
-  if(fdb_select_api_version(610))
+  if(fdb_select_api_version(FDB_API_VERSION))
     return -1;
   if(fdb_setup_network())
     return -1;

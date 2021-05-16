@@ -1,7 +1,7 @@
 
 #define FUSE_USE_VERSION 26
 #include <fuse_lowlevel.h>
-#define FDB_API_VERSION 610
+#define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
 
 #include <stdio.h>
@@ -159,9 +159,8 @@ InflightAction Inflight_unlink_rmdir::inode_check()
   for(int i=1; i<kvcount; i++) {
     // inspect the other records we got back
     FDBKeyValue kv = kvs[i];
-    auto kv_key = reinterpret_cast<const uint8_t *>(kv.key);
     if((kv.key_length>inode_key_length) &&
-       (kv_key[inode_key_length] == 0x01)) {
+       (kv.key[inode_key_length] == 0x01)) {
       // there's a use record in place, we can't erase the inode.
       inode_in_use = true;
     }
@@ -178,7 +177,7 @@ InflightAction Inflight_unlink_rmdir::inode_check()
   inode.SerializeToArray(inode_buffer, inode_size);
     
   fdb_transaction_set(transaction.get(),
-		      static_cast<const uint8_t*>(inode_kv.key),
+		      inode_kv.key,
 		      inode_kv.key_length,
 		      inode_buffer, inode_size);
   if(inode.nlinks()==0) {

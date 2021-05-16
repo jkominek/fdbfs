@@ -2,7 +2,7 @@
 
 #define FUSE_USE_VERSION 26
 #include <fuse_lowlevel.h>
-#define FDB_API_VERSION 610
+#define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
 
 #include <stdio.h>
@@ -80,7 +80,7 @@ void *garbage_scanner(void *ignore)
     if(kvs[0].key_length != inode_key_length) {
       // we found malformed junk in the garbage space. ironic.
       fdb_transaction_clear(t.get(),
-			    static_cast<const uint8_t*>(kvs[0].key),
+			    kvs[0].key,
 			    kvs[0].key_length);
       FDBFuture *g = fdb_transaction_commit(t.get());
       // if it fails, it fails, we'll try again the next time we
@@ -95,7 +95,7 @@ void *garbage_scanner(void *ignore)
     // ok we found a garbage-collectible inode.
     // fetch the in-use records for it.
     fuse_ino_t ino;
-    bcopy(static_cast<const uint8_t*>(kvs[0].key) + key_prefix.size() + 1,
+    bcopy(kvs[0].key + key_prefix.size() + 1,
 	  &ino, sizeof(fuse_ino_t));
     ino = be64toh(ino);
 

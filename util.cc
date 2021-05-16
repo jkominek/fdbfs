@@ -372,7 +372,7 @@ void set_block(FDBTransaction *transaction, std::vector<uint8_t> key,
       int ret = ZSTD_compress(reinterpret_cast<char*>(compressed),
 			      BLOCKSIZE,
 			      reinterpret_cast<char*>(buffer),
-			      size, 6);
+			      size, 10);
       if((!ZSTD_isError(ret)) && (ret <= acceptable_size)) {
 	// ok, we'll take it.
 	key.push_back('z'); // compressed
@@ -409,8 +409,8 @@ void set_block(FDBTransaction *transaction, std::vector<uint8_t> key,
 int decode_block(FDBKeyValue *kv, int block_offset,
 		 uint8_t *output, int targetsize, int maxsize)
 {
-  const uint8_t *key = static_cast<const uint8_t*>(kv->key);
-  const char *value = static_cast<const char*>(kv->value);
+  const uint8_t *key = kv->key;
+  const uint8_t *value = kv->value;
   //printf("decoding block\n");
   //print_bytes(value, kv->value_length);printf("\n");
   if(kv->key_length == fileblock_key_length) {

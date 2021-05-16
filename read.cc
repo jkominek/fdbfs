@@ -1,7 +1,7 @@
 
 #define FUSE_USE_VERSION 26
 #include <fuse_lowlevel.h>
-#define FDB_API_VERSION 610
+#define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
 
 #include <stdio.h>
@@ -111,7 +111,7 @@ InflightAction Inflight_read::callback()
 
     FDBFuture *f =
       fdb_transaction_get_range(transaction.get(),
-				FDB_KEYSEL_FIRST_GREATER_THAN(static_cast<const uint8_t*>(last_kv->key), last_kv->key_length),
+				FDB_KEYSEL_FIRST_GREATER_THAN(last_kv->key, last_kv->key_length),
 				FDB_KEYSEL_FIRST_GREATER_THAN(requested_range.second.data(), requested_range.second.size()),
 				0, 0,
 				FDB_STREAMING_MODE_WANT_ALL, 0,
@@ -132,8 +132,8 @@ InflightAction Inflight_read::callback()
 
   for(int i=0; i<kvcount; i++) {
     FDBKeyValue kv = kvs[i];
-    std::vector<uint8_t> key(static_cast<const uint8_t*>(kv.key),
-			     static_cast<const uint8_t*>(kv.key) + kv.key_length);
+    std::vector<uint8_t> key(kv.key,
+			     kv.key + kv.key_length);
 #if DEBUG
     print_key(key);
 #endif
