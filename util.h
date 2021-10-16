@@ -58,6 +58,10 @@ extern bool increment_lookup_count(fuse_ino_t);
 extern bool decrement_lookup_count(fuse_ino_t, uint64_t);
 
 struct fdbfs_filehandle {
+  // we're not putting anything in this yet,
+  // but we're attempting to pass it around
+  // and track it properly so that we could,
+  // later.
 };
 extern struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *);
 

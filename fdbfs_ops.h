@@ -28,5 +28,6 @@ extern "C" void fdbfs_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
 extern "C" void fdbfs_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name, const char *value, size_t size, int flags);
 extern "C" void fdbfs_removexattr(fuse_req_t req, fuse_ino_t ino, const char *name);
 extern "C" void fdbfs_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size);
+extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 
 #endif
