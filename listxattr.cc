@@ -24,6 +24,19 @@
  * the listing, and another mechanism for figuring out how big
  * the listing will be.
  *
+ * What's with all the "key_length - empty_xattr_name_length" stuff?
+ * The keys are of the form concat(PREFIX, xattr_name).
+ * key_length = len(concat(PREFIX, xattr_name)) and
+ * empty_xattr_name_length = len(concat(PREFIX, ""))
+ * So subtracting that off gets the length of xattr_name, which is
+ * what we're interested in.
+ *
+ * Why do we compute empty_xattr_name_length at the start of every
+ * transaction? It depends on the prefix/subspace for the filesystem
+ * we're operating on. It could be determined just once at run time,
+ * but we haven't implemented a place for all of the do-once-at-run-time
+ * precomputations.
+ *
  * REAL PLAN
  * ???
  */
