@@ -20,9 +20,9 @@ jobs:
     - name: pip
       run: sudo env PATH=$PATH pip install zstd==1.4.9.1
     - name: fetch fdb
-      run: wget -nv https://www.foundationdb.org/downloads/6.3.12/ubuntu/installers/foundationdb-clients_6.3.12-1_amd64.deb https://www.foundationdb.org/downloads/6.3.12/ubuntu/installers/foundationdb-server_6.3.12-1_amd64.deb
+      run: wget -nv https://www.foundationdb.org/downloads/6.3.18/ubuntu/installers/foundationdb-clients_6.3.18-1_amd64.deb https://www.foundationdb.org/downloads/6.3.18/ubuntu/installers/foundationdb-server_6.3.18-1_amd64.deb
     - name: dpkg install
-      run: sudo dpkg -i foundationdb-clients_6.3.12-1_amd64.deb foundationdb-server_6.3.12-1_amd64.deb
+      run: sudo dpkg -i foundationdb-clients_6.3.18-1_amd64.deb foundationdb-server_6.3.18-1_amd64.deb
     - name: make
       run: make
     - name: make regen
