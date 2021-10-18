@@ -8,13 +8,13 @@ cd /tmp
 git clone https://github.com/billziss-gh/secfs.test
 cd /tmp/secfs.test/fstest/fstest
 make
+# cgofuse matches our current (intended) semantics
 cat <<EOF > tests/conf
 os=Linux
-fs="ext3"
+fs="cgofuse"
 EOF
+# remove xacl tests
+rm -rf /tmp/secfs.test/fstest/fstest/tests/xacl
 
 cd /tmp/fdb
 sudo prove -r /tmp/secfs.test/fstest/fstest
-
-# when we fix up all of the test cases again, we can drop this
-exit 0
