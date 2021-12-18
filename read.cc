@@ -143,7 +143,7 @@ InflightAction Inflight_read::callback()
 	  sizeof(uint64_t));
     block = be64toh(block);
     // TODO variable block size
-    if( (block * BLOCKSIZE) <= off ) {
+    if( (block * BLOCKSIZE) <= static_cast<uint64_t>(off) ) {
       // we need an offset into the received block, since it
       // starts before (or at) the requested read area
       uint64_t block_off = off - block * BLOCKSIZE;

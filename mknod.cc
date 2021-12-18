@@ -149,7 +149,7 @@ InflightAction Inflight_mknod::postverification()
   
   // set the inode KV pair
   auto key = pack_inode_key(ino);
-  int inode_size = inode.ByteSize();
+  int inode_size = inode.ByteSizeLong();
   uint8_t inode_buffer[inode_size];
   inode.SerializeToArray(inode_buffer, inode_size);
 
@@ -161,7 +161,7 @@ InflightAction Inflight_mknod::postverification()
   dirent.set_inode(ino);
   dirent.set_type(type);
 
-  int dirent_size = dirent.ByteSize();
+  int dirent_size = dirent.ByteSizeLong();
   uint8_t dirent_buffer[dirent_size];
   dirent.SerializeToArray(dirent_buffer, dirent_size);
 

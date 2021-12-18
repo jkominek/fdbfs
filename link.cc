@@ -145,7 +145,7 @@ InflightAction Inflight_link::check()
   update_ctime(&inode, &tv);
   // TODO do we need to touch any other inode attributes when
   // creating a hard link?
-  int inode_size = inode.ByteSize();
+  int inode_size = inode.ByteSizeLong();
   uint8_t inode_buffer[inode_size];
   inode.SerializeToArray(inode_buffer, inode_size);
   fdb_transaction_set(transaction.get(),
@@ -158,7 +158,7 @@ InflightAction Inflight_link::check()
   dirent.set_type(inode.type());
 
   key = pack_dentry_key(newparent, newname);
-  int dirent_size = dirent.ByteSize();
+  int dirent_size = dirent.ByteSizeLong();
   uint8_t dirent_buffer[dirent_size];
   dirent.SerializeToArray(dirent_buffer, dirent_size);
   fdb_transaction_set(transaction.get(),

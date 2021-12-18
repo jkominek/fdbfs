@@ -135,7 +135,7 @@ InflightAction Inflight_write::check()
 
     auto key = pack_inode_key(inode.inode());
     // we've updated the inode appropriately.
-    int inode_size = inode.ByteSize();
+    int inode_size = inode.ByteSizeLong();
     uint8_t inode_buffer[inode_size];
     inode.SerializeToArray(inode_buffer, inode_size);
     fdb_transaction_set(transaction.get(),

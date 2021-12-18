@@ -160,7 +160,7 @@ InflightAction Inflight_rename::complicated()
   struct timespec tv;
   clock_gettime(CLOCK_REALTIME, &tv);
   update_ctime(&inode, &tv);
-  int inode_size = inode.ByteSize();
+  int inode_size = inode.ByteSizeLong();
   uint8_t inode_buffer[inode_size];
   inode.SerializeToArray(inode_buffer, inode_size);
   
@@ -189,7 +189,7 @@ InflightAction Inflight_rename::complicated()
   
   // set the new dirent to the correct value
   key = pack_dentry_key(newparent, newname);
-  int dirent_size = origin_dirent.ByteSize();
+  int dirent_size = origin_dirent.ByteSizeLong();
   uint8_t dirent_buffer[dirent_size];
   origin_dirent.SerializeToArray(dirent_buffer, dirent_size);
   fdb_transaction_set(transaction.get(),
@@ -309,7 +309,7 @@ InflightAction Inflight_rename::check()
 			  key.data(), key.size());
 
     // take the old directory entry contents, repack it.
-    int olddirent_size = origin_dirent.ByteSize();
+    int olddirent_size = origin_dirent.ByteSizeLong();
     uint8_t olddirent_buf[olddirent_size];
     origin_dirent.SerializeToArray(olddirent_buf, olddirent_size);
 
@@ -326,11 +326,11 @@ InflightAction Inflight_rename::check()
      * the previous case. Here we swap the contents of the
      * two directory entries, but nothing is unlinked.
      */
-    int olddirent_size = origin_dirent.ByteSize();
+    int olddirent_size = origin_dirent.ByteSizeLong();
     uint8_t olddirent_buf[olddirent_size];
     origin_dirent.SerializeToArray(olddirent_buf, olddirent_size);
 
-    int newdirent_size = destination_dirent.ByteSize();
+    int newdirent_size = destination_dirent.ByteSizeLong();
     uint8_t newdirent_buf[newdirent_size];
     destination_dirent.SerializeToArray(newdirent_buf, newdirent_size);
 

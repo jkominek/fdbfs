@@ -83,7 +83,12 @@ InflightAction Inflight_setattr::partial_block_fixup()
     uint8_t output_buffer[BLOCKSIZE];
     bzero(output_buffer, BLOCKSIZE);
     int ret = decode_block(&kvs[0], 0, output_buffer, BLOCKSIZE, BLOCKSIZE);
+    if(ret < 0) {
+      // block can't be decoded. big problem.
+      return InflightAction::Abort(EIO);
+    }
     auto key = pack_fileblock_key(ino, partial_block_idx);
+    // if (ret <= attr.st_size % BLOCKSIZE) then there's nothing to do.
     set_block(transaction.get(), key, output_buffer, attr.st_size % BLOCKSIZE);
   }
 
@@ -132,7 +137,7 @@ InflightAction Inflight_setattr::callback()
     substantial_update = true;
   }
   if(to_set & FUSE_SET_ATTR_SIZE) {
-    if(attr.st_size < inode.size()) {
+    if(static_cast<uint64_t>(attr.st_size) < inode.size()) {
       // they want to truncate the file. compute what blocks
       // need to be cleared.
       auto start_block_key = pack_fileblock_key(ino, (attr.st_size / BLOCKSIZE));
@@ -160,7 +165,7 @@ InflightAction Inflight_setattr::callback()
 	next_action = InflightAction::BeginWait(std::bind(&Inflight_setattr::partial_block_fixup, this));
       }
     }
-    if(attr.st_size != inode.size()) {
+    if(static_cast<uint64_t>(attr.st_size) != inode.size()) {
       inode.set_size(attr.st_size);
       substantial_update = true;
     }
@@ -213,7 +218,7 @@ InflightAction Inflight_setattr::callback()
   newattr = std::make_unique<struct stat>();
   pack_inode_record_into_stat(&inode, newattr.get());
   
-  int inode_size = inode.ByteSize();
+  int inode_size = inode.ByteSizeLong();
   uint8_t inode_buffer[inode_size];
   inode.SerializeToArray(inode_buffer, inode_size);
 

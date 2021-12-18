@@ -83,7 +83,7 @@ extern "C" void fdbfs_forget_multi(fuse_req_t req, size_t count,
 {
   std::vector<fuse_ino_t> inos;
   inos.reserve(count);
-  for(int i=0; i<count; i++) {
+  for(size_t i=0; i<count; i++) {
     if(decrement_lookup_count(forgets[i].ino, forgets[i].nlookup)) {
       inos.push_back(forgets[i].ino);
     }

@@ -288,7 +288,7 @@ void update_directory_times(FDBTransaction *transaction, INodeRecord &inode)
   inode.mutable_mtime()->set_sec(tp.tv_sec);
   inode.mutable_mtime()->set_nsec(tp.tv_nsec);
   auto key = pack_inode_key(inode.inode());
-  int inode_size = inode.ByteSize();
+  int inode_size = inode.ByteSizeLong();
   uint8_t inode_buffer[inode_size];
   inode.SerializeToArray(inode_buffer, inode_size);
   fdb_transaction_set(transaction,

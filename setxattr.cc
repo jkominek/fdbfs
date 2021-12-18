@@ -98,7 +98,7 @@ InflightAction Inflight_setxattr::process()
       // set the xattr node
 
       auto node_key = pack_xattr_key(ino, name);
-      int xattr_size = xattr.ByteSize();
+      int xattr_size = xattr.ByteSizeLong();
       uint8_t xattr_buffer[xattr_size];
       xattr.SerializeToArray(xattr_buffer, xattr_size);
  

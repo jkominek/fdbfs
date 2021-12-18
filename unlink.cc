@@ -172,7 +172,7 @@ InflightAction Inflight_unlink_rmdir::inode_check()
   clock_gettime(CLOCK_REALTIME, &tv);
   update_ctime(&inode, &tv);
 
-  int inode_size = inode.ByteSize();
+  int inode_size = inode.ByteSizeLong();
   uint8_t inode_buffer[inode_size];
   inode.SerializeToArray(inode_buffer, inode_size);
     
