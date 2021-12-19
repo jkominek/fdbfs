@@ -8,19 +8,22 @@ on:
 
 jobs:
   build:
-
+    environment: build
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v2
     - name: apt-get
-      run: sudo apt-get -y install libfuse-dev fuse libprotobuf-dev protobuf-compiler liblz4-dev python-protobuf libzstd1 libzstd-dev libattr1-dev libacl1-dev
+      run: sudo apt-get -y install libfuse-dev fuse libprotobuf-dev protobuf-compiler liblz4-dev python-protobuf libzstd1 libzstd-dev libattr1-dev libacl1-dev s3cmd
     - name: nlohmann/json
       run: sudo mkdir -p /usr/include/nlohmann ; sudo wget -nv -O /usr/include/nlohmann/json.hpp https://github.com/nlohmann/json/releases/download/v2.1.1/json.hpp
     - name: pip
       run: sudo env PATH=$PATH pip install zstd==1.4.9.1
     - name: fetch fdb
-      run: wget -nv https://www.foundationdb.org/downloads/6.3.18/ubuntu/installers/foundationdb-clients_6.3.18-1_amd64.deb https://www.foundationdb.org/downloads/6.3.18/ubuntu/installers/foundationdb-server_6.3.18-1_amd64.deb
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      run: s3cmd get s3://fdbfs-build-assets/{foundationdb-clients_6.3.18-1_amd64.deb,foundationdb-server_6.3.18-1_amd64.deb}
     - name: dpkg install
       run: sudo dpkg -i foundationdb-clients_6.3.18-1_amd64.deb foundationdb-server_6.3.18-1_amd64.deb
     - name: make
