@@ -21,6 +21,16 @@
 #include "util.h"
 #include "inflight.h"
 
+bool shut_it_down_forever = false;
+
+void shut_it_down() {
+  // all the future handlers will ENOSYS when they're
+  // invoked. we could do this a little bit faster if
+  // we kept a set (or something) of all of the inflights,
+  // so we could just go down the list and delete them all.
+  shut_it_down_forever = true;
+}
+
 /******************************************************
  * This encapsulates all of our retry logic
  *
@@ -72,6 +82,19 @@ Inflight::~Inflight()
     printf("inflight %p for req %p took %li s\n", this, req, secs);
   }
 #endif
+}
+
+void Inflight::start()
+{
+  if(shut_it_down_forever) {
+    // abort everything immediately
+    fuse_reply_err(req, ENOSYS);
+    delete this;
+    return;
+  }
+
+  cb.emplace(issue());
+  begin_wait();
 }
 
 void Inflight::future_ready(FDBFuture *f)
@@ -141,7 +164,14 @@ void Inflight::wait_on_future(FDBFuture *f, unique_future *dest)
 extern "C" void fdbfs_error_processor(FDBFuture *f, void *p)
 {
   Inflight *inflight = static_cast<Inflight*>(p);
-  
+
+  if(shut_it_down_forever) {
+    // everything is to be terminated immediately
+    fuse_reply_err(inflight->req, ENOSYS);
+    delete inflight;
+    return;
+  }
+
   fdb_error_t err = fdb_future_get_error(f);
   // done with this either way.
   fdb_future_destroy(f);

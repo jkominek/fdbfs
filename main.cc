@@ -17,6 +17,7 @@
 #include <memory>
 
 #include "util.h"
+#include "liveness.h"
 #include "values.pb.h"
 #include "garbage_collector.h"
 #include "fdbfs_ops.h"
@@ -129,6 +130,8 @@ int main(int argc, char *argv[])
       
       se = fuse_lowlevel_new(&args, &fdbfs_oper,
 			     sizeof(fdbfs_oper), NULL);
+      start_liveness(se);
+
       if (se != NULL)
 	{
 	  if (fuse_set_signal_handlers(se) != -1)
@@ -141,6 +144,7 @@ int main(int argc, char *argv[])
 	  fuse_session_destroy(se);
 	}
       fuse_unmount(mountpoint, ch);
+      terminate_liveness();
     }
   fuse_opt_free_args(&args);
 

@@ -20,15 +20,29 @@ message Timespec {
   required uint32 nsec = 2;
 }
 
+message ProcessTableEntry {
+  // randomly generated 128 bits
+  required bytes pid = 1;
+  // based on the processes' clock. not reliable.
+  required Timespec last_updated = 2;
+  // incremented every time this is updated
+  required uint64 liveness_counter = 3;
+
+  optional string hostname = 4;
+}
+
 message DirectoryEntry {
+  // We can plunk anything in here from the
+  // INodeRecord that's immutable
   required fixed64 inode = 1;
   required filetype type = 2;
+  // symlink value?
 }
 
 message INodeRecord {
   // 0.. fundamentals
-  required fixed64 inode = 1;
-  required filetype type = 2;
+  required fixed64 inode = 1; // IMMUTABLE
+  required filetype type = 2; // IMMUTABLE
   required uint32 nlinks = 3;
   optional uint32 mode = 4;
   optional uint64 size = 5;

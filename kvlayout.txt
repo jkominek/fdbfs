@@ -2,13 +2,15 @@ Overall key scheme:
 
 === inodes ===
 prefix 'i' inode              -> contains basic attrs and symlink info
-prefix 'i' inode \x00 lock    -> info on whoever has the lock
-prefix 'i' inode \x00 pending -> info on parties waiting for lock?
+
+prefix 'i' inode \x00 pid1, anything -> info on a lock
+prefix 'i' inode \x00 pid2, anything -> info on a lock
 prefix 'i' inode \x01 pid1    -> per fuse-process use counter (64 bit LE)
 prefix 'i' inode \x01 pid2    -> per fuse-process use counter (64 bit LE)
 prefix 'i' inode \x02 xattr0  -> arbitrary number of extended attributes
 prefix 'i' inode \x02 xattr1
 prefix 'i' inode \x02 xattr2
+prefix 'i' inode \xfe inodeattr -> pseudo keys to indicate inode updates
 prefix 'd' inode filenameA-> dirents.
 prefix 'd' inode filenameB
 prefix 'd' inode filenameC
@@ -18,6 +20,21 @@ prefix 'f' inode offset2 'z'\x01\x00 -> block compressed with whatever algorithm
 prefix 'f' inode offset3 'p'\x02\x00... -> key contains 512 bytes of parity for the block 
     there should be only one kv pair within a given offset(n) to offset(n+1)
     range.
+prefix 'p' pid -> ProcessTableEntry
+
+
+The \x00 space for locks is adjacent to the inodes, because in a mandatory
+locking system, you'd need to read them along with the inode. So we'll
+store them for a single range read.
+
+The \xfe space is to register common partial updates to an inode. For
+instance, when reading blocks with noatime, the only thing you need to
+know about an inode is existance and the size of it. So read the inode
+without a read conflict range, but lay down a read conflict on the
+inode size key. Anything changing the size will read/write conflict the
+inode, and write conflict the inode size key. So another process only
+changing the owner (which will read/write the inode, and write conflict
+the inode owner attr) won't conflict all of the ongoing reads.
 
 === garbage ===
 prefix 'g' inode -> indicates that nlinks in the inode has gone to zero,
@@ -36,6 +53,9 @@ every reasonable timeout amount of time. (30-60 seconds?)
 if processes notice that another pid's entry has stopped updating,
 they should delete it. the GC process can confirm the liveness of
 all pids it encounters when cleaning up inodes.
+
+similarly processes should watch for updates on their pid entry.
+if it is updated or erased, they should react immediately.
 
 === meta ===
 prefix 'M' -> metadata block. filesystem version and blocksize?

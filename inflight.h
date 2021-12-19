@@ -14,6 +14,9 @@
 #include <time.h>
 #endif
 
+// Halt all inflights and prevent new ones from starting.
+extern void shut_it_down();
+
 struct FDBTransactionDeleter {
   void operator()(FDBTransaction *t) {
     fdb_transaction_destroy(t);
@@ -57,10 +60,7 @@ class Inflight {
   fuse_req_t req;
   bool suppress_errors = false;
 
-  void start() {
-    cb.emplace(issue());
-    begin_wait();
-  }
+  void start();
 
  protected:
   // constructor

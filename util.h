@@ -68,6 +68,7 @@ extern struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info 
 extern fuse_ino_t generate_inode();
 extern std::vector<uint8_t> pack_inode_key(fuse_ino_t, char=INODE_PREFIX);
 extern std::vector<uint8_t> pack_garbage_key(fuse_ino_t);
+extern std::vector<uint8_t> pack_pid_key(std::vector<uint8_t>);
 extern std::vector<uint8_t> pack_inode_use_key(fuse_ino_t);
 extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t);
 extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, const std::string&);
@@ -108,5 +109,51 @@ extern int decode_block(FDBKeyValue *, int, uint8_t *, int, int);
 
 #define debug_print(fmt, ...) \
   do { if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
+
+/**
+ * This is for simple retryable synchronous transactions, like the
+ * ones we'll run in our background threads. It shouldn't be used
+ * anywhere performance critical.
+ */
+template <typename T>
+std::optional<T> run_sync_transaction(std::function<T(FDBTransaction *)> f)
+{
+  FDBTransaction *t;
+  if(fdb_database_create_transaction(database, &t)) {
+    throw new std::runtime_error("failed to create transaction");
+  }
+
+  while(true) {
+    fdb_error_t err = 0;
+    T retval;
+    try {
+      retval = f(t);
+      FDBFuture *commitfuture = fdb_transaction_commit(t);
+      if(fdb_future_block_until_ready(commitfuture)) {
+       throw new std::runtime_error("failed to block for future");
+      }
+      if(fdb_future_get_error(commitfuture)) {
+       err = fdb_future_get_error(commitfuture);
+      }
+      fdb_future_destroy(commitfuture);
+    } catch (fdb_error_t _err) {
+      err = _err;
+    }
+
+    if(!err) {
+      return std::make_optional(retval);
+    } else {
+      FDBFuture *retryfuture = fdb_transaction_on_error(t, err);
+      if(fdb_future_block_until_ready(retryfuture)) {
+       throw new std::runtime_error("failed to block for future");
+      }
+      if(fdb_future_get_error(retryfuture)) {
+       // failed utterly
+       return std::nullopt;
+      }
+      // fall out and loop
+    }
+  }
+}
 
 #endif // __UTIL_H_

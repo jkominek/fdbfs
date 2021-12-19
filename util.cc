@@ -112,6 +112,14 @@ std::vector<uint8_t> pack_garbage_key(fuse_ino_t ino)
   return key;
 }
 
+std::vector<uint8_t> pack_pid_key(std::vector<uint8_t> p)
+{
+  auto key = key_prefix;
+  key.push_back('p');
+  key.insert(key.end(), p.begin(), p.end());
+  return key;
+}
+
 std::vector<uint8_t> pack_inode_use_key(fuse_ino_t ino)
 {
   auto key = pack_inode_key(ino);
