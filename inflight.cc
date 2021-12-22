@@ -216,16 +216,6 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p)
   inflight->future_ready(f);
 }
 
-unique_transaction make_transaction()
-{
-  unique_transaction ut;
-  FDBTransaction *t;
-  if(fdb_database_create_transaction(database, &t)) {
-    throw new std::runtime_error("failed to create transaction");
-  }
-  ut.reset(t);
-  return ut;
-}
 
 // Inflight_markused
 

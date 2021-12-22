@@ -37,6 +37,7 @@
 #define DENTRY_PREFIX   'd'
 #define DATA_PREFIX     'f'
 #define GARBAGE_PREFIX  'g'
+#define PID_PREFIX      'p'
 #define METADATA_PREFIX 'M'
 #define XATTR_NODE_PREFIX 'x'
 #define XATTR_DATA_PREFIX 'X'
@@ -110,6 +111,21 @@ extern int decode_block(FDBKeyValue *, int, uint8_t *, int, int);
 #define debug_print(fmt, ...) \
   do { if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
 
+struct FDBTransactionDeleter {
+  void operator()(FDBTransaction *t) {
+    fdb_transaction_destroy(t);
+  }
+};
+struct FDBFutureDeleter {
+  void operator()(FDBFuture *f) {
+    fdb_future_destroy(f);
+  }
+};
+typedef std::unique_ptr<FDBTransaction, FDBTransactionDeleter> unique_transaction;
+typedef std::unique_ptr<FDBFuture, FDBFutureDeleter> unique_future;
+
+extern unique_transaction make_transaction();
+
 /**
  * This is for simple retryable synchronous transactions, like the
  * ones we'll run in our background threads. It shouldn't be used
@@ -118,17 +134,14 @@ extern int decode_block(FDBKeyValue *, int, uint8_t *, int, int);
 template <typename T>
 std::optional<T> run_sync_transaction(std::function<T(FDBTransaction *)> f)
 {
-  FDBTransaction *t;
-  if(fdb_database_create_transaction(database, &t)) {
-    throw new std::runtime_error("failed to create transaction");
-  }
+  unique_transaction t = make_transaction();
 
   while(true) {
     fdb_error_t err = 0;
     T retval;
     try {
-      retval = f(t);
-      FDBFuture *commitfuture = fdb_transaction_commit(t);
+      retval = f(t.get());
+      FDBFuture *commitfuture = fdb_transaction_commit(t.get());
       if(fdb_future_block_until_ready(commitfuture)) {
        throw new std::runtime_error("failed to block for future");
       }
@@ -143,7 +156,7 @@ std::optional<T> run_sync_transaction(std::function<T(FDBTransaction *)> f)
     if(!err) {
       return std::make_optional(retval);
     } else {
-      FDBFuture *retryfuture = fdb_transaction_on_error(t, err);
+      FDBFuture *retryfuture = fdb_transaction_on_error(t.get(), err);
       if(fdb_future_block_until_ready(retryfuture)) {
        throw new std::runtime_error("failed to block for future");
       }

@@ -45,13 +45,14 @@ void send_pt_entry(bool startup)
     auto key = pack_pid_key(pid);
     fdb_error_t err;
     if(!startup) {
-      FDBFuture *g = fdb_transaction_get(t, key.data(), key.size(), 0);
-      err = fdb_future_block_until_ready(g);
+      unique_future g;
+      g.reset(fdb_transaction_get(t, key.data(), key.size(), 0));
+      err = fdb_future_block_until_ready(g.get());
       if(err!=0) { throw err; }
       fdb_bool_t present;
       uint8_t const *value;
       int value_length;
-      err = fdb_future_get_value(g, &present, &value, &value_length);
+      err = fdb_future_get_value(g.get(), &present, &value, &value_length);
       if(err!=0) { throw err; }
 
       if(!present) {

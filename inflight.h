@@ -14,23 +14,10 @@
 #include <time.h>
 #endif
 
+#include "util.h"
+
 // Halt all inflights and prevent new ones from starting.
 extern void shut_it_down();
-
-struct FDBTransactionDeleter {
-  void operator()(FDBTransaction *t) {
-    fdb_transaction_destroy(t);
-  }
-};
-struct FDBFutureDeleter {
-  void operator()(FDBFuture *f) {
-    fdb_future_destroy(f);
-  }
-};
-typedef std::unique_ptr<FDBTransaction, FDBTransactionDeleter> unique_transaction;
-typedef std::unique_ptr<FDBFuture, FDBFutureDeleter> unique_future;
-
-unique_transaction make_transaction();
 
 class InflightAction;
 

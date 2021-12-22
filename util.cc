@@ -15,6 +15,18 @@
 
 #include "values.pb.h"
 
+unique_transaction make_transaction()
+{
+  unique_transaction ut;
+  FDBTransaction *t;
+  if(fdb_database_create_transaction(database, &t)) {
+    throw new std::runtime_error("failed to create transaction");
+  }
+  ut.reset(t);
+  return ut;
+}
+
+
 struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *fi)
 {
   static_assert(sizeof(fi->fh) >= sizeof(struct fdbfs_filehandle *),
@@ -115,7 +127,7 @@ std::vector<uint8_t> pack_garbage_key(fuse_ino_t ino)
 std::vector<uint8_t> pack_pid_key(std::vector<uint8_t> p)
 {
   auto key = key_prefix;
-  key.push_back('p');
+  key.push_back(PID_PREFIX);
   key.insert(key.end(), p.begin(), p.end());
   return key;
 }
