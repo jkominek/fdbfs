@@ -26,6 +26,12 @@ unique_transaction make_transaction()
   return ut;
 }
 
+unique_future wrap_future(FDBFuture *f)
+{
+  unique_future uf;
+  uf.reset(f);
+  return uf;
+}
 
 struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *fi)
 {
