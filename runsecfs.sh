@@ -1,7 +1,8 @@
 #!/bin/sh
 
 mkdir /tmp/fdb
-./fs -o default_permissions,allow_other /tmp/fdb &
+valgrind --log-file=valgrind.txt ./fs -o default_permissions,allow_other /tmp/fdb &
+FUSEFS=$!
 
 
 cd /tmp
@@ -18,3 +19,6 @@ rm -rf /tmp/secfs.test/fstest/fstest/tests/xacl
 
 cd /tmp/fdb
 sudo prove -r /tmp/secfs.test/fstest/fstest
+
+kill -1 $FUSEFS
+cat valgrind.txt

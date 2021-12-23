@@ -14,7 +14,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: apt-get
-      run: sudo apt-get -y install libfuse-dev fuse libprotobuf-dev protobuf-compiler liblz4-dev python-protobuf libzstd1 libzstd-dev libattr1-dev libacl1-dev s3cmd
+      run: sudo apt-get -y install libfuse-dev fuse libprotobuf-dev protobuf-compiler liblz4-dev python-protobuf libzstd1 libzstd-dev libattr1-dev libacl1-dev s3cmd valgrind
     - name: nlohmann/json
       run: sudo mkdir -p /usr/include/nlohmann ; sudo wget -nv -O /usr/include/nlohmann/json.hpp https://github.com/nlohmann/json/releases/download/v2.1.1/json.hpp
     - name: pip
