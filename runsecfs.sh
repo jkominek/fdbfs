@@ -1,8 +1,14 @@
 #!/bin/sh
 
+echo user_allow_other | sudo tee -a /etc/fuse.conf
+
 rm -rf /tmp/fdb
 mkdir /tmp/fdb
-valgrind --log-file=/tmp/valgrind.txt ./fs -o default_permissions,allow_other /tmp/fdb &
+# we shouldn't see this after a mount
+touch /tmp/fdb/XXX
+
+# start fs
+valgrind --log-file=/tmp/valgrind.txt ./fs -o default_permissions,allow_other,nonempty /tmp/fdb &
 
 echo sleeping for a bit, because of slowness
 sleep 20
@@ -21,8 +27,12 @@ EOF
 rm -rf /tmp/secfs.test/fstest/fstest/tests/xacl
 
 cd /tmp/fdb
+# let's look at the contents of the fdb filesystem
+# we shouldn't see the XXX file.
+ls -l
 sudo prove -r /tmp/secfs.test/fstest/fstest
 
+cd /tmp
 umount /tmp/fdb
 sleep 2
 cat /tmp/valgrind.txt
