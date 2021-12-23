@@ -2,7 +2,7 @@
 
 rm -rf /tmp/fdb
 mkdir /tmp/fdb
-valgrind --log-file=valgrind.txt ./fs -o default_permissions,allow_other /tmp/fdb &
+valgrind --log-file=/tmp/valgrind.txt ./fs -o default_permissions,allow_other /tmp/fdb &
 
 echo sleeping for a bit, because of slowness
 sleep 20
@@ -24,5 +24,5 @@ cd /tmp/fdb
 sudo prove -r /tmp/secfs.test/fstest/fstest
 
 umount /tmp/fdb
-sleep 1
-cat valgrind.txt
+sleep 2
+cat /tmp/valgrind.txt
