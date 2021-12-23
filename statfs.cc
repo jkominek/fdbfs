@@ -61,14 +61,17 @@ InflightAction Inflight_statfs::process_status()
 
   // nlohmann::json doesn't specify that it retquires
   // null-terminated arrays, but it does.
-  uint8_t buffer[vallen+1];
+  char buffer[vallen+1];
   bcopy(val, buffer, vallen);
   buffer[vallen] = '\0';
 
   fsblkcnt_t used_blocks = 0;
   fsblkcnt_t min_available_blocks = 1000; //UINT64_MAX;
 
-  nlohmann::json status = nlohmann::json::parse(buffer);
+  // the reinterpret_cast avoids some weird c++ error
+  // where ::parse things buffer has a strange type that
+  // it can't operate on.
+  nlohmann::json status = nlohmann::json::parse(reinterpret_cast<char*>(buffer));
 
   // very rough estimation of space used and space available in the
   // fdb cluster
