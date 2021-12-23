@@ -1,5 +1,6 @@
 #!/bin/sh
 
+rm -rf /tmp/fdb
 mkdir /tmp/fdb
 valgrind --log-file=valgrind.txt ./fs -o default_permissions,allow_other /tmp/fdb &
 

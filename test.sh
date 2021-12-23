@@ -3,6 +3,7 @@ set -xe
 
 fdbcli --exec status
 
+rm -rf test_a test_b
 mkdir -p test_a test_b
 ./fs test_a &
 ./fs test_b &
