@@ -1,9 +1,12 @@
 #!/bin/sh
 
+rm -rf /tmp/fdb
 mkdir /tmp/fdb
-valgrind --log-file=valgrind.txt ./fs -o default_permissions,allow_other /tmp/fdb &
-FUSEFS=$!
+valgrind --log-file=/tmp/valgrind.txt ./fs -o default_permissions,allow_other /tmp/fdb &
 
+echo sleeping for a bit, because of slowness
+sleep 20
+echo resuming...
 
 cd /tmp
 git clone https://github.com/billziss-gh/secfs.test
@@ -20,5 +23,6 @@ rm -rf /tmp/secfs.test/fstest/fstest/tests/xacl
 cd /tmp/fdb
 sudo prove -r /tmp/secfs.test/fstest/fstest
 
-kill -1 $FUSEFS
-cat valgrind.txt
+umount /tmp/fdb
+sleep 2
+cat /tmp/valgrind.txt
