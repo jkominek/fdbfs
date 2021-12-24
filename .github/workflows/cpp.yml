@@ -14,7 +14,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: apt-get
-      run: sudo apt-get -y install libfuse-dev fuse libprotobuf-dev protobuf-compiler liblz4-dev python-protobuf libzstd1 libzstd-dev libattr1-dev libacl1-dev s3cmd valgrind nlohmann-json3-dev
+      run: sudo apt-get -y install libfuse-dev fuse libprotobuf-dev protobuf-compiler liblz4-dev python-protobuf libzstd1 libzstd-dev libattr1-dev libacl1-dev s3cmd valgrind nlohmann-json3-dev meson
     - name: pip
       run: sudo env PATH=$PATH pip install zstd==1.4.9.1
     - name: fetch fdb
@@ -24,10 +24,12 @@ jobs:
       run: s3cmd get s3://fdbfs-build-assets/{foundationdb-clients_6.3.18-1_amd64.deb,foundationdb-server_6.3.18-1_amd64.deb}
     - name: dpkg install
       run: sudo dpkg -i foundationdb-clients_6.3.18-1_amd64.deb foundationdb-server_6.3.18-1_amd64.deb
-    - name: make
-      run: make
-    - name: make regen
-      run: make regen
+    - name: meson
+      run: meson setup build
+    - name: ninja
+      run: ninja -C build
+    - name: mkfs
+      run: ./regen.sh
     - name: test.sh
       run: ./test.sh
     - name: secfs.test

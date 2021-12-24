@@ -12,8 +12,8 @@ this isn't ready for prime time, yet.
 ensure you have the foundationdb client library, and protobuf
 available for pkg-config to find.
 
-for "precise" details, see the Travis CI configuration file, as it
-is able to run the build (and right as soon as there are tests, those too!)
+for "precise" details, see the Github actions configuration file, as it
+is able to run the build and tests.
 
 # backwards incompatibilities
 
@@ -38,7 +38,6 @@ here.
 
 everything else is roughly descending order:
 
-* cmake, i guess?
 * mkfs
 * fsck and command line options for the FS itself
 * coalesce multiple writes to the same kv pair

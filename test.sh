@@ -5,8 +5,8 @@ fdbcli --exec status
 
 rm -rf test_a test_b
 mkdir -p test_a test_b
-./fs test_a &
-./fs test_b &
+build/fs test_a &
+build/fs test_b &
 sleep 2
 
 df -h

@@ -8,7 +8,7 @@ mkdir /tmp/fdb
 touch /tmp/fdb/XXX
 
 # start fs
-valgrind --log-file=/tmp/valgrind.txt ./fs -o default_permissions,allow_other,nonempty /tmp/fdb &
+valgrind --log-file=/tmp/valgrind.txt build/fs -o default_permissions,allow_other,nonempty /tmp/fdb &
 
 echo sleeping for a bit, because of slowness
 sleep 20
