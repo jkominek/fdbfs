@@ -49,11 +49,11 @@ Inflight_statfs *Inflight_statfs::reincarnate()
 InflightAction Inflight_statfs::process_status()
 {
   fdb_bool_t present = 0;
-  uint8_t *val;
+  const uint8_t *val;
   int vallen;
   fdb_error_t err = fdb_future_get_value(status_fetch.get(),
 					 &present,
-					 (const uint8_t **)&val, &vallen);
+					 &val, &vallen);
   if(err)
     return InflightAction::FDBError(err);
   if(!present)
@@ -86,7 +86,8 @@ InflightAction Inflight_statfs::process_status()
         used_blocks += ((unsigned long)storage["kvstore_used_bytes"])/BLOCKSIZE;
 	//std::cout << ((unsigned long)storage["kvstore_used_bytes"]) << std::endl;
 	//std::cout << ((unsigned long)storage["kvstore_available_bytes"]) << std::endl;
-        min_available_blocks = std::min(min_available_blocks, ((unsigned long)storage["kvstore_available_bytes"])/BLOCKSIZE);
+        min_available_blocks = std::min(min_available_blocks,
+                                        static_cast<unsigned long>(storage["kvstore_available_bytes"])/BLOCKSIZE);
       }
     }
   }

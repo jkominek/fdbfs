@@ -68,7 +68,7 @@ Inflight::Inflight(fuse_req_t req, bool readwrite, unique_transaction provided)
 #endif
 }
 
-Inflight::~Inflight()
+void Inflight::cleanup()
 {
 #if DEBUG
   struct timespec stop;
@@ -89,6 +89,7 @@ void Inflight::start()
   if(shut_it_down_forever) {
     // abort everything immediately
     fuse_reply_err(req, ENOSYS);
+    cleanup();
     delete this;
     return;
   }
@@ -131,6 +132,7 @@ void Inflight::future_ready(FDBFuture *f)
       
       if(a.delete_this) {
 	// we're dead and done, for whatever reason
+        cleanup();
 	delete this;
       }
     } else {

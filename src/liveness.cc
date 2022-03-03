@@ -42,7 +42,7 @@ bool terminate = true;
 void send_pt_entry(bool startup)
 {
   std::function<int(FDBTransaction *)> f = [startup](FDBTransaction *t){
-    auto key = pack_pid_key(pid);
+    const auto key = pack_pid_key(pid);
     fdb_error_t err;
     if(!startup) {
       unique_future g;
@@ -50,7 +50,7 @@ void send_pt_entry(bool startup)
       err = fdb_future_block_until_ready(g.get());
       if(err!=0) { throw err; }
       fdb_bool_t present;
-      uint8_t const *value;
+      const uint8_t *value;
       int value_length;
       err = fdb_future_get_value(g.get(), &present, &value, &value_length);
       if(err!=0) { throw err; }
@@ -70,7 +70,7 @@ void send_pt_entry(bool startup)
         return 0;
       }
     }
-    int entry_size = pt_entry.ByteSizeLong();
+    const int entry_size = pt_entry.ByteSizeLong();
     uint8_t entry_buffer[entry_size];
     pt_entry.SerializeToArray(entry_buffer, entry_size);
 
@@ -96,7 +96,7 @@ void update_pt_entry_time()
 std::mutex manager_running;
 void *liveness_manager(void *ignore)
 {
-  std::unique_lock<std::mutex> lock(manager_running);
+  const std::unique_lock<std::mutex> lock(manager_running);
 
   pt_entry.set_pid(pid.data(), pid.size());
   pt_entry.set_liveness_counter(0);
@@ -145,11 +145,11 @@ void terminate_liveness()
   terminate = true;
 
   // wait until the liveness_manager is done
-  std::unique_lock<std::mutex> lock(manager_running);
+  const std::unique_lock<std::mutex> lock(manager_running);
 
   // clear our PID record
   std::function<int(FDBTransaction *)> f = [](FDBTransaction *t){
-    auto start = pack_pid_key(pid);
+    const auto start = pack_pid_key(pid);
     auto stop = start;
     stop.push_back('\xff');
     fdb_transaction_clear_range(t,

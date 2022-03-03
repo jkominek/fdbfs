@@ -52,11 +52,11 @@ Inflight_readlink *Inflight_readlink::reincarnate()
 InflightAction Inflight_readlink::callback()
 {
   fdb_bool_t present=0;
-  uint8_t *val;
+  const uint8_t *val;
   int vallen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(inode_fetch.get(), &present, (const uint8_t **)&val, &vallen);
+  err = fdb_future_get_value(inode_fetch.get(), &present, &val, &vallen);
   if(err) return InflightAction::FDBError(err);
 
   if(present) {
@@ -77,7 +77,7 @@ InflightAction Inflight_readlink::callback()
 
 InflightCallback Inflight_readlink::issue()
 {
-  auto key = pack_inode_key(ino);
+  const auto key = pack_inode_key(ino);
 
   // and request just that inode
   wait_on_future(fdb_transaction_get(transaction.get(),

@@ -71,12 +71,12 @@ Inflight_lookup *Inflight_lookup::reincarnate()
 InflightAction Inflight_lookup::process_inode()
 {
   fdb_bool_t present=0;
-  uint8_t *val;
+  const uint8_t *val;
   int vallen;
   fdb_error_t err;
 
   
-  err = fdb_future_get_value(inode_fetch.get(), &present, (const uint8_t **)&val, &vallen);
+  err = fdb_future_get_value(inode_fetch.get(), &present, &val, &vallen);
   if(err)
     return InflightAction::FDBError(err);
 
@@ -105,11 +105,11 @@ InflightAction Inflight_lookup::process_inode()
 InflightAction Inflight_lookup::lookup_inode()
 {
   fdb_bool_t present=0;
-  uint8_t *val;
+  const uint8_t *val;
   int vallen;
   fdb_error_t err;
   
-  err = fdb_future_get_value(dirent_fetch.get(), &present, (const uint8_t **)&val, &vallen);
+  err = fdb_future_get_value(dirent_fetch.get(), &present, &val, &vallen);
   if(err)
     return InflightAction::FDBError(err);
 

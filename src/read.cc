@@ -93,21 +93,20 @@ InflightAction Inflight_read::callback()
     return InflightAction::Abort(EIO);
   }
 
-  FDBKeyValue *kvs;
+  const FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
-  err = fdb_future_get_keyvalue_array(range_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+  err = fdb_future_get_keyvalue_array(range_fetch.get(), &kvs, &kvcount, &more);
   if(err)
     return InflightAction::FDBError(err);
 
   unique_future next_range_fetch;
   if(more) {
-    FDBKeyValue *last_kv;
     if(kvcount==0) {
       // probably shouldn't be possible for (more)&&(kvcount==0), but, eh
       return InflightAction::Abort(EIO);
     }
-    last_kv = &kvs[kvcount-1];
+    auto last_kv = &kvs[kvcount-1];
 
     FDBFuture *f =
       fdb_transaction_get_range(transaction.get(),
@@ -123,7 +122,7 @@ InflightAction Inflight_read::callback()
     // normal
   }
 
-  size_t size = std::min(requested_size, inode.size() - off);
+  const size_t size = std::min(requested_size, inode.size() - off);
 
   if(!buffer_inited) {
     std::fill(buffer.begin(), buffer.end(), 0);
@@ -131,7 +130,7 @@ InflightAction Inflight_read::callback()
   }
 
   for(int i=0; i<kvcount; i++) {
-    FDBKeyValue kv = kvs[i];
+    const FDBKeyValue kv = kvs[i];
     std::vector<uint8_t> key(kv.key,
 			     kv.key + kv.key_length);
 #if DEBUG
@@ -146,17 +145,17 @@ InflightAction Inflight_read::callback()
     if( (block * BLOCKSIZE) <= static_cast<uint64_t>(off) ) {
       // we need an offset into the received block, since it
       // starts before (or at) the requested read area
-      uint64_t block_off = off - block * BLOCKSIZE;
-      int d = decode_block(&kv, block_off, buffer.data(), size, buffer.size());
+      const uint64_t block_off = off - block * BLOCKSIZE;
+      const int d = decode_block(&kv, block_off, buffer.data(), size, buffer.size());
       if(d<0) {
 	return InflightAction::Abort(EIO);
       }
     } else {
       // we need an offset into the target buffer, as our block
       // starts after the requested read area.
-      size_t bufferoff = block * BLOCKSIZE - off;
-      int d = decode_block(&kv, 0, buffer.data() + bufferoff,
-			   size - bufferoff, buffer.size() - bufferoff);
+      const size_t bufferoff = block * BLOCKSIZE - off;
+      const int d = decode_block(&kv, 0, buffer.data() + bufferoff,
+                                 size - bufferoff, buffer.size() - bufferoff);
       if(d<0) {
 	return InflightAction::Abort(EIO);
       }
@@ -174,7 +173,7 @@ InflightAction Inflight_read::callback()
 InflightCallback Inflight_read::issue()
 {
   // we need to know how large the file is, so as to not read off the end.
-  auto key = pack_inode_key(ino);
+  const auto key = pack_inode_key(ino);
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
 		 &inode_fetch);

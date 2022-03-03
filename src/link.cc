@@ -83,12 +83,12 @@ InflightAction Inflight_link::commit_cb()
 InflightAction Inflight_link::check()
 {
   fdb_bool_t present=0;
-  uint8_t *val;
+  const uint8_t *val;
   int vallen;
   fdb_error_t err;
   
   // is the file a non-directory?
-  err = fdb_future_get_value(file_lookup.get(), &present, (const uint8_t **)&val, &vallen);
+  err = fdb_future_get_value(file_lookup.get(), &present, &val, &vallen);
   if(err)
     return InflightAction::FDBError(err);
   if(present) {
@@ -108,7 +108,7 @@ InflightAction Inflight_link::check()
   }    
 
   // is the directory a directory?
-  err = fdb_future_get_value(dir_lookup.get(), &present, (const uint8_t **)&val, &vallen);
+  err = fdb_future_get_value(dir_lookup.get(), &present, &val, &vallen);
   if(err)
     return InflightAction::FDBError(err);
   if(present) {
@@ -129,7 +129,7 @@ InflightAction Inflight_link::check()
   }
 
   // Does the target exist?
-  err = fdb_future_get_value(target_lookup.get(), &present, (const uint8_t **)&val, &vallen);
+  err = fdb_future_get_value(target_lookup.get(), &present, &val, &vallen);
   if(err)
     return InflightAction::FDBError(err);
   if(present) {

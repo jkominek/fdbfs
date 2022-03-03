@@ -55,12 +55,12 @@ Inflight_readdir *Inflight_readdir::reincarnate()
 
 InflightAction Inflight_readdir::callback()
 {
-  FDBKeyValue *kvs;
+  const FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
   fdb_error_t err;
   
-  err = fdb_future_get_keyvalue_array(range_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+  err = fdb_future_get_keyvalue_array(range_fetch.get(), &kvs, &kvcount, &more);
   if(err) return InflightAction::FDBError(err);
 
   std::vector<uint8_t> buf(size);

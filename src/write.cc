@@ -101,9 +101,9 @@ InflightAction Inflight_write::check()
   fdb_bool_t present;
   fdb_error_t err;
 
-  uint8_t *val;
+  const uint8_t *val;
   int vallen;
-  err = fdb_future_get_value(inode_fetch.get(), &present, (const uint8_t **)&val, &vallen);
+  err = fdb_future_get_value(inode_fetch.get(), &present, &val, &vallen);
   if(err) return InflightAction::FDBError(err);
   // check everything about the inode
   if(!present)
@@ -135,7 +135,7 @@ InflightAction Inflight_write::check()
 
     auto key = pack_inode_key(inode.inode());
     // we've updated the inode appropriately.
-    int inode_size = inode.ByteSizeLong();
+    const int inode_size = inode.ByteSizeLong();
     uint8_t inode_buffer[inode_size];
     inode.SerializeToArray(inode_buffer, inode_size);
     fdb_transaction_set(transaction.get(),
@@ -145,24 +145,27 @@ InflightAction Inflight_write::check()
 
   // merge the edge writes into the blocks
   if(start_block_fetch) {
-    FDBKeyValue *kvs;
+    const FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
     fdb_error_t err;
-    err = fdb_future_get_keyvalue_array(start_block_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+    err = fdb_future_get_keyvalue_array(start_block_fetch.get(), &kvs, &kvcount, &more);
     if(err) return InflightAction::FDBError(err);
 
-    uint64_t copy_start_off = off % BLOCKSIZE;
-    uint64_t copy_start_size = std::min(buffer.size(),
-					BLOCKSIZE - copy_start_off);
+    const uint64_t copy_start_off = off % BLOCKSIZE;
+    const uint64_t copy_start_size = std::min(buffer.size(),
+                                              BLOCKSIZE - copy_start_off);
     // we don't know whats in the existing block, so we've got to plan on
     // it being full.
-    uint64_t total_buffer_size = BLOCKSIZE;
+    const uint64_t total_buffer_size = BLOCKSIZE;
     uint8_t output_buffer[total_buffer_size];
     bzero(output_buffer, total_buffer_size);
     if(kvcount>0) {
-      // TODO check for error
-      decode_block(&kvs[0], 0, output_buffer, total_buffer_size, total_buffer_size);
+      int ret = decode_block(&kvs[0], 0, output_buffer, total_buffer_size, total_buffer_size);
+      if(ret < 0) {
+        // error condition
+        return InflightAction::Abort(EIO);
+      }
     }
     bcopy(buffer.data(), output_buffer + copy_start_off, copy_start_size);
     auto key = pack_fileblock_key(ino, off / BLOCKSIZE);
@@ -171,22 +174,25 @@ InflightAction Inflight_write::check()
   }
 
   if(stop_block_fetch) {
-    FDBKeyValue *kvs;
+    const FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
     fdb_error_t err;
 
-    err = fdb_future_get_keyvalue_array(stop_block_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+    err = fdb_future_get_keyvalue_array(stop_block_fetch.get(), &kvs, &kvcount, &more);
     if(err) return InflightAction::FDBError(err);
 
-    uint64_t copysize = ((off + buffer.size()) % BLOCKSIZE);
-    uint64_t bufcopystart = buffer.size() - copysize;
-    uint64_t total_buffer_size = BLOCKSIZE;
+    const uint64_t copysize = ((off + buffer.size()) % BLOCKSIZE);
+    const uint64_t bufcopystart = buffer.size() - copysize;
+    const uint64_t total_buffer_size = BLOCKSIZE;
     uint8_t output_buffer[total_buffer_size];
     bzero(output_buffer, total_buffer_size);
     if(kvcount>0) {
-      // TODO check for error
-      decode_block(&kvs[0], 0, output_buffer, total_buffer_size, total_buffer_size);
+      int ret = decode_block(&kvs[0], 0, output_buffer, total_buffer_size, total_buffer_size);
+      if(ret < 0) {
+        // error condition
+        return InflightAction::Abort(EIO);
+      }
     }
     bcopy(buffer.data() + bufcopystart, output_buffer, copysize);
     auto key = pack_fileblock_key(ino, (off + buffer.size()) / BLOCKSIZE);
@@ -253,7 +259,7 @@ InflightCallback Inflight_write::issue()
   int doing_start_block = 0;
   // now, are we doing block-partial writes?
   if((off % BLOCKSIZE) != 0) {
-    int start_block = off / BLOCKSIZE;
+    const int start_block = off / BLOCKSIZE;
     const auto start_key = pack_fileblock_key(ino, start_block);
     auto stop_key  = start_key;
     stop_key.push_back(0xff);
@@ -271,7 +277,7 @@ InflightCallback Inflight_write::issue()
   }
 
   if(((off + buffer.size()) % BLOCKSIZE) != 0) {
-    int stop_block = (off + buffer.size()) / BLOCKSIZE;
+    const int stop_block = (off + buffer.size()) / BLOCKSIZE;
     // if the block is identical to the start block, there's no
     // sense fetching and processing it twice.
     if((!doing_start_block) || (stop_block != (off / BLOCKSIZE))) {
@@ -296,7 +302,7 @@ InflightCallback Inflight_write::issue()
     // not sure if they're plain, compressed, or some other variant
     // We're doing this in the spot where it ought to be safe even
     // if RYW is turned on.
-    range_keys r = offset_size_to_range_keys(ino, off, buffer.size());
+    const range_keys r = offset_size_to_range_keys(ino, off, buffer.size());
     fdb_transaction_clear_range(transaction.get(),
 				r.first.data(), r.first.size(),
 				r.second.data(), r.second.size());
