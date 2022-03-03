@@ -57,7 +57,7 @@ Inflight_lookup::Inflight_lookup(fuse_req_t req,
 				 fuse_ino_t parent,
 				 std::string name,
 				 unique_transaction transaction)
-  : Inflight(req, true, std::move(transaction)), parent(parent), name(name)
+  : Inflight(req, ReadWrite::Yes, std::move(transaction)), parent(parent), name(name)
 {
 }
 

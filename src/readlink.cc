@@ -37,7 +37,7 @@ private:
 
 Inflight_readlink::Inflight_readlink(fuse_req_t req, fuse_ino_t ino,
 				     unique_transaction transaction)
-  : Inflight(req, false, std::move(transaction)), ino(ino)
+  : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)), ino(ino)
 {
 }
 

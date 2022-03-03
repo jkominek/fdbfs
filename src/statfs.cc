@@ -35,7 +35,7 @@ private:
 
 Inflight_statfs::Inflight_statfs(fuse_req_t req,
 				 unique_transaction transaction)
-  : Inflight(req, false, std::move(transaction))
+  : Inflight(req, ReadWrite::ReadOnly, std::move(transaction))
 {
 }
 

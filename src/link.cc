@@ -55,7 +55,7 @@ private:
 Inflight_link::Inflight_link(fuse_req_t req, fuse_ino_t ino,
 			     fuse_ino_t newparent, std::string newname,
 			     unique_transaction transaction)
-  : Inflight(req, true, std::move(transaction)), ino(ino),
+  : Inflight(req, ReadWrite::Yes, std::move(transaction)), ino(ino),
     newparent(newparent), newname(newname)
 {
 }

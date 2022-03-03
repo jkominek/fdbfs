@@ -55,7 +55,7 @@ Inflight_mknod::Inflight_mknod(fuse_req_t req, fuse_ino_t parent,
 			       std::string name, mode_t mode,
 			       filetype type, dev_t rdev,
 			       unique_transaction transaction)
-  : Inflight(req, true, std::move(transaction)),
+  : Inflight(req, ReadWrite::Yes, std::move(transaction)),
     parent(parent), name(name), type(type), mode(mode), rdev(rdev)
 {
 }

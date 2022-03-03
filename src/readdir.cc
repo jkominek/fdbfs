@@ -42,7 +42,7 @@ private:
 Inflight_readdir::Inflight_readdir(fuse_req_t req, fuse_ino_t ino,
 				   size_t size, off_t off,
 				   unique_transaction transaction)
-  : Inflight(req, false, std::move(transaction)), ino(ino), size(size), off(off)
+  : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)), ino(ino), size(size), off(off)
 {
 }
 

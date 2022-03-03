@@ -32,9 +32,14 @@
  * REAL PLAN
  * ???
  */
+enum class Op {
+  Unlink,
+  Rmdir
+};
+
 class Inflight_unlink_rmdir : public Inflight {
 public:
-  Inflight_unlink_rmdir(fuse_req_t, fuse_ino_t, std::string, bool,
+  Inflight_unlink_rmdir(fuse_req_t, fuse_ino_t, std::string, Op,
 			unique_transaction);
   Inflight_unlink_rmdir *reincarnate();
   InflightCallback issue();
@@ -62,8 +67,8 @@ private:
   std::string name;
   // computed key of the dirent
   std::vector<uint8_t> dirent_key;
-  // true if we were called as rmdir
-  bool actually_rmdir;
+  // how we were invoked, rmdir or unlink
+  Op op;
 
   // if we find use records for the inode, we'll mark this
   bool inode_in_use = false;
@@ -72,18 +77,17 @@ private:
 Inflight_unlink_rmdir::Inflight_unlink_rmdir(fuse_req_t req,
 					     fuse_ino_t parent,
 					     std::string name,
-					     bool actually_rmdir,
+                                             Op op,
 					     unique_transaction transaction)
-  : Inflight(req, true, std::move(transaction)),
-    parent(parent), name(name),
-    actually_rmdir(actually_rmdir)
+  : Inflight(req, ReadWrite::Yes, std::move(transaction)),
+    parent(parent), name(name), op(op)
 {
 }
 
 Inflight_unlink_rmdir *Inflight_unlink_rmdir::reincarnate()
 {
   Inflight_unlink_rmdir *x =
-    new Inflight_unlink_rmdir(req, parent, name, actually_rmdir,
+    new Inflight_unlink_rmdir(req, parent, name, op,
 			      std::move(transaction));
   delete this;
   return x;
@@ -248,7 +252,7 @@ InflightAction Inflight_unlink_rmdir::postlookup()
   // check the values in the dirent to make sure
   // we're looking at the right kind of thing. bail
   // if it isn't the right thing.
-  if(actually_rmdir) {
+  if(op==Op::Rmdir) {
     // we want to find a directory
     if(dirent_type == directory) {
       // ok, we've successfully found something rmdir'able.
@@ -350,7 +354,7 @@ extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t ino, const char *name)
     return;
   }
   Inflight_unlink_rmdir *inflight =
-    new Inflight_unlink_rmdir(req, ino, name, false, make_transaction());
+    new Inflight_unlink_rmdir(req, ino, name, Op::Unlink, make_transaction());
   inflight->start();
 }
 
@@ -360,6 +364,6 @@ extern "C" void fdbfs_rmdir(fuse_req_t req, fuse_ino_t ino, const char *name)
     return;
   }
   Inflight_unlink_rmdir *inflight =
-    new Inflight_unlink_rmdir(req, ino, name, true, make_transaction());
+    new Inflight_unlink_rmdir(req, ino, name, Op::Rmdir, make_transaction());
   inflight->start();
 }

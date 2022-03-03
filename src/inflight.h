@@ -19,6 +19,11 @@
 // Halt all inflights and prevent new ones from starting.
 extern void shut_it_down();
 
+enum class ReadWrite {
+  Yes,
+  ReadOnly
+};
+
 class InflightAction;
 
 typedef std::function<InflightAction()> InflightCallback;
@@ -54,7 +59,7 @@ class Inflight {
 
  protected:
   // constructor
-  Inflight(fuse_req_t, bool, unique_transaction);
+  Inflight(fuse_req_t, ReadWrite, unique_transaction);
   
   void wait_on_future(FDBFuture *, unique_future *);
 
@@ -62,7 +67,7 @@ class Inflight {
 
  private:
   // whether we're intended as r/w or not.
-  bool readwrite;
+  ReadWrite readwrite;
   std::queue<FDBFuture *> future_queue;
   void begin_wait();
 

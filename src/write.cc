@@ -78,7 +78,7 @@ private:
 Inflight_write::Inflight_write(fuse_req_t req, fuse_ino_t ino,
 			       std::vector<uint8_t> buffer, off_t off,
 			       unique_transaction transaction)
-  : Inflight(req, true, std::move(transaction)),
+  : Inflight(req, ReadWrite::Yes, std::move(transaction)),
     ino(ino), buffer(buffer), off(off)
 {
 }

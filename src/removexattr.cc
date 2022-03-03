@@ -44,7 +44,7 @@ private:
 Inflight_removexattr::Inflight_removexattr(fuse_req_t req, fuse_ino_t ino,
 					   std::string name,
 					   unique_transaction transaction)
-  : Inflight(req, false, std::move(transaction)),
+  : Inflight(req, ReadWrite::Yes, std::move(transaction)),
     ino(ino), name(name)
 {
 }

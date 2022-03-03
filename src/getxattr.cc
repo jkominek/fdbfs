@@ -43,7 +43,7 @@ private:
 Inflight_getxattr::Inflight_getxattr(fuse_req_t req, fuse_ino_t ino,
 				     std::string name, size_t maxsize,
 				     unique_transaction transaction)
-  : Inflight(req, false, std::move(transaction)),
+  : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)),
     ino(ino), name(name), maxsize(maxsize)
 {
 }

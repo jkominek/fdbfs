@@ -52,7 +52,7 @@ private:
 Inflight_symlink::Inflight_symlink(fuse_req_t req, std::string link,
 				   fuse_ino_t parent, std::string name,
 				   unique_transaction transaction)
-  : Inflight(req, true, std::move(transaction)),
+  : Inflight(req, ReadWrite::Yes, std::move(transaction)),
     link(link), parent(parent), name(name)
 {
 }

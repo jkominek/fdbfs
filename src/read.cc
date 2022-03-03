@@ -62,7 +62,7 @@ private:
 Inflight_read::Inflight_read(fuse_req_t req, fuse_ino_t ino,
 			     size_t size, off_t off,
 			     unique_transaction transaction)
-  : Inflight(req, false, std::move(transaction)),
+  : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)),
     ino(ino), requested_size(size), off(off), buffer(size + 32)
 {
 }

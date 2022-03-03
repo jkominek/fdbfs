@@ -68,7 +68,7 @@ Inflight_rename::Inflight_rename(fuse_req_t req,
 				 fuse_ino_t oldparent, std::string oldname,
 				 fuse_ino_t newparent, std::string newname,
 				 int flags, unique_transaction transaction)
-  : Inflight(req, true, std::move(transaction)),
+  : Inflight(req, ReadWrite::Yes, std::move(transaction)),
     oldparent(oldparent), oldname(oldname),
     newparent(newparent), newname(newname), flags(flags)
 {
