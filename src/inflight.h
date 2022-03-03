@@ -100,9 +100,16 @@ class InflightAction {
       });
   }
   static InflightAction FDBError(fdb_error_t err) {
-    // TODO for now we're just going to do the same thing as restart
-    // but really we should go into FDB error handling
-    return InflightAction(false, false, true, [](Inflight *){ });
+    if(fdb_error_predicate(FDB_ERROR_PREDICATE_RETRYABLE, err)) {
+      // can be retried, do the same thing as Restart
+      return InflightAction(false, false, true, [](Inflight *){ });
+    } else {
+      // can't be retried, surface an error.
+      return InflightAction(true, false, false, [](Inflight *i) {
+        // is EIO most appropriate?
+	fuse_reply_err(i->req, EIO);
+      });
+    }
   }
   static InflightAction Restart() {
     return InflightAction(false, false, true, [](Inflight *){ });
