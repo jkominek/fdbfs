@@ -58,7 +58,7 @@ void shut_it_down() {
 
 // allocate an inflight struct and fill and out some basics.
 // readwrite specifies the transaction will include writes
-Inflight::Inflight(fuse_req_t req, bool readwrite, unique_transaction provided)
+Inflight::Inflight(fuse_req_t req, ReadWrite readwrite, unique_transaction provided)
   : transaction(std::move(provided)), req(req), readwrite(readwrite)
 {
   // we need to be more clever about this. having every single
@@ -222,7 +222,7 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p)
 // Inflight_markused
 
 Inflight_markused::Inflight_markused(fuse_req_t req, fuse_ino_t ino, unique_transaction transaction)
-  : Inflight(req, true, std::move(transaction)), ino(ino)
+  : Inflight(req, ReadWrite::Yes, std::move(transaction)), ino(ino)
 {
   // we're taking place after fuse has already received the
   // real response. it doesn't care what we have to say, now.

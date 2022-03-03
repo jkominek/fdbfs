@@ -57,7 +57,7 @@ Inflight_setxattr::Inflight_setxattr(fuse_req_t req, fuse_ino_t ino,
 				     std::vector<uint8_t> xattr_value,
 				     SetXattrBehavior behavior,
 				     unique_transaction transaction)
-  : Inflight(req, false, std::move(transaction)),
+  : Inflight(req, ReadWrite::Yes, std::move(transaction)),
     ino(ino), name(name), xattr_value(xattr_value), behavior(behavior)
 {
 }

@@ -59,7 +59,7 @@ private:
 Inflight_listxattr::Inflight_listxattr(fuse_req_t req, fuse_ino_t ino,
 				       size_t maxsize,
 				       unique_transaction transaction)
-  : Inflight(req, false, std::move(transaction)),
+  : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)),
     ino(ino), maxsize(maxsize), buf()
 {
   buf.reserve(maxsize);
@@ -159,7 +159,7 @@ private:
 Inflight_listxattr_count::Inflight_listxattr_count(fuse_req_t req,
 						   fuse_ino_t ino,
 						   unique_transaction transaction)
-  : Inflight(req, false, std::move(transaction)),
+  : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)),
     ino(ino)
 {
 }

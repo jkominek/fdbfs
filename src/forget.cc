@@ -32,7 +32,7 @@ private:
 Inflight_forget::Inflight_forget(fuse_req_t req,
 				 std::vector<fuse_ino_t> inos,
 				 unique_transaction transaction)
-  : Inflight(req, false, std::move(transaction)), inos(inos)
+  : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)), inos(inos)
 {
 }
 

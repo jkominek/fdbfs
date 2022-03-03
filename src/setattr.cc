@@ -51,7 +51,7 @@ private:
 Inflight_setattr::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
 				   struct stat attr, int to_set,
 				   unique_transaction transaction)
-  : Inflight(req, true, std::move(transaction)),
+  : Inflight(req, ReadWrite::Yes, std::move(transaction)),
     ino(ino), attr(attr), to_set(to_set)
 {
 }
