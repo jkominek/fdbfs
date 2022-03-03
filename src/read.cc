@@ -56,14 +56,13 @@ private:
   // we pad the buffer some so special block decoders have room to work
   // without having to perform extra copies or allocations.
   std::vector<uint8_t> buffer;
-  bool buffer_inited = false;
 };
 
 Inflight_read::Inflight_read(fuse_req_t req, fuse_ino_t ino,
 			     size_t size, off_t off,
 			     unique_transaction transaction)
   : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)),
-    ino(ino), requested_size(size), off(off), buffer(size + 32)
+    ino(ino), requested_size(size), off(off), buffer(size + 32, 0)
 {
 }
 
@@ -123,11 +122,6 @@ InflightAction Inflight_read::callback()
   }
 
   const size_t size = std::min(requested_size, inode.size() - off);
-
-  if(!buffer_inited) {
-    std::fill(buffer.begin(), buffer.end(), 0);
-    buffer_inited = true;
-  }
 
   for(int i=0; i<kvcount; i++) {
     const FDBKeyValue kv = kvs[i];
