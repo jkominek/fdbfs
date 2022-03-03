@@ -207,7 +207,7 @@ void print_key(std::vector<uint8_t> v)
   printf("\n");
 }
 
-void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr)
+void pack_inode_record_into_stat(const INodeRecord *inode, struct stat *attr)
 {
   if(inode == NULL) {
     printf("got bad inode to repack into attr\n");
@@ -282,14 +282,14 @@ bool filename_length_check(fuse_req_t req, const char *name, size_t maxlength)
   return false;
 }
 
-void update_atime(INodeRecord *inode, struct timespec *tv)
+void update_atime(INodeRecord *inode, const struct timespec *tv)
 {
   Timespec *atime = inode->mutable_atime();
   atime->set_sec(tv->tv_sec);
   atime->set_nsec(tv->tv_nsec);
 }
 
-void update_ctime(INodeRecord *inode, struct timespec *tv)
+void update_ctime(INodeRecord *inode, const struct timespec *tv)
 {
   Timespec *ctime = inode->mutable_ctime();
   ctime->set_sec(tv->tv_sec);
@@ -297,7 +297,7 @@ void update_ctime(INodeRecord *inode, struct timespec *tv)
   update_atime(inode, tv);
 }
 
-void update_mtime(INodeRecord *inode, struct timespec *tv)
+void update_mtime(INodeRecord *inode, const struct timespec *tv)
 {
   Timespec *mtime = inode->mutable_mtime();
   mtime->set_sec(tv->tv_sec);
@@ -363,7 +363,8 @@ void erase_inode(FDBTransaction *transaction, fuse_ino_t ino)
                               key_stop.data(),  key_stop.size());
 }
 
-inline void sparsify(uint8_t *block, uint64_t *write_size) {
+inline void sparsify(const uint8_t *block, uint64_t *write_size)
+{
   // sparsify our writes, by truncating nulls from the end of
   // blocks, and just clearing away totally null blocks
   for(; *(write_size)>0; *(write_size)-=1) {
@@ -372,8 +373,10 @@ inline void sparsify(uint8_t *block, uint64_t *write_size) {
   }
 }
 
-void set_block(FDBTransaction *transaction, std::vector<uint8_t> key,
-	       uint8_t *buffer, uint64_t size, bool write_conflict)
+void set_block(FDBTransaction *transaction,
+               const std::vector<uint8_t> key,
+	       const uint8_t *buffer,
+               uint64_t size, bool write_conflict)
 {
   sparsify(buffer, &size);
   if(size>0) {
@@ -390,21 +393,22 @@ void set_block(FDBTransaction *transaction, std::vector<uint8_t> key,
       // considering that these blocks may be stored 3 times, and over
       // their life may have to be moved repeatedly across WANs between
       // data centers, we'll accept very small amounts of compression:
-      int acceptable_size = BLOCKSIZE - 16;
+      const int acceptable_size = BLOCKSIZE - 16;
       uint8_t compressed[BLOCKSIZE];
       // we're arbitrarily saying blocks should be at least 64 bytes
       // after sparsification, before we'll attempt to compress them.
       #ifdef ZSTD_BLOCK_COMPRESSION
-      int ret = ZSTD_compress(reinterpret_cast<char*>(compressed),
-			      BLOCKSIZE,
-			      reinterpret_cast<char*>(buffer),
-			      size, 10);
+      const int ret = ZSTD_compress(reinterpret_cast<void*>(compressed),
+                                    BLOCKSIZE,
+                                    reinterpret_cast<const void*>(buffer),
+                                    size, 10);
       if((!ZSTD_isError(ret)) && (ret <= acceptable_size)) {
 	// ok, we'll take it.
-	key.push_back('z'); // compressed
-	key.push_back(0x01); // 1 byte of arguments
-	key.push_back(0x01); // ZSTD marker
-	fdb_transaction_set(transaction, key.data(), key.size(),
+        auto compkey = key;
+	compkey.push_back('z'); // compressed
+	compkey.push_back(0x01); // 1 byte of arguments
+	compkey.push_back(0x01); // ZSTD marker
+	fdb_transaction_set(transaction, compkey.data(), compkey.size(),
 			    compressed, ret);
 	return;
       }
@@ -432,7 +436,7 @@ void set_block(FDBTransaction *transaction, std::vector<uint8_t> key,
  *                               ^ value_offset
  *
  */
-int decode_block(FDBKeyValue *kv, int block_offset,
+int decode_block(const FDBKeyValue *kv, int block_offset,
 		 uint8_t *output, int targetsize, int maxsize)
 {
   const uint8_t *key = kv->key;
@@ -442,7 +446,7 @@ int decode_block(FDBKeyValue *kv, int block_offset,
   if(kv->key_length == fileblock_key_length) {
     //printf("   plain.\n");
     // plain block. there's no added info after the block key
-    int amount = std::min(kv->value_length - block_offset, maxsize);
+    const int amount = std::min(kv->value_length - block_offset, maxsize);
     if(amount>0) {
       bcopy(value + block_offset, output, amount);
       return amount;
@@ -455,12 +459,12 @@ int decode_block(FDBKeyValue *kv, int block_offset,
   //printf("   not plain!\n");
   // ah! not a plain block! there might be something interesting!
   // ... for now we just support compression
-  int i=fileblock_key_length;
+  const int i = fileblock_key_length;
 
 #ifdef BLOCK_COMPRESSION
   if(key[i] == 'z') {
     //printf("   compressed\n");
-    int arglen = key[i+1];
+    const int arglen = key[i+1];
     if(arglen<=0) {
       //printf("    no arg\n");
       // no argument, but we needed to know compression type
@@ -474,14 +478,14 @@ int decode_block(FDBKeyValue *kv, int block_offset,
 
       char buffer[BLOCKSIZE];
       // we'll only ask that enough be decompressed to satisfy the request
-      int ret = LZ4_decompress_safe_partial(value, buffer, kv->value_length, BLOCKSIZE, BLOCKSIZE);
+      const int ret = LZ4_decompress_safe_partial(value, buffer, kv->value_length, BLOCKSIZE, BLOCKSIZE);
       printf("%i\n", ret);
       if(ret<0) {
 	return ret;
       }
       if(ret > block_offset) {
 	// decompression produced at least one byte worth sending back
-	int amount = std::min(ret - block_offset, targetsize);
+	const int amount = std::min(ret - block_offset, targetsize);
 	bcopy(buffer + block_offset, output, amount);
 	return amount;
       } else {
@@ -496,14 +500,14 @@ int decode_block(FDBKeyValue *kv, int block_offset,
     if(key[i+2] == 0x01) {
       // 0x01 means ZSTD
       uint8_t buffer[BLOCKSIZE];
-      int ret = ZSTD_decompress(buffer, BLOCKSIZE, value, kv->value_length);
+      const int ret = ZSTD_decompress(buffer, BLOCKSIZE, value, kv->value_length);
       if(ZSTD_isError(ret)) {
 	// error
 	return -1;
       }
 
       if(ret > block_offset) {
-	int amount = std::min(ret - block_offset, targetsize);
+	const int amount = std::min(ret - block_offset, targetsize);
 	bcopy(buffer + block_offset, output, amount);
 	return amount;
       } else {

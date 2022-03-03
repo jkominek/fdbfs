@@ -101,16 +101,18 @@ InflightAction Inflight_rename::complicated()
    */
   
   // remove the old dirent
-  auto key = pack_dentry_key(oldparent, oldname);
-  fdb_transaction_clear(transaction.get(),
-			key.data(), key.size());
+  {
+    const auto key = pack_dentry_key(oldparent, oldname);
+    fdb_transaction_clear(transaction.get(),
+                          key.data(), key.size());
+  }
 
-  FDBKeyValue *kvs;
+  const FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
   fdb_error_t err;
 
-  err = fdb_future_get_keyvalue_array(inode_metadata_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+  err = fdb_future_get_keyvalue_array(inode_metadata_fetch.get(), &kvs, &kvcount, &more);
   if(err) return InflightAction::FDBError(err);
   if(kvcount < 1) {
     // referential integrity error; dirent points to missing inode
@@ -138,12 +140,12 @@ InflightAction Inflight_rename::complicated()
   // TODO permissions checking on the whatever being removed
   
   if(directory_listing_fetch) {
-    FDBKeyValue *kvs;
+    const FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
     fdb_error_t err;
 
-    err = fdb_future_get_keyvalue_array(directory_listing_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+    err = fdb_future_get_keyvalue_array(directory_listing_fetch.get(), &kvs, &kvcount, &more);
     if(err) return InflightAction::FDBError(err);
     if(kvcount>0) {
       // can't move over a directory with anything in it
@@ -160,7 +162,7 @@ InflightAction Inflight_rename::complicated()
   struct timespec tv;
   clock_gettime(CLOCK_REALTIME, &tv);
   update_ctime(&inode, &tv);
-  int inode_size = inode.ByteSizeLong();
+  const int inode_size = inode.ByteSizeLong();
   uint8_t inode_buffer[inode_size];
   inode.SerializeToArray(inode_buffer, inode_size);
   
@@ -177,8 +179,8 @@ InflightAction Inflight_rename::complicated()
     
     // TODO locking?
     if(destination_in_use) {
-      auto key = pack_garbage_key(inode.inode());
-      uint8_t b = 0;
+      const auto key = pack_garbage_key(inode.inode());
+      const uint8_t b = 0;
       fdb_transaction_set(transaction.get(),
 			  key.data(), key.size(),
 			  &b, 1);
@@ -188,13 +190,15 @@ InflightAction Inflight_rename::complicated()
   }
   
   // set the new dirent to the correct value
-  key = pack_dentry_key(newparent, newname);
-  int dirent_size = origin_dirent.ByteSizeLong();
-  uint8_t dirent_buffer[dirent_size];
-  origin_dirent.SerializeToArray(dirent_buffer, dirent_size);
-  fdb_transaction_set(transaction.get(),
-		      key.data(), key.size(),
-		      dirent_buffer, dirent_size);
+  {
+    const auto key = pack_dentry_key(newparent, newname);
+    const int dirent_size = origin_dirent.ByteSizeLong();
+    uint8_t dirent_buffer[dirent_size];
+    origin_dirent.SerializeToArray(dirent_buffer, dirent_size);
+    fdb_transaction_set(transaction.get(),
+                        key.data(), key.size(),
+                        dirent_buffer, dirent_size);
+  }
 
   // commit
   wait_on_future(fdb_transaction_commit(transaction.get()),
@@ -304,20 +308,24 @@ InflightAction Inflight_rename::check()
      */
 
     // remove the old directory entry.
-    auto key = pack_dentry_key(oldparent, oldname);
-    fdb_transaction_clear(transaction.get(),
-			  key.data(), key.size());
+    {
+      const auto key = pack_dentry_key(oldparent, oldname);
+      fdb_transaction_clear(transaction.get(),
+                            key.data(), key.size());
+    }
 
     // take the old directory entry contents, repack it.
-    int olddirent_size = origin_dirent.ByteSizeLong();
+    const int olddirent_size = origin_dirent.ByteSizeLong();
     uint8_t olddirent_buf[olddirent_size];
     origin_dirent.SerializeToArray(olddirent_buf, olddirent_size);
 
     // and save it into the new directory entry
-    key = pack_dentry_key(newparent, newname);
-    fdb_transaction_set(transaction.get(),
-			key.data(), key.size(),
-			olddirent_buf, olddirent_size);
+    {
+      const auto key = pack_dentry_key(newparent, newname);
+      fdb_transaction_set(transaction.get(),
+                          key.data(), key.size(),
+                          olddirent_buf, olddirent_size);
+    }
   }
 #ifdef RENAME_EXCHANGE
   else if(flags == RENAME_EXCHANGE) {
@@ -326,23 +334,27 @@ InflightAction Inflight_rename::check()
      * the previous case. Here we swap the contents of the
      * two directory entries, but nothing is unlinked.
      */
-    int olddirent_size = origin_dirent.ByteSizeLong();
+    const int olddirent_size = origin_dirent.ByteSizeLong();
     uint8_t olddirent_buf[olddirent_size];
     origin_dirent.SerializeToArray(olddirent_buf, olddirent_size);
 
-    int newdirent_size = destination_dirent.ByteSizeLong();
+    const int newdirent_size = destination_dirent.ByteSizeLong();
     uint8_t newdirent_buf[newdirent_size];
     destination_dirent.SerializeToArray(newdirent_buf, newdirent_size);
 
-    auto key = pack_dentry_key(oldparent, oldname);
-    fdb_transaction_set(transaction.get(),
-			key.data(), key.size(),
-			newdirent_buf, newdirent_size);
+    {
+      const auto key = pack_dentry_key(oldparent, oldname);
+      fdb_transaction_set(transaction.get(),
+                          key.data(), key.size(),
+                          newdirent_buf, newdirent_size);
+    }
 
-    key = pack_dentry_key(newparent, newname);
-    fdb_transaction_set(transaction.get(),
-			key.data(), key.size(),
-			olddirent_buf, olddirent_size);
+    {
+      const auto key = pack_dentry_key(newparent, newname);
+      fdb_transaction_set(transaction.get(),
+                          key.data(), key.size(),
+                          olddirent_buf, olddirent_size);
+    }
   }
 #endif
   else if(flags == 0) {
@@ -358,8 +370,8 @@ InflightAction Inflight_rename::check()
        * The destination is a directory. We'll need to know
        * if it is empty before we can remove it.
        */
-      auto key_start = pack_dentry_key(destination_dirent.inode(), "");
-      auto key_stop  = pack_dentry_key(destination_dirent.inode(), "\xff");
+      const auto key_start = pack_dentry_key(destination_dirent.inode(), "");
+      const auto key_stop  = pack_dentry_key(destination_dirent.inode(), "\xff");
       
       wait_on_future(fdb_transaction_get_range(transaction.get(),
 					       key_start.data(),
@@ -376,8 +388,8 @@ InflightAction Inflight_rename::check()
      * Regardless of what the destination is, we need to
      * fetch its inode and use records.
      */
-    auto key_start = pack_inode_key(destination_dirent.inode());
-    auto key_stop  = pack_inode_key(destination_dirent.inode());
+    const auto key_start = pack_inode_key(destination_dirent.inode());
+    auto key_stop = pack_inode_key(destination_dirent.inode());
     // this ensures we cover the use records, located at \x01
     key_stop.push_back('\x02');
 
@@ -411,27 +423,33 @@ InflightAction Inflight_rename::check()
 
 InflightCallback Inflight_rename::issue()
 {
-  auto key = pack_inode_key(oldparent);
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &oldparent_inode_lookup);
+  {
+    const auto key = pack_inode_key(oldparent);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   &oldparent_inode_lookup);
+  }
 
-  key = pack_inode_key(newparent);
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &newparent_inode_lookup);
+  {
+    const auto key = pack_inode_key(newparent);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   &newparent_inode_lookup);
+  }
 
-  key = pack_dentry_key(oldparent, oldname);
+  {
+    const auto key = pack_dentry_key(oldparent, oldname);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   &origin_lookup);
+  }
 
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &origin_lookup);
-
-  key = pack_dentry_key(newparent, newname);
-
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &destination_lookup);
+  {
+    const auto key = pack_dentry_key(newparent, newname);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   &destination_lookup);
+  }
 
   // TODO probably also need to fetch information about the parent inodes
   // for permissions checking.

@@ -75,12 +75,12 @@ Inflight_listxattr *Inflight_listxattr::reincarnate()
 
 InflightAction Inflight_listxattr::process()
 {
-  FDBKeyValue *kvs;
+  const FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
   fdb_error_t err;
   
-  err = fdb_future_get_keyvalue_array(range_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+  err = fdb_future_get_keyvalue_array(range_fetch.get(), &kvs, &kvcount, &more);
   if(err) return InflightAction::FDBError(err);
 
   // in both of these, we'd ideally immediately check 'more' to see
@@ -90,7 +90,7 @@ InflightAction Inflight_listxattr::process()
   // TODO make the code more clever, and do this the better way
   
   for(int i=0; i<kvcount; i++) {
-    FDBKeyValue *kv = kvs + i;
+    const FDBKeyValue *kv = kvs + i;
 
     int remaining_length = kv->key_length - empty_xattr_name_length;
     if(buf.size() + remaining_length + 1 > maxsize) {
@@ -108,8 +108,8 @@ InflightAction Inflight_listxattr::process()
     return InflightAction::Buf(buf);
   }
 
-  FDBKeyValue *lastkv = kvs + (kvcount - 1);
-  auto stop = pack_xattr_key(ino, "\xFF");
+  const FDBKeyValue *lastkv = kvs + (kvcount - 1);
+  const auto stop = pack_xattr_key(ino, "\xFF");
 
   // apparently, there is more, and we've got space
   wait_on_future(fdb_transaction_get_range(transaction.get(),
@@ -174,21 +174,21 @@ Inflight_listxattr_count *Inflight_listxattr_count::reincarnate()
 
 InflightAction Inflight_listxattr_count::process()
 {
-  FDBKeyValue *kvs;
+  const FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
   fdb_error_t err;
   
-  err = fdb_future_get_keyvalue_array(range_fetch.get(), (const FDBKeyValue **)&kvs, &kvcount, &more);
+  err = fdb_future_get_keyvalue_array(range_fetch.get(), &kvs, &kvcount, &more);
   if(err) return InflightAction::FDBError(err);
 
   for(int i=0; i<kvcount; i++) {
-    FDBKeyValue *kv = kvs + i;
+    const FDBKeyValue *kv = kvs + i;
     accumulated_size += (kv->key_length - empty_xattr_name_length + 1);
   }
 
-  FDBKeyValue *lastkv = kvs + (kvcount - 1);
-  auto stop = pack_xattr_key(ino, "\xFF");
+  const FDBKeyValue *lastkv = kvs + (kvcount - 1);
+  const auto stop = pack_xattr_key(ino, "\xFF");
 
   if(more) {
     wait_on_future(fdb_transaction_get_range(transaction.get(),

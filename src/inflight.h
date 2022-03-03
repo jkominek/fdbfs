@@ -28,14 +28,14 @@ class Inflight {
   // issuer is what we'll have to run if the future fails.
   // it'll expect the transaction to have been reset
   // (which is guaranteed by fdb)
-  virtual InflightCallback issue() = 0;
+  [[nodiscard]] virtual InflightCallback issue() = 0;
 
   // makes a new fresh version of the inflight object
   // and suicides the old one.
-  virtual Inflight *reincarnate() = 0;
+  [[nodiscard]] virtual Inflight *reincarnate() = 0;
   void future_ready(FDBFuture *);
 
-  virtual ~Inflight() = 0;
+  virtual ~Inflight() = default;
   
   // the transaction we're tied to. will we ever want
   // two separate chains of computation using the same
@@ -48,6 +48,9 @@ class Inflight {
   bool suppress_errors = false;
 
   void start();
+  // run before delete, in case there is anything a subclass
+  // wants to take care of.
+  void cleanup();
 
  protected:
   // constructor

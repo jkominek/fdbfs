@@ -55,8 +55,8 @@ extern int dirent_prefix_length;
 extern std::vector<uint8_t> inode_use_identifier;
 extern std::unordered_map<fuse_ino_t, uint64_t> lookup_counts;
 
-extern bool increment_lookup_count(fuse_ino_t);
-extern bool decrement_lookup_count(fuse_ino_t, uint64_t);
+[[nodiscard]] extern bool increment_lookup_count(fuse_ino_t);
+[[nodiscard]] extern bool decrement_lookup_count(fuse_ino_t, uint64_t);
 
 struct fdbfs_filehandle {
   // we're not putting anything in this yet,
@@ -64,19 +64,19 @@ struct fdbfs_filehandle {
   // and track it properly so that we could,
   // later.
 };
-extern struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *);
+[[nodiscard]] extern struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *);
 
-extern fuse_ino_t generate_inode();
-extern std::vector<uint8_t> pack_inode_key(fuse_ino_t, char=INODE_PREFIX);
-extern std::vector<uint8_t> pack_garbage_key(fuse_ino_t);
-extern std::vector<uint8_t> pack_pid_key(std::vector<uint8_t>);
-extern std::vector<uint8_t> pack_inode_use_key(fuse_ino_t);
-extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t);
-extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, const std::string&);
-extern std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name=0);
-extern std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, const std::string &name=0);
+[[nodiscard]] extern fuse_ino_t generate_inode();
+[[nodiscard]] extern std::vector<uint8_t> pack_inode_key(fuse_ino_t, char=INODE_PREFIX);
+[[nodiscard]] extern std::vector<uint8_t> pack_garbage_key(fuse_ino_t);
+[[nodiscard]] extern std::vector<uint8_t> pack_pid_key(std::vector<uint8_t>);
+[[nodiscard]] extern std::vector<uint8_t> pack_inode_use_key(fuse_ino_t);
+[[nodiscard]] extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t);
+[[nodiscard]] extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, const std::string&);
+[[nodiscard]] extern std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name=0);
+[[nodiscard]] extern std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, const std::string &name=0);
 extern void print_key(std::vector<uint8_t>);
-extern void pack_inode_record_into_stat(INodeRecord *inode, struct stat *attr);
+extern void pack_inode_record_into_stat(const INodeRecord *inode, struct stat *attr);
 template <typename T>
 void print_bytes(const T *str, int strlength)
 {
@@ -89,20 +89,20 @@ void print_bytes(const T *str, int strlength)
   }
 }
 using range_keys = std::pair<std::vector<uint8_t>, std::vector<uint8_t>>;
-range_keys offset_size_to_range_keys(fuse_ino_t, size_t, size_t);
+[[nodiscard]] range_keys offset_size_to_range_keys(fuse_ino_t, size_t, size_t);
 
-extern bool filename_length_check(fuse_req_t, const char *, size_t maxlength=255);
+[[nodiscard]] extern bool filename_length_check(fuse_req_t, const char *, size_t maxlength=255);
 
-extern void update_atime(INodeRecord *, struct timespec *);
-extern void update_mtime(INodeRecord *, struct timespec *);
-extern void update_ctime(INodeRecord *, struct timespec *);
+extern void update_atime(INodeRecord *, const struct timespec *);
+extern void update_mtime(INodeRecord *, const struct timespec *);
+extern void update_ctime(INodeRecord *, const struct timespec *);
 extern void update_directory_times(FDBTransaction *, INodeRecord &);
 
 extern void erase_inode(FDBTransaction *, fuse_ino_t);
 
-extern void set_block(FDBTransaction *, std::vector<uint8_t>,
-		      uint8_t *, uint64_t, bool=true);
-extern int decode_block(FDBKeyValue *, int, uint8_t *, int, int);
+extern void set_block(FDBTransaction *, const std::vector<uint8_t>,
+		      const uint8_t *, uint64_t, bool=true);
+[[nodiscard]] extern int decode_block(const FDBKeyValue *, int, uint8_t *, int, int);
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -124,8 +124,8 @@ struct FDBFutureDeleter {
 typedef std::unique_ptr<FDBTransaction, FDBTransactionDeleter> unique_transaction;
 typedef std::unique_ptr<FDBFuture, FDBFutureDeleter> unique_future;
 
-extern unique_transaction make_transaction();
-extern unique_future wrap_future(FDBFuture *);
+[[nodiscard]] extern unique_transaction make_transaction();
+[[nodiscard]] extern unique_future wrap_future(FDBFuture *);
 
 /**
  * This is for simple retryable synchronous transactions, like the

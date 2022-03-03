@@ -85,7 +85,9 @@ void *garbage_scanner(void *ignore)
       FDBFuture *g = fdb_transaction_commit(t.get());
       // if it fails, it fails, we'll try again the next time we
       // stumble across it.
-      (void)fdb_future_block_until_ready(g);
+      if(fdb_future_block_until_ready(g)) {
+        /* nothing to do */;
+      }
 
       fdb_future_destroy(f);
       fdb_future_destroy(g);

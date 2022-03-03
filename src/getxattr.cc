@@ -59,11 +59,11 @@ Inflight_getxattr *Inflight_getxattr::reincarnate()
 InflightAction Inflight_getxattr::process()
 {
   fdb_bool_t present=0;
-  uint8_t *val;
+  const uint8_t *val;
   int vallen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(xattr_node_fetch.get(), &present, (const uint8_t **)&val, &vallen);
+  err = fdb_future_get_value(xattr_node_fetch.get(), &present, &val, &vallen);
   if(err) return InflightAction::FDBError(err);
 
   if(present) {
@@ -74,7 +74,7 @@ InflightAction Inflight_getxattr::process()
       return InflightAction::Abort(EIO);
     }
 
-    err = fdb_future_get_value(xattr_data_fetch.get(), &present, (const uint8_t **)&val, &vallen);
+    err = fdb_future_get_value(xattr_data_fetch.get(), &present, &val, &vallen);
     if(err) return InflightAction::FDBError(err);
 
     if(present) {

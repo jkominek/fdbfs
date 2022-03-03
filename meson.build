@@ -1,5 +1,14 @@
 project('fdbfs', 'cpp',
-        default_options : ['cpp_std=c++17'])
+        default_options : ['cpp_std=c++17'
+                          ]
+       )
+cc = meson.get_compiler('cpp')
+add_project_arguments(
+  cc.get_supported_arguments([
+    '-Wall'
+  ]),
+  language : 'cpp'
+)
 
 protoc = find_program('protoc', required : true)
 
