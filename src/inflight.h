@@ -92,6 +92,9 @@ class Inflight_markused : public Inflight {
 // or otherwise abstract what function is being called when one
 // of these is 'executed', so that we can swap in a different
 // back end for testing, or other fancy things
+// Make InflightAction a virtual base class, and have, for instance,
+// a FUSEInflightAction which is passed in to the function, and it
+// can call methods off of that.
 class InflightAction {
  public:
   static InflightAction BeginWait(InflightCallback newcb) {
@@ -155,6 +158,10 @@ class InflightAction {
       });
   }
   static InflightAction Buf(std::vector<uint8_t> buf, int actual_size=-1) {
+    // Note, per the default value for actual_size, we might receive
+    // a buffer which is larger than the amount of useful/valid data
+    // in it. By passing in an actual_size value, calling code can
+    // restrict the amount of buf which is passed along.
     return InflightAction(true, false, false, [buf, actual_size](Inflight *i) {
 	fuse_reply_buf(i->req,
 		       reinterpret_cast<const char *>(buf.data()),
