@@ -31,7 +31,8 @@
 class Inflight_mknod : public Inflight {
 public:
   Inflight_mknod(fuse_req_t, fuse_ino_t, std::string, mode_t,
-		 filetype, dev_t, unique_transaction);
+		 filetype, dev_t, unique_transaction,
+                 std::optional<std::string>);
   Inflight_mknod *reincarnate();
   InflightCallback issue();
 private:
@@ -46,6 +47,7 @@ private:
   filetype type;
   mode_t mode;
   dev_t rdev;
+  std::string symlink_target;
 
   InflightAction commit_cb();
   InflightAction postverification();
@@ -54,10 +56,13 @@ private:
 Inflight_mknod::Inflight_mknod(fuse_req_t req, fuse_ino_t parent,
 			       std::string name, mode_t mode,
 			       filetype type, dev_t rdev,
-			       unique_transaction transaction)
+			       unique_transaction transaction,
+                               std::optional<std::string> symlink_target = std::nullopt)
   : Inflight(req, ReadWrite::Yes, std::move(transaction)),
     parent(parent), name(name), type(type), mode(mode), rdev(rdev)
 {
+  if(type == symlink)
+    this->symlink_target = symlink_target.value();
 }
 
 Inflight_mknod *Inflight_mknod::reincarnate()
@@ -127,6 +132,8 @@ InflightAction Inflight_mknod::postverification()
   INodeRecord inode;
   inode.set_inode(ino);
   inode.set_type(type);
+  if(type == symlink)
+    inode.set_symlink(symlink_target);
   inode.set_mode(mode);
   inode.set_nlinks((type == directory) ? 2 : 1);
   inode.set_size(0);
@@ -235,5 +242,19 @@ extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent,
   Inflight_mknod *inflight =
     new Inflight_mknod(req, parent, name, mode & (~S_IFMT),
 		       directory, 0, make_transaction());
+  inflight->start();
+}
+
+extern "C" void fdbfs_symlink(fuse_req_t req, const char *target,
+                              fuse_ino_t parent, const char *name)
+{
+  if(filename_length_check(req, target, 1024) ||
+     filename_length_check(req, name)) {
+    return;
+  }
+  Inflight_mknod *inflight =
+    new Inflight_mknod(req, parent, name, 0777 & (~S_IFMT),
+                       symlink, 0, make_transaction(),
+                       std::string(target));
   inflight->start();
 }

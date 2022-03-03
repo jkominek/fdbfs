@@ -30,7 +30,6 @@ project_source_files += files([
     'setattr.cc',
     'setxattr.cc',
     'statfs.cc',
-    'symlink.cc',
     'unlink.cc',
     'write.cc'
 ])
