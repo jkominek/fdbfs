@@ -47,9 +47,8 @@ private:
   SetXattrBehavior behavior;
 
   unique_future xattr_node_fetch;
-  unique_future commit;
+
   InflightAction process();
-  InflightAction commit_cb();
 };
 
 Inflight_setxattr::Inflight_setxattr(fuse_req_t req, fuse_ino_t ino,
@@ -69,11 +68,6 @@ Inflight_setxattr *Inflight_setxattr::reincarnate()
 					       std::move(transaction));
   delete this;
   return x;
-}
-
-InflightAction Inflight_setxattr::commit_cb()
-{
-  return InflightAction::OK();
 }
 
 InflightAction Inflight_setxattr::process()
@@ -116,11 +110,9 @@ InflightAction Inflight_setxattr::process()
 		      data_key.data(), data_key.size(),
 		      xattr_value.data(), xattr_value.size());
 
-  // commit
-  wait_on_future(fdb_transaction_commit(transaction.get()),
-		 &commit);
-
-  return InflightAction::BeginWait(std::bind(&Inflight_setxattr::commit_cb, this));
+  return commit([]() {
+    return InflightAction::OK();
+  });
 }
 
 InflightCallback Inflight_setxattr::issue()

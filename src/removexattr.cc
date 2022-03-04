@@ -36,9 +36,8 @@ private:
   std::string name;
 
   unique_future xattr_node_fetch;
-  unique_future commit;
+
   InflightAction process();
-  InflightAction commit_cb();
 };
 
 Inflight_removexattr::Inflight_removexattr(fuse_req_t req, fuse_ino_t ino,
@@ -57,11 +56,6 @@ Inflight_removexattr *Inflight_removexattr::reincarnate()
   return x;
 }
 
-InflightAction Inflight_removexattr::commit_cb()
-{
-  return InflightAction::OK();
-}
-
 InflightAction Inflight_removexattr::process()
 {
   fdb_bool_t present=0;
@@ -73,10 +67,9 @@ InflightAction Inflight_removexattr::process()
   if(err) return InflightAction::FDBError(err);
 
   if(present) {
-    wait_on_future(fdb_transaction_commit(transaction.get()),
-		   &commit);
-
-    return InflightAction::BeginWait(std::bind(&Inflight_removexattr::commit_cb, this));
+    return commit([]() {
+      return InflightAction::OK();
+    });
   } else {
     return InflightAction::Abort(ENOATTR);
   }

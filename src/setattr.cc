@@ -44,7 +44,6 @@ private:
   unique_future partial_block_fetch;
   uint64_t partial_block_idx;
   InflightAction partial_block_fixup();
-  unique_future commit;
   InflightAction commit_cb();
 };
 
@@ -92,9 +91,7 @@ InflightAction Inflight_setattr::partial_block_fixup()
     set_block(transaction.get(), key, output_buffer, attr.st_size % BLOCKSIZE);
   }
 
-  wait_on_future(fdb_transaction_commit(transaction.get()),
-		 &commit);
-  return InflightAction::BeginWait(std::bind(&Inflight_setattr::commit_cb, this));
+  return commit(std::bind(&Inflight_setattr::commit_cb, this));
 }
 
 InflightAction Inflight_setattr::callback()
@@ -230,7 +227,7 @@ InflightAction Inflight_setattr::callback()
 
   if(do_commit) {
     wait_on_future(fdb_transaction_commit(transaction.get()),
-		   &commit);
+		   &_commit);
   }
 
   return next_action;
