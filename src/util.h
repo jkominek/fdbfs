@@ -67,14 +67,14 @@ struct fdbfs_filehandle {
 [[nodiscard]] extern struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *);
 
 [[nodiscard]] extern fuse_ino_t generate_inode();
-[[nodiscard]] extern std::vector<uint8_t> pack_inode_key(fuse_ino_t, char=INODE_PREFIX);
+[[nodiscard]] extern std::vector<uint8_t> pack_inode_key(fuse_ino_t, char=INODE_PREFIX, const std::vector<uint8_t> &suffix={});
 [[nodiscard]] extern std::vector<uint8_t> pack_garbage_key(fuse_ino_t);
-[[nodiscard]] extern std::vector<uint8_t> pack_pid_key(std::vector<uint8_t>);
+[[nodiscard]] extern std::vector<uint8_t> pack_pid_key(std::vector<uint8_t>, const std::vector<uint8_t> &suffix={});
 [[nodiscard]] extern std::vector<uint8_t> pack_inode_use_key(fuse_ino_t);
-[[nodiscard]] extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t);
+[[nodiscard]] extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t, const std::vector<uint8_t> &suffix={});
 [[nodiscard]] extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, const std::string&);
-[[nodiscard]] extern std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name=0);
-[[nodiscard]] extern std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, const std::string &name=0);
+[[nodiscard]] extern std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name={});
+[[nodiscard]] extern std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, const std::string &name={});
 extern void print_key(std::vector<uint8_t>);
 extern void pack_inode_record_into_stat(const INodeRecord *inode, struct stat *attr);
 template <typename T>

@@ -110,31 +110,33 @@ fuse_ino_t generate_inode()
 }
 
 int inode_key_length;
-std::vector<uint8_t> pack_inode_key(fuse_ino_t ino, char prefix)
+std::vector<uint8_t> pack_inode_key(fuse_ino_t _ino, char prefix,
+                                    const std::vector<uint8_t> &suffix)
 {
-  std::vector<uint8_t> key = key_prefix;
+  auto key = key_prefix;
   key.push_back(prefix);
-  fuse_ino_t tmp = htobe64(ino);
-  uint8_t *tmpp = reinterpret_cast<uint8_t *>(&tmp);
-  key.insert(key.end(), tmpp, tmpp + sizeof(fuse_ino_t));
+
+  const fuse_ino_t ino = htobe64(_ino);
+  const auto tmp = reinterpret_cast<const uint8_t *>(&ino);
+  key.insert(key.end(), tmp, tmp + sizeof(fuse_ino_t));
+
+  key.insert(key.end(), suffix.begin(), suffix.end());
   return key;
 }
 
 std::vector<uint8_t> pack_garbage_key(fuse_ino_t ino)
 {
-  std::vector<uint8_t> key = key_prefix;
-  key.push_back(GARBAGE_PREFIX);
-  fuse_ino_t tmp = htobe64(ino);
-  uint8_t *tmpp = reinterpret_cast<uint8_t *>(&tmp);
-  key.insert(key.end(), tmpp, tmpp + sizeof(fuse_ino_t));
-  return key;
+  return pack_inode_key(ino, GARBAGE_PREFIX);
 }
 
-std::vector<uint8_t> pack_pid_key(std::vector<uint8_t> p)
+std::vector<uint8_t> pack_pid_key(std::vector<uint8_t> p,
+                                  const std::vector<uint8_t> &suffix)
 {
   auto key = key_prefix;
   key.push_back(PID_PREFIX);
   key.insert(key.end(), p.begin(), p.end());
+
+  key.insert(key.end(), suffix.begin(), suffix.end());
   return key;
 }
 
@@ -148,7 +150,8 @@ std::vector<uint8_t> pack_inode_use_key(fuse_ino_t ino)
 
 int fileblock_prefix_length;
 int fileblock_key_length;
-std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t block)
+std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t _block,
+                                        const std::vector<uint8_t> &suffix)
 {
   auto key = pack_inode_key(ino, DATA_PREFIX);
 
@@ -165,9 +168,11 @@ std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t block)
   // representation. (because 2^3 bytes for representing an integer is
   // plenty.)
 
-  block = htobe64(block);
-  uint8_t *tmpp = reinterpret_cast<uint8_t *>(&block);
+  const auto block = htobe64(_block);
+  const auto tmpp = reinterpret_cast<const uint8_t *>(&block);
   key.insert(key.end(), tmpp, tmpp + sizeof(uint64_t));
+
+  key.insert(key.end(), suffix.begin(), suffix.end());
   return key;
 }
 
@@ -183,16 +188,16 @@ std::vector<uint8_t> pack_dentry_key(fuse_ino_t ino, const std::string &name)
 std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name)
 {
   auto key = pack_inode_key(ino, XATTR_NODE_PREFIX);
-  if(!name.empty())
-    key.insert(key.end(), name.begin(), name.end());
+
+  key.insert(key.end(), name.begin(), name.end());
   return key;
 }
 
 std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, const std::string &name)
 {
   auto key = pack_inode_key(ino, XATTR_DATA_PREFIX);
-  if(!name.empty())
-    key.insert(key.end(), name.begin(), name.end());
+
+  key.insert(key.end(), name.begin(), name.end());
   return key;
 }
 
