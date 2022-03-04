@@ -39,7 +39,7 @@ private:
   unique_future dirinode_fetch;
   unique_future inode_check;
   unique_future dirent_check;
-  unique_future commit;
+
   fuse_ino_t parent;
   fuse_ino_t ino;
   struct stat attr;
@@ -49,7 +49,6 @@ private:
   dev_t rdev;
   std::string symlink_target;
 
-  InflightAction commit_cb();
   InflightAction postverification();
 };
 
@@ -72,18 +71,6 @@ Inflight_mknod *Inflight_mknod::reincarnate()
 					 std::move(transaction));
   delete this;
   return x;
-}
-
-InflightAction Inflight_mknod::commit_cb()
-{
-  auto e = std::make_unique<struct fuse_entry_param>();
-  bzero(e.get(), sizeof(struct fuse_entry_param));
-  e->ino = ino;
-  e->generation = 1;
-  bcopy(&(attr), &(e->attr), sizeof(struct stat));
-  e->attr_timeout = 0.01;
-  e->entry_timeout = 0.01;
-  return InflightAction::Entry(std::move(e));
 }
 
 InflightAction Inflight_mknod::postverification()
@@ -177,10 +164,16 @@ InflightAction Inflight_mknod::postverification()
 		      key.data(), key.size(),
 		      dirent_buffer, dirent_size);
 
-  wait_on_future(fdb_transaction_commit(transaction.get()),
-		 &commit);
-
-  return InflightAction::BeginWait(std::bind(&Inflight_mknod::commit_cb, this));
+  return commit([&]() {
+    auto e = std::make_unique<struct fuse_entry_param>();
+    bzero(e.get(), sizeof(struct fuse_entry_param));
+    e->ino = ino;
+    e->generation = 1;
+    bcopy(&(attr), &(e->attr), sizeof(struct stat));
+    e->attr_timeout = 0.01;
+    e->entry_timeout = 0.01;
+    return InflightAction::Entry(std::move(e));
+  });
 }
 
 InflightCallback Inflight_mknod::issue()

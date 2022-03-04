@@ -71,8 +71,6 @@ private:
   off_t off;
 
   InflightAction check();
-  InflightAction commit_cb();
-  unique_future commit;
 };
 
 Inflight_write::Inflight_write(fuse_req_t req, fuse_ino_t ino,
@@ -89,11 +87,6 @@ Inflight_write *Inflight_write::reincarnate()
     new Inflight_write(req, ino, buffer, off, std::move(transaction));
   delete this;
   return x;
-}
-
-InflightAction Inflight_write::commit_cb()
-{
-  return InflightAction::Write(buffer.size());
 }
 
 InflightAction Inflight_write::check()
@@ -205,11 +198,9 @@ InflightAction Inflight_write::check()
 	      output_buffer, total_buffer_size, false);
   }
 
-  // perform all of the writes
-  wait_on_future(fdb_transaction_commit(transaction.get()),
-		 &commit);
-
-  return InflightAction::BeginWait(std::bind(&Inflight_write::commit_cb, this));
+  return commit([&]() {
+    return InflightAction::Write(buffer.size());
+  });
 }
 
 InflightCallback Inflight_write::issue()

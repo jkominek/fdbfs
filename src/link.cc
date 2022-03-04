@@ -40,7 +40,6 @@ private:
   INodeRecord inode;
 
   InflightAction check();
-  InflightAction commit_cb();
   
   // is the file to link a non-directory?
   unique_future file_lookup;
@@ -48,8 +47,6 @@ private:
   unique_future dir_lookup;
   // does the destination location already exist?
   unique_future target_lookup;
-
-  unique_future commit;
 };
 
 Inflight_link::Inflight_link(fuse_req_t req, fuse_ino_t ino,
@@ -66,18 +63,6 @@ Inflight_link *Inflight_link::reincarnate()
 				       std::move(transaction));
   delete this;
   return x;
-}
-
-InflightAction Inflight_link::commit_cb()
-{
-  auto e = std::make_unique<struct fuse_entry_param>();
-  bzero(e.get(), sizeof(struct fuse_entry_param));
-  e->ino = ino;
-  e->generation = 1;
-  pack_inode_record_into_stat(&inode, &(e->attr));
-  e->attr_timeout = 0.01;
-  e->entry_timeout = 0.01;
-  return InflightAction::Entry(std::move(e));
 }
 
 InflightAction Inflight_link::check()
@@ -165,10 +150,16 @@ InflightAction Inflight_link::check()
 		      key.data(), key.size(),
 		      dirent_buffer, dirent_size);
 
-  // commit
-  wait_on_future(fdb_transaction_commit(transaction.get()), &commit);
-
-  return InflightAction::BeginWait(std::bind(&Inflight_link::commit_cb, this));
+  return commit([&]() {
+    auto e = std::make_unique<struct fuse_entry_param>();
+    bzero(e.get(), sizeof(struct fuse_entry_param));
+    e->ino = ino;
+    e->generation = 1;
+    pack_inode_record_into_stat(&inode, &(e->attr));
+    e->attr_timeout = 0.01;
+    e->entry_timeout = 0.01;
+    return InflightAction::Entry(std::move(e));
+  });
 }
 
 InflightCallback Inflight_link::issue()

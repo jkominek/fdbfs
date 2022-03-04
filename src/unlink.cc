@@ -52,12 +52,10 @@ private:
   unique_future inode_metadata_fetch;
   // fetches 0-1 of the directory entries in a directory
   unique_future directory_listing_fetch;
-  unique_future commit;
   
   InflightAction postlookup();
   InflightAction inode_check();
   InflightAction rmdir_inode_dirlist_check();
-  InflightAction commit_cb();
   
   // parent directory
   fuse_ino_t parent;
@@ -93,11 +91,6 @@ Inflight_unlink_rmdir *Inflight_unlink_rmdir::reincarnate()
   return x;
 }
 
-InflightAction Inflight_unlink_rmdir::commit_cb()
-{
-  return InflightAction::OK();
-}
-
 InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check()
 {
   // got the directory listing future back, we can check to see if we're done.
@@ -125,10 +118,9 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check()
 
   erase_inode(transaction.get(), ino);
 
-  // commit
-  wait_on_future(fdb_transaction_commit(transaction.get()),
-		 &commit);
-  return InflightAction::BeginWait(std::bind(&Inflight_unlink_rmdir::commit_cb, this));
+  return commit([]() {
+    return InflightAction::OK();
+  });
 }
 
 InflightAction Inflight_unlink_rmdir::inode_check()
@@ -204,11 +196,9 @@ InflightAction Inflight_unlink_rmdir::inode_check()
     }
   }
 
-  // commit
-  wait_on_future(fdb_transaction_commit(transaction.get()),
-		 &commit);
-
-  return InflightAction::BeginWait(std::bind(&Inflight_unlink_rmdir::commit_cb, this));
+  return commit([]() {
+    return InflightAction::OK();
+  });
 }
 
 InflightAction Inflight_unlink_rmdir::postlookup()

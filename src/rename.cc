@@ -57,11 +57,8 @@ private:
   unique_future directory_listing_fetch;
   unique_future inode_metadata_fetch;
 
-  unique_future commit;
-
   InflightAction check();
   InflightAction complicated();
-  InflightAction commit_cb();
 };
 
 Inflight_rename::Inflight_rename(fuse_req_t req,
@@ -82,11 +79,6 @@ Inflight_rename *Inflight_rename::reincarnate()
 			std::move(transaction));
   delete this;
   return x;
-}
-
-InflightAction Inflight_rename::commit_cb()
-{
-  return InflightAction::OK();
 }
 
 InflightAction Inflight_rename::complicated()
@@ -200,11 +192,9 @@ InflightAction Inflight_rename::complicated()
                         dirent_buffer, dirent_size);
   }
 
-  // commit
-  wait_on_future(fdb_transaction_commit(transaction.get()),
-		 &commit);
-
-  return InflightAction::BeginWait(std::bind(&Inflight_rename::commit_cb, this));
+  return commit([]() {
+    return InflightAction::OK();
+  });
 }
 
 InflightAction Inflight_rename::check()
@@ -416,9 +406,9 @@ InflightAction Inflight_rename::check()
    * we're all done except for the commit. So schedule that,
    * and head off to the commit callback when it finishes.
    */
-  wait_on_future(fdb_transaction_commit(transaction.get()),
-                 &commit);
-  return InflightAction::BeginWait(std::bind(&Inflight_rename::commit_cb, this));
+  return commit([]() {
+    return InflightAction::OK();
+  });
 }
 
 InflightCallback Inflight_rename::issue()

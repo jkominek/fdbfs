@@ -98,6 +98,13 @@ void Inflight::start()
   begin_wait();
 }
 
+InflightAction Inflight::commit(InflightCallback cb)
+{
+  wait_on_future(fdb_transaction_commit(transaction.get()),
+                 &_commit);
+  return InflightAction::BeginWait(cb);
+}
+
 void Inflight::future_ready(FDBFuture *f)
 {
   if(!future_queue.empty()) {

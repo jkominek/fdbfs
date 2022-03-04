@@ -53,6 +53,9 @@ class Inflight {
   bool suppress_errors = false;
 
   void start();
+
+  InflightAction commit(InflightCallback);
+
   // run before delete, in case there is anything a subclass
   // wants to take care of.
   void cleanup();
@@ -65,7 +68,10 @@ class Inflight {
 
   std::optional<InflightCallback> cb;
 
- private:
+  // not used for readonly operations
+  unique_future _commit;
+
+private:
   // whether we're intended as r/w or not.
   ReadWrite readwrite;
   std::queue<FDBFuture *> future_queue;
