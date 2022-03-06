@@ -42,7 +42,7 @@ private:
 
   fuse_ino_t parent;
   fuse_ino_t ino;
-  struct stat attr;
+  struct stat attr {};
   std::string name;
   filetype type;
   mode_t mode;
@@ -139,7 +139,7 @@ InflightAction Inflight_mknod::postverification()
   inode.mutable_ctime()->set_nsec(tp.tv_nsec);
 
   // wrap it up to be returned to fuse later
-  pack_inode_record_into_stat(&inode, &(attr));
+  pack_inode_record_into_stat(inode, attr);
   
   // set the inode KV pair
   auto key = pack_inode_key(ino);
@@ -169,7 +169,7 @@ InflightAction Inflight_mknod::postverification()
     bzero(e.get(), sizeof(struct fuse_entry_param));
     e->ino = ino;
     e->generation = 1;
-    bcopy(&(attr), &(e->attr), sizeof(struct stat));
+    e->attr = attr;
     e->attr_timeout = 0.01;
     e->entry_timeout = 0.01;
     return InflightAction::Entry(std::move(e));

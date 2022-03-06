@@ -155,7 +155,7 @@ InflightAction Inflight_link::check()
     bzero(e.get(), sizeof(struct fuse_entry_param));
     e->ino = ino;
     e->generation = 1;
-    pack_inode_record_into_stat(&inode, &(e->attr));
+    pack_inode_record_into_stat(inode, e->attr);
     e->attr_timeout = 0.01;
     e->entry_timeout = 0.01;
     return InflightAction::Entry(std::move(e));

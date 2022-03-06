@@ -35,8 +35,8 @@ public:
   InflightCallback issue();
 private:
   fuse_ino_t ino;
-  struct stat attr;
-  std::unique_ptr<struct stat> newattr;
+  struct stat attr {};
+  INodeRecord inode;
   int to_set;
 
   unique_future inode_fetch;
@@ -65,7 +65,9 @@ Inflight_setattr *Inflight_setattr::reincarnate()
 
 InflightAction Inflight_setattr::commit_cb()
 {
-  return InflightAction::Attr(std::move(newattr));
+  struct stat newattr {};
+  pack_inode_record_into_stat(inode, newattr);
+  return InflightAction::Attr(newattr);
 }
 
 InflightAction Inflight_setattr::partial_block_fixup()
@@ -111,7 +113,6 @@ InflightAction Inflight_setattr::callback()
   bool do_commit = true;
   auto next_action = InflightAction::BeginWait(std::bind(&Inflight_setattr::commit_cb, this));
 
-  INodeRecord inode;
   inode.ParseFromArray(val, vallen);
   if(!inode.IsInitialized()) {
     // bad inode
@@ -210,11 +211,6 @@ InflightAction Inflight_setattr::callback()
   }
   // done updating inode!
 
-
-  // repack for fuse
-  newattr = std::make_unique<struct stat>();
-  pack_inode_record_into_stat(&inode, newattr.get());
-  
   int inode_size = inode.ByteSizeLong();
   uint8_t inode_buffer[inode_size];
   inode.SerializeToArray(inode_buffer, inode_size);

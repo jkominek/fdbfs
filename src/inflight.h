@@ -158,9 +158,9 @@ class InflightAction {
 	}
       });
   }
-  static InflightAction Attr(std::shared_ptr<struct stat> attr) {
+  static InflightAction Attr(struct stat attr) {
     return InflightAction(true, false, false, [attr](Inflight *i) {
-	fuse_reply_attr(i->req, attr.get(), 0.0);
+	fuse_reply_attr(i->req, &attr, 0.0);
       });
   }
   static InflightAction Buf(std::vector<uint8_t> buf, int actual_size=-1) {
