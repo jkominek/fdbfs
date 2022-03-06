@@ -212,59 +212,53 @@ void print_key(std::vector<uint8_t> v)
   printf("\n");
 }
 
-void pack_inode_record_into_stat(const INodeRecord *inode, struct stat *attr)
+void pack_inode_record_into_stat(const INodeRecord &inode, struct stat &attr)
 {
-  if(inode == NULL) {
-    printf("got bad inode to repack into attr\n");
-  }
-
-  bzero(attr, sizeof(struct stat));
-  
-  attr->st_ino = inode->inode();
-  attr->st_dev = 0;
-  attr->st_mode = inode->mode() | inode->type();
-  attr->st_nlink = inode->nlinks();
-  if(inode->has_uid())
-    attr->st_uid = inode->uid();
+  attr.st_ino = inode.inode();
+  attr.st_dev = 0;
+  attr.st_mode = inode.mode() | inode.type();
+  attr.st_nlink = inode.nlinks();
+  if(inode.has_uid())
+    attr.st_uid = inode.uid();
   else
-    attr->st_uid = 0;
+    attr.st_uid = 0;
 
-  if(inode->has_gid())
-    attr->st_gid = inode->gid();
+  if(inode.has_gid())
+    attr.st_gid = inode.gid();
   else
-    attr->st_gid = 0;
+    attr.st_gid = 0;
 
-  if(inode->has_size())
-    attr->st_size = inode->size();
+  if(inode.has_size())
+    attr.st_size = inode.size();
   else
-    attr->st_size = 0;
+    attr.st_size = 0;
 
-  if(inode->has_atime()) {
-    attr->st_atim.tv_sec = inode->atime().sec();
-    attr->st_atim.tv_nsec = inode->atime().nsec();
+  if(inode.has_atime()) {
+    attr.st_atim.tv_sec = inode.atime().sec();
+    attr.st_atim.tv_nsec = inode.atime().nsec();
   }
 
-  if(inode->has_mtime()) {
-    attr->st_mtim.tv_sec = inode->mtime().sec();
-    attr->st_mtim.tv_nsec = inode->mtime().nsec();
+  if(inode.has_mtime()) {
+    attr.st_mtim.tv_sec = inode.mtime().sec();
+    attr.st_mtim.tv_nsec = inode.mtime().nsec();
   }
 
-  if(inode->has_ctime()) {
-    attr->st_ctim.tv_sec = inode->ctime().sec();
-    attr->st_ctim.tv_nsec = inode->ctime().nsec();
+  if(inode.has_ctime()) {
+    attr.st_ctim.tv_sec = inode.ctime().sec();
+    attr.st_ctim.tv_nsec = inode.ctime().nsec();
   }
 
-  attr->st_blksize = BLOCKSIZE;
-  attr->st_blocks = (attr->st_size / 512) + 1;
+  attr.st_blksize = BLOCKSIZE;
+  attr.st_blocks = (attr.st_size / 512) + 1;
 
   /*
   printf("stat struct\n");
-  printf("  dev: %li\n", attr->st_dev);
-  printf("  ino: %li\n", attr->st_ino);
-  printf(" mode: %o\n", attr->st_mode);
-  printf("nlink: %li\n", attr->st_nlink);
-  printf("  uid: %i\n", attr->st_uid);
-  printf("  gid: %i\n", attr->st_gid);
+  printf("  dev: %li\n", attr.st_dev);
+  printf("  ino: %li\n", attr.st_ino);
+  printf(" mode: %o\n", attr.st_mode);
+  printf("nlink: %li\n", attr.st_nlink);
+  printf("  uid: %i\n", attr.st_uid);
+  printf("  gid: %i\n", attr.st_gid);
   */
 }
 

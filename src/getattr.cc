@@ -73,9 +73,9 @@ InflightAction Inflight_getattr::callback()
     return InflightAction::Abort(EIO);
   }
 
-  auto attr = std::make_unique<struct stat>();
-  pack_inode_record_into_stat(&inode, attr.get());
-  return InflightAction::Attr(std::move(attr));
+  struct stat attr {};
+  pack_inode_record_into_stat(inode, attr);
+  return InflightAction::Attr(attr);
 }
 
 InflightCallback Inflight_getattr::issue()
