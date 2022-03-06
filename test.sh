@@ -5,9 +5,12 @@ fdbcli --exec status
 
 rm -rf test_a test_b
 mkdir -p test_a test_b
+MP=`stat -c %m test_a`
 build/fs test_a &
 build/fs test_b &
-sleep 2
+# wait for the mounts to work
+while [ $MP = `stat -c %m test_a` ] ; do sleep 1 ; done
+while [ $MP = `stat -c %m test_b` ] ; do sleep 1 ; done
 
 df -h
 
