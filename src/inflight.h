@@ -16,6 +16,12 @@
 
 #include "util.h"
 
+#include "thread_pool.hpp"
+
+// Pool used for processing our callbacks
+extern thread_pool pool;
+
+
 // Halt all inflights and prevent new ones from starting.
 extern void shut_it_down();
 
