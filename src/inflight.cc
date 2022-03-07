@@ -21,6 +21,8 @@
 #include "util.h"
 #include "inflight.h"
 
+thread_pool pool;
+
 bool shut_it_down_forever = false;
 
 void shut_it_down() {
@@ -113,12 +115,15 @@ void Inflight::future_ready(FDBFuture *f)
     future_queue.pop();
     if(next != f) {
       // TODO error? or something? what?
+      // somehow a future we hadn't set a callback
+      // on has called us.
     }
     // skip over any futures that are already ready
     while((!future_queue.empty()) && fdb_future_is_ready(future_queue.front()))
       future_queue.pop();
   } else {
-    // hmm. wtf?
+    // hmm. wtf? we were called by FDB, but we're not
+    // aware of having any futures we're waiting on.
   }
 
   if(future_queue.empty()) {
@@ -147,19 +152,26 @@ void Inflight::future_ready(FDBFuture *f)
       throw std::runtime_error("no callback was set when we needed one");
     }
   } else {
+    // there are still futures we need to wait on before we
+    // can return to processing the transaction, so enqueue
+    // things again.
     begin_wait();
   }
 }
 
 void Inflight::begin_wait() {
   if(future_queue.empty()) {
-    std::cout << "tried to start waiting on empty future queue" << std::endl;
+    // we could try to resume processing the transaction, but really this
+    // just shouldn't be possible, so i'm inclined to bail on it.
     throw std::runtime_error("tried to start waiting on empty future queue");
   }
   if(fdb_future_set_callback(future_queue.front(),
 			     fdbfs_error_checker,
 			     static_cast<void*>(this))) {
-    std::cout << "failed to set future callback" << std::endl;
+    // we don't have a way to deal with this, so destroy the
+    // transaction so that nothing leaks. ideally we'd notify
+    // fuse at this point that the operation is dead.
+    delete this;
     throw std::runtime_error("failed to set future callback");
   }
 }
@@ -170,6 +182,11 @@ void Inflight::wait_on_future(FDBFuture *f, unique_future *dest)
   dest->reset(f);
 }
 
+/* If fdbfs_error_checker hits an error, then execution will
+ * end up here for that transaction. We give it back to FDB
+ * so that it can delay this transaction, or whatever it wants
+ * to do, as appropriate.
+ */
 extern "C" void fdbfs_error_processor(FDBFuture *f, void *p)
 {
   Inflight *inflight = static_cast<Inflight*>(p);
@@ -203,6 +220,12 @@ extern "C" void fdbfs_error_processor(FDBFuture *f, void *p)
   inflight->start();
 }
 
+/*
+ * This is the entry point for all FDB callbacks.  So we can
+ * centralize our error checking, restart transactions in the event of
+ * errors, and enqueue the next step of the transaction into the thread
+ * pool for execution.
+ */
 extern "C" void fdbfs_error_checker(FDBFuture *f, void *p)
 {
   Inflight *inflight = static_cast<Inflight*>(p);
@@ -214,15 +237,22 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p)
     // we should call _on_error on it, and maybe we'll get to
     // try again, and maybe we won't.
     FDBFuture *nextf = fdb_transaction_on_error(inflight->transaction.get(), err);
-    
+
+    auto inf = inflight->reincarnate();
     if(fdb_future_set_callback(nextf, fdbfs_error_processor,
-			       static_cast<void*>(inflight->reincarnate()))) {
+                               static_cast<void*>(inf))) {
+      // hosed, we don't currently have a way to save this transaction.
+      // TODO let fuse know the operation is dead.
+      delete inf;
       throw std::runtime_error("failed to set an fdb callback");
     }
     return;
   }
 
-  inflight->future_ready(f);
+  // and finally toss the next bit of work onto the thread pool queue
+  pool.push_task([inflight, f]() {
+    inflight->future_ready(f);
+  });
 }
 
 
