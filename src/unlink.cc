@@ -63,7 +63,7 @@ private:
   fuse_ino_t ino;
   // provided name and length
   std::string name;
-  // computed key of the dirent
+  // computed key of the dirent.
   std::vector<uint8_t> dirent_key;
   // how we were invoked, rmdir or unlink
   Op op;
@@ -80,6 +80,7 @@ Inflight_unlink_rmdir::Inflight_unlink_rmdir(fuse_req_t req,
   : Inflight(req, ReadWrite::Yes, std::move(transaction)),
     parent(parent), name(name), op(op)
 {
+  dirent_key = pack_dentry_key(parent, name);
 }
 
 Inflight_unlink_rmdir *Inflight_unlink_rmdir::reincarnate()
@@ -252,7 +253,7 @@ InflightAction Inflight_unlink_rmdir::postlookup()
 
       {
         const auto start = pack_inode_key(ino);
-        auto stop  = pack_inode_key(ino);
+        auto stop = pack_inode_key(ino);
         // based on our KV layout, this will fetch all of the metadata
         // about the directory except the extended attributes.
         stop.push_back('\x02');
@@ -265,7 +266,7 @@ InflightAction Inflight_unlink_rmdir::postlookup()
                                                  1000, 0,
                                                  FDB_STREAMING_MODE_WANT_ALL, 0,
                                                  0, 0),
-                       &inode_metadata_fetch);
+                       inode_metadata_fetch);
       }
 
       // we want to scan for any directory entries inside of this
@@ -282,7 +283,7 @@ InflightAction Inflight_unlink_rmdir::postlookup()
                                                  1, 0,
                                                  FDB_STREAMING_MODE_WANT_ALL, 0,
                                                  0, 0),
-                       &directory_listing_fetch);
+                       directory_listing_fetch);
       }
 
       return InflightAction::BeginWait(std::bind(&Inflight_unlink_rmdir::rmdir_inode_dirlist_check, this));
@@ -313,7 +314,7 @@ InflightAction Inflight_unlink_rmdir::postlookup()
 					       1000, 0,
 					       FDB_STREAMING_MODE_WANT_ALL, 0,
 					       0, 0),
-		     &inode_metadata_fetch);
+		     inode_metadata_fetch);
       return InflightAction::BeginWait(std::bind(&Inflight_unlink_rmdir::inode_check, this));
     } else {
       // mismatch. bail.
@@ -328,13 +329,12 @@ InflightCallback Inflight_unlink_rmdir::issue()
   const auto key = pack_inode_key(parent);
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
-		 &parent_lookup);
+		 parent_lookup);
   
-  // convert dirent to inode
-  dirent_key = pack_dentry_key(parent, name);
+  // fetch the dirent so we can get the inode info.
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     dirent_key.data(), dirent_key.size(), 0),
-		 &dirent_lookup);
+		 dirent_lookup);
   return std::bind(&Inflight_unlink_rmdir::postlookup, this);
 }
 

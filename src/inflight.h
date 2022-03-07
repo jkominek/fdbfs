@@ -70,7 +70,7 @@ class Inflight {
   // constructor
   Inflight(fuse_req_t, ReadWrite, unique_transaction);
   
-  void wait_on_future(FDBFuture *, unique_future *);
+  void wait_on_future(FDBFuture *, unique_future &);
 
   std::optional<InflightCallback> cb;
 

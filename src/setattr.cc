@@ -158,7 +158,7 @@ InflightAction Inflight_setattr::callback()
 						 0, 0,
 						 FDB_STREAMING_MODE_WANT_ALL,
 						 0, 0, 0),
-		       &partial_block_fetch);
+		       partial_block_fetch);
 	do_commit = false;
 	next_action = InflightAction::BeginWait(std::bind(&Inflight_setattr::partial_block_fixup, this));
       }
@@ -211,11 +211,11 @@ InflightAction Inflight_setattr::callback()
   }
   // done updating inode!
 
-  int inode_size = inode.ByteSizeLong();
+  const int inode_size = inode.ByteSizeLong();
   uint8_t inode_buffer[inode_size];
   inode.SerializeToArray(inode_buffer, inode_size);
 
-  auto key = pack_inode_key(ino);
+  const auto key = pack_inode_key(ino);
 
   fdb_transaction_set(transaction.get(),
 		      key.data(), key.size(),
@@ -223,7 +223,7 @@ InflightAction Inflight_setattr::callback()
 
   if(do_commit) {
     wait_on_future(fdb_transaction_commit(transaction.get()),
-		   &_commit);
+		   _commit);
   }
 
   return next_action;
@@ -244,12 +244,12 @@ InflightCallback Inflight_setattr::issue()
     };
   }
 
-  auto key = pack_inode_key(ino);
+  const auto key = pack_inode_key(ino);
 
   // and request just that inode
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
-		 &inode_fetch);
+		 inode_fetch);
   return std::bind(&Inflight_setattr::callback, this);
 }
 

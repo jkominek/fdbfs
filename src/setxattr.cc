@@ -91,8 +91,8 @@ InflightAction Inflight_setxattr::process()
     if(behavior & CanCreate) {
       // set the xattr node
 
-      auto node_key = pack_xattr_key(ino, name);
-      int xattr_size = xattr.ByteSizeLong();
+      const auto node_key = pack_xattr_key(ino, name);
+      const int xattr_size = xattr.ByteSizeLong();
       uint8_t xattr_buffer[xattr_size];
       xattr.SerializeToArray(xattr_buffer, xattr_size);
  
@@ -105,7 +105,7 @@ InflightAction Inflight_setxattr::process()
   }
 
   // set the xattr data
-  auto data_key = pack_xattr_data_key(ino, name);
+  const auto data_key = pack_xattr_data_key(ino, name);
   fdb_transaction_set(transaction.get(),
 		      data_key.data(), data_key.size(),
 		      xattr_value.data(), xattr_value.size());
@@ -117,12 +117,12 @@ InflightAction Inflight_setxattr::process()
 
 InflightCallback Inflight_setxattr::issue()
 {
-  auto key = pack_xattr_key(ino, name);
+  const auto key = pack_xattr_key(ino, name);
 
   // and request just that xattr node
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
-		 &xattr_node_fetch);
+		 xattr_node_fetch);
 
   return std::bind(&Inflight_setxattr::process, this);
 }

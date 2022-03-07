@@ -105,15 +105,19 @@ InflightCallback Inflight_getxattr::issue()
   // we could just not fetch the node, since it doesn't
   // currently make any difference. but, we'll maybe need it
   // sooner or later, so we'll leave it.
-  auto key = pack_xattr_key(ino, name);
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &xattr_node_fetch);
+  {
+    const auto key = pack_xattr_key(ino, name);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   xattr_node_fetch);
+  }
 
-  key = pack_xattr_data_key(ino, name);
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &xattr_data_fetch);
+  {
+    const auto key = pack_xattr_data_key(ino, name);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   xattr_data_fetch);
+  }
 
   return std::bind(&Inflight_getxattr::process, this);
 }

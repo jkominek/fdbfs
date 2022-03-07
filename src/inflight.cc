@@ -103,7 +103,7 @@ void Inflight::start()
 InflightAction Inflight::commit(InflightCallback cb)
 {
   wait_on_future(fdb_transaction_commit(transaction.get()),
-                 &_commit);
+                 _commit);
   return InflightAction::BeginWait(cb);
 }
 
@@ -176,10 +176,10 @@ void Inflight::begin_wait() {
   }
 }
 
-void Inflight::wait_on_future(FDBFuture *f, unique_future *dest)
+void Inflight::wait_on_future(FDBFuture *f, unique_future &dest)
 {
   future_queue.push(f);
-  dest->reset(f);
+  dest.reset(f);
 }
 
 /* If fdbfs_error_checker hits an error, then execution will
@@ -285,7 +285,7 @@ InflightCallback Inflight_markused::issue() {
 		      key.data(), key.size(),
 		      &b, 1);
   wait_on_future(fdb_transaction_commit(transaction.get()),
-		 &commit);
+		 commit);
   return []() -> InflightAction {
     return InflightAction::Ignore();
   };

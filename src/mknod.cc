@@ -180,20 +180,26 @@ InflightCallback Inflight_mknod::issue()
 {
   ino = generate_inode();
 
-  auto key = pack_inode_key(parent);
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &dirinode_fetch);
+  {
+    const auto key = pack_inode_key(parent);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   dirinode_fetch);
+  }
 
-  key = pack_dentry_key(parent, name);
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &dirent_check);
-  
-  key = pack_inode_key(ino);
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &inode_check);
+  {
+    const auto key = pack_dentry_key(parent, name);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   dirent_check);
+  }
+
+  {
+    const auto key = pack_inode_key(ino);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   inode_check);
+  }
 
   return std::bind(&Inflight_mknod::postverification, this);
 }

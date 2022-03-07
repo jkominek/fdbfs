@@ -125,12 +125,12 @@ InflightAction Inflight_lookup::lookup_inode()
       target = dirent.inode();
     }
 
-    auto key = pack_inode_key(target);
+    const auto key = pack_inode_key(target);
 
     // and request just that inode
-    FDBFuture *f = fdb_transaction_get(transaction.get(),
-				       key.data(), key.size(), 1);
-    wait_on_future(f, &inode_fetch);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+				       key.data(), key.size(), 1),
+                   inode_fetch);
     return InflightAction::BeginWait(std::bind(&Inflight_lookup::process_inode, this));
   } else {
     return InflightAction::Abort(ENOENT);
@@ -139,12 +139,11 @@ InflightAction Inflight_lookup::lookup_inode()
 
 InflightCallback Inflight_lookup::issue()
 {
-  auto key = pack_dentry_key(parent, name);
+  const auto key = pack_dentry_key(parent, name);
 
-  FDBFuture *f = fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 1);
-
-  wait_on_future(f, &dirent_fetch);
+  wait_on_future(fdb_transaction_get(transaction.get(),
+				     key.data(), key.size(), 1),
+                 dirent_fetch);
   return std::bind(&Inflight_lookup::lookup_inode, this);
 }
 

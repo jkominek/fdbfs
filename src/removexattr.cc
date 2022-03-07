@@ -90,17 +90,19 @@ InflightCallback Inflight_removexattr::issue()
     };
   }
 
-  auto key = pack_xattr_key(ino, name);
+  {
+    const auto key = pack_xattr_key(ino, name);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   xattr_node_fetch);
 
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &xattr_node_fetch);
+    fdb_transaction_clear(transaction.get(), key.data(), key.size());
+  }
 
-  fdb_transaction_clear(transaction.get(), key.data(), key.size());
-
-  key = pack_xattr_data_key(ino, name);
-
-  fdb_transaction_clear(transaction.get(), key.data(), key.size());
+  {
+    const auto key = pack_xattr_data_key(ino, name);
+    fdb_transaction_clear(transaction.get(), key.data(), key.size());
+  }
 
   return std::bind(&Inflight_removexattr::process, this);
 }
