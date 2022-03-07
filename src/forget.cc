@@ -58,7 +58,7 @@ InflightCallback Inflight_forget::issue()
   }
   
   wait_on_future(fdb_transaction_commit(transaction.get()),
-		 &commit);
+		 commit);
   return []() -> InflightAction {
     return InflightAction::None();
   };

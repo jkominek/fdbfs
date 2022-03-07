@@ -371,7 +371,7 @@ InflightAction Inflight_rename::check()
 					       1, 0,
 					       FDB_STREAMING_MODE_WANT_ALL, 0,
 					       0, 0),
-		     &directory_listing_fetch);
+		     directory_listing_fetch);
     }
 
     /**
@@ -395,7 +395,7 @@ InflightAction Inflight_rename::check()
 					     2, 0,
 					     FDB_STREAMING_MODE_WANT_ALL, 0,
 					     0, 0),
-		   &inode_metadata_fetch);
+		   inode_metadata_fetch);
     return InflightAction::BeginWait(std::bind(&Inflight_rename::complicated, this));
   } else {
     return InflightAction::Abort(ENOSYS);
@@ -417,28 +417,28 @@ InflightCallback Inflight_rename::issue()
     const auto key = pack_inode_key(oldparent);
     wait_on_future(fdb_transaction_get(transaction.get(),
                                        key.data(), key.size(), 0),
-                   &oldparent_inode_lookup);
+                   oldparent_inode_lookup);
   }
 
   {
     const auto key = pack_inode_key(newparent);
     wait_on_future(fdb_transaction_get(transaction.get(),
                                        key.data(), key.size(), 0),
-                   &newparent_inode_lookup);
+                   newparent_inode_lookup);
   }
 
   {
     const auto key = pack_dentry_key(oldparent, oldname);
     wait_on_future(fdb_transaction_get(transaction.get(),
                                        key.data(), key.size(), 0),
-                   &origin_lookup);
+                   origin_lookup);
   }
 
   {
     const auto key = pack_dentry_key(newparent, newname);
     wait_on_future(fdb_transaction_get(transaction.get(),
                                        key.data(), key.size(), 0),
-                   &destination_lookup);
+                   destination_lookup);
   }
 
   // TODO probably also need to fetch information about the parent inodes

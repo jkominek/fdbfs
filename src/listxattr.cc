@@ -119,14 +119,14 @@ InflightAction Inflight_listxattr::process()
 					   maxsize - buf.size(), 0,
 					   FDB_STREAMING_MODE_WANT_ALL, 0,
 					   0, 0),
-		 &range_fetch);
+		 range_fetch);
   return InflightAction::BeginWait(std::bind(&Inflight_listxattr::process, this));
 }
 
 InflightCallback Inflight_listxattr::issue()
 {
-  auto start = pack_xattr_key(ino, "");
-  auto stop = pack_xattr_key(ino, "\xFF");
+  const auto start = pack_xattr_key(ino, "");
+  const auto stop = pack_xattr_key(ino, "\xFF");
 
   wait_on_future(fdb_transaction_get_range(transaction.get(),
 					   start.data(), start.size(), 0, 1,
@@ -134,7 +134,7 @@ InflightCallback Inflight_listxattr::issue()
 					   maxsize, 0,
 					   FDB_STREAMING_MODE_WANT_ALL, 0,
 					   0, 0),
-		 &range_fetch);
+		 range_fetch);
 
   empty_xattr_name_length = start.size();
 
@@ -198,7 +198,7 @@ InflightAction Inflight_listxattr_count::process()
 					     0, 0,
 					     FDB_STREAMING_MODE_WANT_ALL, 0,
 					     0, 0),
-		   &range_fetch);
+		   range_fetch);
     return InflightAction::BeginWait(std::bind(&Inflight_listxattr_count::process, this));
   } else {
     return InflightAction::XattrSize(accumulated_size);
@@ -207,8 +207,8 @@ InflightAction Inflight_listxattr_count::process()
 
 InflightCallback Inflight_listxattr_count::issue()
 {
-  auto start = pack_xattr_key(ino, "");
-  auto stop = pack_xattr_key(ino, "\xFF");
+  const auto start = pack_xattr_key(ino, "");
+  const auto stop = pack_xattr_key(ino, "\xFF");
 
   wait_on_future(fdb_transaction_get_range(transaction.get(),
 					   start.data(), start.size(), 0, 1,
@@ -216,7 +216,7 @@ InflightCallback Inflight_listxattr_count::issue()
 					   0, 0,
 					   FDB_STREAMING_MODE_WANT_ALL, 0,
 					   0, 0),
-		 &range_fetch);
+		 range_fetch);
 
   empty_xattr_name_length = start.size();
 

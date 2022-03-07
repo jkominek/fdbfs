@@ -116,7 +116,7 @@ InflightAction Inflight_read::callback()
 			      0, 0);
     // we store into a new unique_future so that the old one won't
     // be deallocated while we're still using the FDBKeyValue* from it
-    wait_on_future(f, &next_range_fetch);
+    wait_on_future(f, next_range_fetch);
   } else {
     // normal
   }
@@ -170,7 +170,7 @@ InflightCallback Inflight_read::issue()
   const auto key = pack_inode_key(ino);
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
-		 &inode_fetch);
+		 inode_fetch);
 
   requested_range = offset_size_to_range_keys(ino, off, requested_size);
 
@@ -181,7 +181,7 @@ InflightCallback Inflight_read::issue()
 			      0, 0,
 			      FDB_STREAMING_MODE_WANT_ALL, 0,
 			      0, 0);
-  wait_on_future(f, &range_fetch);
+  wait_on_future(f, range_fetch);
   return std::bind(&Inflight_read::callback, this);
 }
 

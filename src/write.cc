@@ -220,10 +220,10 @@ InflightCallback Inflight_write::issue()
 
   // step 1 is easy, we'll need the inode record
   {
-    auto key = pack_inode_key(ino);
+    const auto key = pack_inode_key(ino);
     wait_on_future(fdb_transaction_get(transaction.get(),
 				       key.data(), key.size(), 0),
-		   &inode_fetch);
+		   inode_fetch);
   }
 
   const auto conflict_start_key = pack_fileblock_key(ino, off / BLOCKSIZE);
@@ -260,7 +260,7 @@ InflightCallback Inflight_write::issue()
 					     1, 0,
 					     FDB_STREAMING_MODE_WANT_ALL, 0,
 					     0, 0),
-		   &start_block_fetch);
+		   start_block_fetch);
     iter_start = start_block + 1;
     doing_start_block = 1;
   } else {
@@ -281,7 +281,7 @@ InflightCallback Inflight_write::issue()
 					       1, 0,
 					       FDB_STREAMING_MODE_WANT_ALL, 0,
 					       0, 0),
-		     &stop_block_fetch);
+		     stop_block_fetch);
     }
     iter_stop = stop_block;
   } else {

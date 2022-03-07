@@ -117,8 +117,8 @@ InflightAction Inflight_readdir::callback()
 
 InflightCallback Inflight_readdir::issue()
 {
-  auto start = pack_dentry_key(ino, "");
-  auto stop = pack_dentry_key(ino, "\xFF");
+  const auto start = pack_dentry_key(ino, "");
+  const auto stop = pack_dentry_key(ino, "\xFF");
 
   int offset = off;
   int limit = 10; // we should try to guess this better
@@ -131,7 +131,7 @@ InflightCallback Inflight_readdir::issue()
 			      limit, 0,
 			      FDB_STREAMING_MODE_WANT_ALL, 0,
 			      0, 0);
-  wait_on_future(f, &range_fetch);
+  wait_on_future(f, range_fetch);
   return std::bind(&Inflight_readdir::callback, this);
 }
 

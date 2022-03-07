@@ -82,7 +82,7 @@ InflightCallback Inflight_readlink::issue()
   // and request just that inode
   wait_on_future(fdb_transaction_get(transaction.get(),
 				     key.data(), key.size(), 0),
-		 &inode_fetch);
+		 inode_fetch);
   return std::bind(&Inflight_readlink::callback, this);
 }
 

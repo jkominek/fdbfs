@@ -114,7 +114,7 @@ InflightCallback Inflight_statfs::issue()
 {
   FDBFuture *f = fdb_transaction_get(transaction.get(),
 				     reinterpret_cast<const uint8_t*>("\xff\xff/status/json"), 14, 1);
-  wait_on_future(f, &status_fetch);
+  wait_on_future(f, status_fetch);
   return std::bind(&Inflight_statfs::process_status, this);
 }
 

@@ -165,22 +165,28 @@ InflightAction Inflight_link::check()
 InflightCallback Inflight_link::issue()
 {
   // check that the file is a file
-  auto key = pack_inode_key(ino);
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &file_lookup);
+  {
+    const auto key = pack_inode_key(ino);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   file_lookup);
+  }
 
   // check/update destination directory
-  key = pack_inode_key(newparent);
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &dir_lookup);
+  {
+    const auto key = pack_inode_key(newparent);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   dir_lookup);
+  }
 
   // check nothing exists in the destination
-  key = pack_dentry_key(newparent, newname);
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 &target_lookup);
+  {
+    const auto key = pack_dentry_key(newparent, newname);
+    wait_on_future(fdb_transaction_get(transaction.get(),
+                                       key.data(), key.size(), 0),
+                   target_lookup);
+  }
 
   return std::bind(&Inflight_link::check, this);
 }
