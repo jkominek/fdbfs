@@ -14,7 +14,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: apt-get
-      run: sudo apt-get update ; sudo apt-get -y install libfuse-dev fuse libprotobuf-dev protobuf-compiler liblz4-dev python-protobuf libzstd1 libzstd-dev libattr1-dev libacl1-dev s3cmd valgrind nlohmann-json3-dev meson
+      run: sudo apt-get update ; sudo apt-get -y install libfuse3-dev fuse3 libprotobuf-dev protobuf-compiler liblz4-dev python3-protobuf libzstd1 libzstd-dev libattr1-dev libacl1-dev s3cmd valgrind nlohmann-json3-dev meson python3-pip
     - name: pip
       run: sudo env PATH=$PATH pip install zstd==1.4.9.1
     - name: fetch fdb

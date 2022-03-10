@@ -1,7 +1,7 @@
 #ifndef __UTIL_H__
 #define __UTIL_H__
 
-#define FUSE_USE_VERSION 26
+#define FUSE_USE_VERSION 35
 #include <fuse_lowlevel.h>
 #define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
