@@ -13,7 +13,7 @@ add_project_arguments(
 protoc = find_program('protoc', required : true)
 
 deps = [
-    dependency('fuse'),
+    dependency('fuse3'),
     dependency('libzstd'),
     dependency('protobuf'),
     dependency('foundationdb-client')
