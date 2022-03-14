@@ -18,12 +18,11 @@ jobs:
     - name: pip
       run: sudo env PATH=$PATH pip install zstd==1.4.9.1
     - name: fetch fdb
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      run: s3cmd get s3://fdbfs-build-assets/{foundationdb-clients_6.3.18-1_amd64.deb,foundationdb-server_6.3.18-1_amd64.deb}
+      run: wget https://github.com/apple/foundationdb/releases/download/6.3.24/foundationdb-{clients,server}_6.3.24-1_amd64.deb
     - name: dpkg install
-      run: sudo dpkg -i foundationdb-clients_6.3.18-1_amd64.deb foundationdb-server_6.3.18-1_amd64.deb
+      run: sudo dpkg -i foundationdb-*_6.*-1_amd64.deb
+    - name: fdb setup
+      run: cp tests/foundationdb.conf /etc/foundationdb/ ; systemctl restart foundationdb
     - name: meson
       run: meson setup build
     - name: ninja
