@@ -22,7 +22,7 @@ jobs:
     - name: dpkg install
       run: sudo dpkg -i foundationdb-*_6.*-1_amd64.deb
     - name: fdb setup
-      run: cp tests/foundationdb.conf /etc/foundationdb/ ; systemctl restart foundationdb
+      run: sudo cp tests/foundationdb.conf /etc/foundationdb/ ; sudo systemctl restart foundationdb
     - name: meson
       run: meson setup build
     - name: ninja
