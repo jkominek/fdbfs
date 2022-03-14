@@ -18,7 +18,7 @@ jobs:
     - name: pip
       run: sudo env PATH=$PATH pip install zstd==1.4.9.1
     - name: fetch fdb
-      run: wget https://github.com/apple/foundationdb/releases/download/6.3.24/foundationdb-{clients,server}_6.3.24-1_amd64.deb
+      run: wget https://github.com/apple/foundationdb/releases/download/6.3.23/foundationdb-{clients,server}_6.3.23-1_amd64.deb
     - name: dpkg install
       run: sudo dpkg -i foundationdb-*_6.*-1_amd64.deb
     - name: fdb setup
