@@ -110,9 +110,7 @@ InflightAction Inflight_setxattr::process()
 		      data_key.data(), data_key.size(),
 		      xattr_value.data(), xattr_value.size());
 
-  return commit([]() {
-    return InflightAction::OK();
-  });
+  return commit(InflightAction::OK);
 }
 
 InflightCallback Inflight_setxattr::issue()

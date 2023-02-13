@@ -119,9 +119,7 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check()
 
   erase_inode(transaction.get(), ino);
 
-  return commit([]() {
-    return InflightAction::OK();
-  });
+  return commit(InflightAction::OK);
 }
 
 InflightAction Inflight_unlink_rmdir::inode_check()
@@ -197,9 +195,7 @@ InflightAction Inflight_unlink_rmdir::inode_check()
     }
   }
 
-  return commit([]() {
-    return InflightAction::OK();
-  });
+  return commit(InflightAction::OK);
 }
 
 InflightAction Inflight_unlink_rmdir::postlookup()

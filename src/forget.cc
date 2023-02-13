@@ -59,9 +59,7 @@ InflightCallback Inflight_forget::issue()
   
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 commit);
-  return []() -> InflightAction {
-    return InflightAction::None();
-  };
+  return InflightAction::None;
 }
 
 extern "C" void fdbfs_forget(fuse_req_t req, fuse_ino_t ino, uint64_t ncount)

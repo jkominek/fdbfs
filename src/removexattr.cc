@@ -67,9 +67,7 @@ InflightAction Inflight_removexattr::process()
   if(err) return InflightAction::FDBError(err);
 
   if(present) {
-    return commit([]() {
-      return InflightAction::OK();
-    });
+    return commit(InflightAction::OK);
   } else {
     return InflightAction::Abort(ENOATTR);
   }

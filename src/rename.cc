@@ -192,9 +192,7 @@ InflightAction Inflight_rename::complicated()
                         dirent_buffer, dirent_size);
   }
 
-  return commit([]() {
-    return InflightAction::OK();
-  });
+  return commit(InflightAction::OK);
 }
 
 InflightAction Inflight_rename::check()
@@ -406,9 +404,7 @@ InflightAction Inflight_rename::check()
    * we're all done except for the commit. So schedule that,
    * and head off to the commit callback when it finishes.
    */
-  return commit([]() {
-    return InflightAction::OK();
-  });
+  return commit(InflightAction::OK);
 }
 
 InflightCallback Inflight_rename::issue()

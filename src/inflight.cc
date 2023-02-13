@@ -286,7 +286,5 @@ InflightCallback Inflight_markused::issue() {
 		      &b, 1);
   wait_on_future(fdb_transaction_commit(transaction.get()),
 		 commit);
-  return []() -> InflightAction {
-    return InflightAction::Ignore();
-  };
+  return InflightAction::Ignore;
 }

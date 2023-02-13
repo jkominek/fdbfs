@@ -241,9 +241,7 @@ InflightCallback Inflight_write::issue()
 					FDB_CONFLICT_RANGE_TYPE_WRITE)) {
     // hm, if we can't add our conflict range, we can't guarantee correctness.
     // guess we'll try again?
-    return []() {
-	     return InflightAction::Restart();
-	   };
+    return InflightAction::Restart;
   }
 
   int iter_start, iter_stop;
