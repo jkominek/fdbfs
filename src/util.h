@@ -26,9 +26,10 @@
 // for mode_t
 #include <sys/types.h>
 
-#include <vector>
-#include <unordered_map>
 #include <functional>
+#include <optional>
+#include <unordered_map>
+#include <vector>
 
 #include "values.pb.h"
 

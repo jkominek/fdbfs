@@ -8,7 +8,6 @@
 #include <deque>
 #include <queue>
 #include <functional>
-#include <optional>
 
 #if DEBUG
 #include <time.h>
