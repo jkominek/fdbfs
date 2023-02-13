@@ -1,13 +1,13 @@
 syntax = "proto2";
 enum filetype {
-  unknown   = 0;
-  socket    = 0140000;
-  symlink   = 0120000;
-  regular   = 0100000;
-  block     = 0060000;
-  directory = 0040000;
-  character = 0020000;
-  fifo      = 0010000;
+  ft_unknown   = 0;
+  ft_socket    = 0140000;
+  ft_symlink   = 0120000;
+  ft_regular   = 0100000;
+  ft_block     = 0060000;
+  ft_directory = 0040000;
+  ft_character = 0020000;
+  ft_fifo      = 0010000;
 }
 
 message FilesystemMetadata {

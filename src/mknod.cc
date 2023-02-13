@@ -60,7 +60,7 @@ Inflight_mknod::Inflight_mknod(fuse_req_t req, fuse_ino_t parent,
   : Inflight(req, ReadWrite::Yes, std::move(transaction)),
     parent(parent), name(name), type(type), mode(mode), rdev(rdev)
 {
-  if(type == symlink)
+  if(type == ft_symlink)
     this->symlink_target = symlink_target.value();
 }
 
@@ -119,10 +119,10 @@ InflightAction Inflight_mknod::postverification()
   INodeRecord inode;
   inode.set_inode(ino);
   inode.set_type(type);
-  if(type == symlink)
+  if(type == ft_symlink)
     inode.set_symlink(symlink_target);
   inode.set_mode(mode);
-  inode.set_nlinks((type == directory) ? 2 : 1);
+  inode.set_nlinks((type == ft_directory) ? 2 : 1);
   inode.set_size(0);
   inode.set_rdev(rdev);
   const fuse_ctx *ctx = fuse_req_ctx(req);
@@ -214,11 +214,11 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent,
   filetype deduced_type;
   // validate mode value
   switch(mode & S_IFMT) {
-  case S_IFSOCK: deduced_type = socket; break;
-  case S_IFLNK:  deduced_type = symlink; break;
-  case S_IFREG:  deduced_type = regular; break;
-  case S_IFCHR:  deduced_type = character; break;
-  case S_IFIFO:  deduced_type = fifo; break;
+  case S_IFSOCK: deduced_type = ft_socket; break;
+  case S_IFLNK:  deduced_type = ft_symlink; break;
+  case S_IFREG:  deduced_type = ft_regular; break;
+  case S_IFCHR:  deduced_type = ft_character; break;
+  case S_IFIFO:  deduced_type = ft_fifo; break;
   default: {
     // unsupported value. abort.
     fuse_reply_err(req, EPERM);
@@ -240,7 +240,7 @@ extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent,
   }
   Inflight_mknod *inflight =
     new Inflight_mknod(req, parent, name, mode & (~S_IFMT),
-		       directory, 0, make_transaction());
+		       ft_directory, 0, make_transaction());
   inflight->start();
 }
 
@@ -253,7 +253,7 @@ extern "C" void fdbfs_symlink(fuse_req_t req, const char *target,
   }
   Inflight_mknod *inflight =
     new Inflight_mknod(req, parent, name, 0777 & (~S_IFMT),
-                       symlink, 0, make_transaction(),
+                       ft_symlink, 0, make_transaction(),
                        std::string(target));
   inflight->start();
 }

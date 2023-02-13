@@ -258,9 +258,9 @@ InflightAction Inflight_rename::check()
     // turns out you can move a directory on top of another,
     // empty directory. look to see if we're moving a directory
     if(origin_dirent.has_type() &&
-       (origin_dirent.type() == directory) &&
+       (origin_dirent.type() == ft_directory) &&
        destination_dirent.has_type() &&
-       (destination_dirent.type() != directory)) {
+       (destination_dirent.type() != ft_directory)) {
       return InflightAction::Abort(EISDIR);
     }
   } else if(flags == RENAME_EXCHANGE) {
@@ -353,7 +353,7 @@ InflightAction Inflight_rename::check()
      * have to get rid of it.
      * TODO ugh can we share this code with unlink/rmdir?
      **/
-    if(destination_dirent.type() == directory) {
+    if(destination_dirent.type() == ft_directory) {
       /**
        * The destination is a directory. We'll need to know
        * if it is empty before we can remove it.

@@ -241,7 +241,7 @@ InflightAction Inflight_unlink_rmdir::postlookup()
   // if it isn't the right thing.
   if(op==Op::Rmdir) {
     // we want to find a directory
-    if(dirent_type == directory) {
+    if(dirent_type == ft_directory) {
       // ok, we've successfully found something rmdir'able.
 
       // can't remove the dirent here, though, as there might be

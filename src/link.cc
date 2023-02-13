@@ -81,7 +81,7 @@ InflightAction Inflight_link::check()
     if(!inode.has_type()) {
       // error
       return InflightAction::Abort(EIO);
-    } else if(inode.type() == directory) {
+    } else if(inode.type() == ft_directory) {
       // can hardlink anything except a directory
       return InflightAction::Abort(EPERM);
     }
@@ -103,7 +103,7 @@ InflightAction Inflight_link::check()
       return InflightAction::Abort(EIO);
       // error
     }
-    if(dirinode.type() != directory) {
+    if(dirinode.type() != ft_directory) {
       // have to hardlink into a directory
       return InflightAction::Abort(ENOTDIR);
     }

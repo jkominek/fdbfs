@@ -63,7 +63,7 @@ InflightAction Inflight_readlink::callback()
     INodeRecord inode;
     inode.ParseFromArray(val, vallen);
     if(!inode.has_symlink()) {
-      if(inode.type() == symlink) {
+      if(inode.type() == ft_symlink) {
 	return InflightAction::Abort(EIO);
       } else {
 	return InflightAction::Abort(EINVAL);

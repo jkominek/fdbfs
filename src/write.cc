@@ -109,7 +109,7 @@ InflightAction Inflight_write::check()
   inode.ParseFromArray(val, vallen);
   if((!inode.IsInitialized()) ||
      (!inode.has_type()) || (!inode.has_size()) ||
-     (inode.type() != regular)) {
+     (inode.type() != ft_regular)) {
     return InflightAction::Abort(EINVAL);
   } else {
     if(inode.size() < (off + buffer.size())) {

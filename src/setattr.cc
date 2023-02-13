@@ -204,7 +204,7 @@ InflightAction Inflight_setattr::callback()
 
   if(substantial_update &&
      !(to_set & FUSE_SET_ATTR_MODE) &&
-     !(inode.has_type() && inode.type() == directory)) {
+     !(inode.has_type() && inode.type() == ft_directory)) {
     // strip setuid and setgid unless we just updated the mode,
     // or we're operating on a directory.
     inode.set_mode(inode.mode() & 01777);

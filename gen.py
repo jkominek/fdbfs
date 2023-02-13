@@ -40,7 +40,7 @@ rootdir_inode = 1
 rootdir_inode_value = msgs.INodeRecord()
 rootdir_inode_value.inode = rootdir_inode
 rootdir_inode_value.size = 0
-rootdir_inode_value.type = msgs.directory
+rootdir_inode_value.type = msgs.ft_directory
 rootdir_inode_value.nlinks = 2
 rootdir_inode_value.mode = 0o555
 
@@ -52,7 +52,7 @@ hello_inode_data = b"hello world"
 hello_inode_value = msgs.INodeRecord()
 hello_inode_value.inode = hello_inode
 hello_inode_value.size = len(hello_inode_data)
-hello_inode_value.type = msgs.regular
+hello_inode_value.type = msgs.ft_regular
 hello_inode_value.nlinks = 1
 hello_inode_value.mode = 0o666
 
@@ -64,7 +64,7 @@ print_set(xattr_data_key(hello_inode, b"greeting"),
 
 hello_dirent = msgs.DirectoryEntry()
 hello_dirent.inode = hello_inode
-hello_dirent.type = msgs.regular
+hello_dirent.type = msgs.ft_regular
 print_set(dirent_key(rootdir_inode, b"hello"), hello_dirent.SerializeToString())
 print_set(inode_key(hello_inode), hello_inode_value.SerializeToString())
 print_set(block_key(hello_inode, 0), hello_inode_data)
@@ -75,13 +75,13 @@ world_inode_data = b"hello world!!!!"
 world_inode_value = msgs.INodeRecord()
 world_inode_value.inode = world_inode
 world_inode_value.size = len(world_inode_data)
-world_inode_value.type = msgs.regular
+world_inode_value.type = msgs.ft_regular
 world_inode_value.nlinks = 1
 world_inode_value.mode = 0o666
 
 world_dirent = msgs.DirectoryEntry()
 world_dirent.inode = world_inode
-world_dirent.type = msgs.regular
+world_dirent.type = msgs.ft_regular
 
 print_set(dirent_key(rootdir_inode, b"world"), world_dirent.SerializeToString())
 print_set(inode_key(world_inode), world_inode_value.SerializeToString())
@@ -91,14 +91,14 @@ print_set(block_key(world_inode, 0)+b"z\x01\x01", zstd.ZSTD_compress(world_inode
 portal_inode = 100
 portal_inode_value = msgs.INodeRecord()
 portal_inode_value.inode = portal_inode
-portal_inode_value.type = msgs.symlink
+portal_inode_value.type = msgs.ft_symlink
 portal_inode_value.nlinks = 1
 portal_inode_value.mode = 0
 portal_inode_value.symlink = b"world"
 
 portal_dirent = msgs.DirectoryEntry()
 portal_dirent.inode = portal_inode
-portal_dirent.type = msgs.symlink
+portal_dirent.type = msgs.ft_symlink
 
 print_set(dirent_key(rootdir_inode, b"portal"), portal_dirent.SerializeToString())
 print_set(inode_key(portal_inode), portal_inode_value.SerializeToString())
