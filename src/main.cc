@@ -93,8 +93,10 @@ pthread_t gc_thread;
 void fdbfs_destroy(void *userdata) {
   // TODO bring gc_thread to a clean halt
   // TODO check return codes and do... what?
-  printf("fdbfs_destroy has been invoked\n");
-  (void)fdb_stop_network();
+  fdb_database_destroy(database);
+  if (fdb_stop_network()) {
+    ;
+  }
   pthread_join(network_thread, NULL);
   exit(0);
 }
@@ -232,7 +234,6 @@ shutdown_args:
 shutdown_fdb:
   err = err || fdb_stop_network();
   err = err || pthread_join(network_thread, NULL);
-  fdb_database_destroy(database);
 
   return err;
 }
