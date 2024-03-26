@@ -8,7 +8,7 @@
 
 // Configuration-esque block, to be pulled out later
 
-//#define LZ4_BLOCK_COMPRESSION
+// #define LZ4_BLOCK_COMPRESSION
 #define ZSTD_BLOCK_COMPRESSION
 
 #ifdef LZ4_BLOCK_COMPRESSION
@@ -33,12 +33,12 @@
 
 #include "values.pb.h"
 
-#define INODE_PREFIX    'i'
+#define INODE_PREFIX 'i'
 #define INODE_USE_PREFIX 0x01
-#define DENTRY_PREFIX   'd'
-#define DATA_PREFIX     'f'
-#define GARBAGE_PREFIX  'g'
-#define PID_PREFIX      'p'
+#define DENTRY_PREFIX 'd'
+#define DATA_PREFIX 'f'
+#define GARBAGE_PREFIX 'g'
+#define PID_PREFIX 'p'
 #define METADATA_PREFIX 'M'
 #define XATTR_NODE_PREFIX 'x'
 #define XATTR_DATA_PREFIX 'X'
@@ -65,24 +65,32 @@ struct fdbfs_filehandle {
   // and track it properly so that we could,
   // later.
 };
-[[nodiscard]] extern struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *);
+[[nodiscard]] extern struct fdbfs_filehandle **
+extract_fdbfs_filehandle(struct fuse_file_info *);
 
 [[nodiscard]] extern fuse_ino_t generate_inode();
-[[nodiscard]] extern std::vector<uint8_t> pack_inode_key(fuse_ino_t, char=INODE_PREFIX, const std::vector<uint8_t> &suffix={});
+[[nodiscard]] extern std::vector<uint8_t>
+pack_inode_key(fuse_ino_t, char = INODE_PREFIX,
+               const std::vector<uint8_t> &suffix = {});
 [[nodiscard]] extern std::vector<uint8_t> pack_garbage_key(fuse_ino_t);
-[[nodiscard]] extern std::vector<uint8_t> pack_pid_key(std::vector<uint8_t>, const std::vector<uint8_t> &suffix={});
+[[nodiscard]] extern std::vector<uint8_t>
+pack_pid_key(std::vector<uint8_t>, const std::vector<uint8_t> &suffix = {});
 [[nodiscard]] extern std::vector<uint8_t> pack_inode_use_key(fuse_ino_t);
-[[nodiscard]] extern std::vector<uint8_t> pack_fileblock_key(fuse_ino_t, uint64_t, const std::vector<uint8_t> &suffix={});
-[[nodiscard]] extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t, const std::string&);
-[[nodiscard]] extern std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name={});
-[[nodiscard]] extern std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, const std::string &name={});
+[[nodiscard]] extern std::vector<uint8_t>
+pack_fileblock_key(fuse_ino_t, uint64_t,
+                   const std::vector<uint8_t> &suffix = {});
+[[nodiscard]] extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t,
+                                                          const std::string &);
+[[nodiscard]] extern std::vector<uint8_t>
+pack_xattr_key(fuse_ino_t ino, const std::string &name = {});
+[[nodiscard]] extern std::vector<uint8_t>
+pack_xattr_data_key(fuse_ino_t ino, const std::string &name = {});
 extern void print_key(std::vector<uint8_t>);
-extern void pack_inode_record_into_stat(const INodeRecord &inode, struct stat &attr);
-template <typename T>
-void print_bytes(const T *str, int strlength)
-{
-  for(int i=0; i<strlength; i++) {
-    if(isprint(str[i])) {
+extern void pack_inode_record_into_stat(const INodeRecord &inode,
+                                        struct stat &attr);
+template <typename T> void print_bytes(const T *str, int strlength) {
+  for (int i = 0; i < strlength; i++) {
+    if (isprint(str[i])) {
       printf("%c", str[i]);
     } else {
       printf("\\x%02x", str[i]);
@@ -92,7 +100,8 @@ void print_bytes(const T *str, int strlength)
 using range_keys = std::pair<std::vector<uint8_t>, std::vector<uint8_t>>;
 [[nodiscard]] range_keys offset_size_to_range_keys(fuse_ino_t, size_t, size_t);
 
-[[nodiscard]] extern bool filename_length_check(fuse_req_t, const char *, size_t maxlength=255);
+[[nodiscard]] extern bool filename_length_check(fuse_req_t, const char *,
+                                                size_t maxlength = 255);
 
 extern void update_atime(INodeRecord *, const struct timespec *);
 extern void update_mtime(INodeRecord *, const struct timespec *);
@@ -102,27 +111,28 @@ extern void update_directory_times(FDBTransaction *, INodeRecord &);
 extern void erase_inode(FDBTransaction *, fuse_ino_t);
 
 extern void set_block(FDBTransaction *, const std::vector<uint8_t>,
-		      const uint8_t *, uint64_t, bool=true);
-[[nodiscard]] extern int decode_block(const FDBKeyValue *, int, uint8_t *, int, int);
+                      const uint8_t *, uint64_t, bool = true);
+[[nodiscard]] extern int decode_block(const FDBKeyValue *, int, uint8_t *, int,
+                                      int);
 
 #ifndef DEBUG
 #define DEBUG 0
-#endif //DEBUG
+#endif // DEBUG
 
-#define debug_print(fmt, ...) \
-  do { if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
+#define debug_print(fmt, ...)                                                  \
+  do {                                                                         \
+    if (DEBUG)                                                                 \
+      fprintf(stderr, fmt, __VA_ARGS__);                                       \
+  } while (0)
 
 struct FDBTransactionDeleter {
-  void operator()(FDBTransaction *t) {
-    fdb_transaction_destroy(t);
-  }
+  void operator()(FDBTransaction *t) { fdb_transaction_destroy(t); }
 };
 struct FDBFutureDeleter {
-  void operator()(FDBFuture *f) {
-    fdb_future_destroy(f);
-  }
+  void operator()(FDBFuture *f) { fdb_future_destroy(f); }
 };
-typedef std::unique_ptr<FDBTransaction, FDBTransactionDeleter> unique_transaction;
+typedef std::unique_ptr<FDBTransaction, FDBTransactionDeleter>
+    unique_transaction;
 typedef std::unique_ptr<FDBFuture, FDBFutureDeleter> unique_future;
 
 [[nodiscard]] extern unique_transaction make_transaction();
@@ -134,36 +144,36 @@ typedef std::unique_ptr<FDBFuture, FDBFutureDeleter> unique_future;
  * anywhere performance critical.
  */
 template <typename T>
-std::optional<T> run_sync_transaction(std::function<T(FDBTransaction *)> f)
-{
+std::optional<T> run_sync_transaction(std::function<T(FDBTransaction *)> f) {
   unique_transaction t = make_transaction();
 
-  while(true) {
+  while (true) {
     fdb_error_t err = 0;
     T retval;
     try {
       retval = f(t.get());
       unique_future commitfuture = wrap_future(fdb_transaction_commit(t.get()));
-      if(fdb_future_block_until_ready(commitfuture.get())) {
-       throw new std::runtime_error("failed to block for future");
+      if (fdb_future_block_until_ready(commitfuture.get())) {
+        throw new std::runtime_error("failed to block for future");
       }
-      if(fdb_future_get_error(commitfuture.get())) {
+      if (fdb_future_get_error(commitfuture.get())) {
         err = fdb_future_get_error(commitfuture.get());
       }
     } catch (fdb_error_t _err) {
       err = _err;
     }
 
-    if(!err) {
+    if (!err) {
       return std::make_optional(retval);
     } else {
-      unique_future retryfuture = wrap_future(fdb_transaction_on_error(t.get(), err));
-      if(fdb_future_block_until_ready(retryfuture.get())) {
-       throw new std::runtime_error("failed to block for future");
+      unique_future retryfuture =
+          wrap_future(fdb_transaction_on_error(t.get(), err));
+      if (fdb_future_block_until_ready(retryfuture.get())) {
+        throw new std::runtime_error("failed to block for future");
       }
-      if(fdb_future_get_error(retryfuture.get())) {
-       // failed utterly
-       return std::nullopt;
+      if (fdb_future_get_error(retryfuture.get())) {
+        // failed utterly
+        return std::nullopt;
       }
       // fall out and loop
     }

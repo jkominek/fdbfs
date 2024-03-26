@@ -4,22 +4,22 @@
 #define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
 
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <assert.h>
-#include <pthread.h>
-#include <stdbool.h>
 
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
-#include <functional>
 
-#include "util.h"
 #include "inflight.h"
+#include "util.h"
 
 thread_pool pool;
 
@@ -60,9 +60,9 @@ void shut_it_down() {
 
 // allocate an inflight struct and fill and out some basics.
 // readwrite specifies the transaction will include writes
-Inflight::Inflight(fuse_req_t req, ReadWrite readwrite, unique_transaction provided)
-  : transaction(std::move(provided)), req(req), readwrite(readwrite)
-{
+Inflight::Inflight(fuse_req_t req, ReadWrite readwrite,
+                   unique_transaction provided)
+    : transaction(std::move(provided)), req(req), readwrite(readwrite) {
   // we need to be more clever about this. having every single
   // operation fetch a read version is going to add a lot of latency.
 #if DEBUG
@@ -70,14 +70,13 @@ Inflight::Inflight(fuse_req_t req, ReadWrite readwrite, unique_transaction provi
 #endif
 }
 
-void Inflight::cleanup()
-{
+void Inflight::cleanup() {
 #if DEBUG
   struct timespec stop;
   clock_gettime(CLOCK_MONOTONIC, &stop);
   time_t secs = (stop.tv_sec - clockstart.tv_sec);
   long nsecs = (stop.tv_nsec - clockstart.tv_nsec);
-  if(secs<5) {
+  if (secs < 5) {
     nsecs += secs * 1000000000;
     printf("inflight %p for req %p took %li ns\n", this, req, nsecs);
   } else {
@@ -86,9 +85,8 @@ void Inflight::cleanup()
 #endif
 }
 
-void Inflight::start()
-{
-  if(shut_it_down_forever) {
+void Inflight::start() {
+  if (shut_it_down_forever) {
     // abort everything immediately
     fuse_reply_err(req, ENOSYS);
     cleanup();
@@ -100,55 +98,53 @@ void Inflight::start()
   begin_wait();
 }
 
-InflightAction Inflight::commit(InflightCallback cb)
-{
-  wait_on_future(fdb_transaction_commit(transaction.get()),
-                 _commit);
+InflightAction Inflight::commit(InflightCallback cb) {
+  wait_on_future(fdb_transaction_commit(transaction.get()), _commit);
   return InflightAction::BeginWait(cb);
 }
 
-void Inflight::future_ready(FDBFuture *f)
-{
-  if(!future_queue.empty()) {
+void Inflight::future_ready(FDBFuture *f) {
+  if (!future_queue.empty()) {
     // only the first future should call us
     FDBFuture *next = future_queue.front();
     future_queue.pop();
-    if(next != f) {
+    if (next != f) {
       // TODO error? or something? what?
       // somehow a future we hadn't set a callback
       // on has called us.
     }
     // skip over any futures that are already ready
-    while((!future_queue.empty()) && fdb_future_is_ready(future_queue.front()))
+    while ((!future_queue.empty()) && fdb_future_is_ready(future_queue.front()))
       future_queue.pop();
   } else {
     // hmm. wtf? we were called by FDB, but we're not
     // aware of having any futures we're waiting on.
   }
 
-  if(future_queue.empty()) {
-    if(bool(cb)) {
+  if (future_queue.empty()) {
+    if (bool(cb)) {
       std::function<InflightAction()> f = cb.value();
       cb = std::nullopt;
       InflightAction a = f();
       a.perform(this);
 
-      if(a.begin_wait) {
-	begin_wait();
+      if (a.begin_wait) {
+        begin_wait();
       }
 
-      if(a.restart) {
-	fdb_transaction_reset(transaction.get());
-	this->reincarnate()->start();
+      if (a.restart) {
+        fdb_transaction_reset(transaction.get());
+        this->reincarnate()->start();
       }
-      
-      if(a.delete_this) {
-	// we're dead and done, for whatever reason
+
+      if (a.delete_this) {
+        // we're dead and done, for whatever reason
         cleanup();
-	delete this;
+        delete this;
       }
     } else {
-      std::cout << "no callback was set for " << typeid(*this).name() << " when we needed one" << std::endl;
+      std::cout << "no callback was set for " << typeid(*this).name()
+                << " when we needed one" << std::endl;
       throw std::runtime_error("no callback was set when we needed one");
     }
   } else {
@@ -160,14 +156,13 @@ void Inflight::future_ready(FDBFuture *f)
 }
 
 void Inflight::begin_wait() {
-  if(future_queue.empty()) {
+  if (future_queue.empty()) {
     // we could try to resume processing the transaction, but really this
     // just shouldn't be possible, so i'm inclined to bail on it.
     throw std::runtime_error("tried to start waiting on empty future queue");
   }
-  if(fdb_future_set_callback(future_queue.front(),
-			     fdbfs_error_checker,
-			     static_cast<void*>(this))) {
+  if (fdb_future_set_callback(future_queue.front(), fdbfs_error_checker,
+                              static_cast<void *>(this))) {
     // we don't have a way to deal with this, so destroy the
     // transaction so that nothing leaks. ideally we'd notify
     // fuse at this point that the operation is dead.
@@ -176,8 +171,7 @@ void Inflight::begin_wait() {
   }
 }
 
-void Inflight::wait_on_future(FDBFuture *f, unique_future &dest)
-{
+void Inflight::wait_on_future(FDBFuture *f, unique_future &dest) {
   future_queue.push(f);
   dest.reset(f);
 }
@@ -187,11 +181,10 @@ void Inflight::wait_on_future(FDBFuture *f, unique_future &dest)
  * so that it can delay this transaction, or whatever it wants
  * to do, as appropriate.
  */
-extern "C" void fdbfs_error_processor(FDBFuture *f, void *p)
-{
-  Inflight *inflight = static_cast<Inflight*>(p);
+extern "C" void fdbfs_error_processor(FDBFuture *f, void *p) {
+  Inflight *inflight = static_cast<Inflight *>(p);
 
-  if(shut_it_down_forever) {
+  if (shut_it_down_forever) {
     // everything is to be terminated immediately
     fuse_reply_err(inflight->req, ENOSYS);
     delete inflight;
@@ -202,18 +195,18 @@ extern "C" void fdbfs_error_processor(FDBFuture *f, void *p)
   // done with this either way.
   fdb_future_destroy(f);
 
-  if(err) {
+  if (err) {
     debug_print("fdbfs_error_processor killing request %p for inflight %p: %s",
-		inflight->req, p, fdb_get_error(err));
+                inflight->req, p, fdb_get_error(err));
     // error during an error. foundationdb says that means
     // you should give up. so we'll let fuse know they're hosed.
-    if(!inflight->suppress_errors)
+    if (!inflight->suppress_errors)
       fuse_reply_err(inflight->req, EIO);
 
     delete inflight;
     return;
   }
-    
+
   // foundationdb, perhaps after some delay, has given us the
   // goahead to start up the new transaction.
   fdb_transaction_reset(inflight->transaction.get());
@@ -226,21 +219,21 @@ extern "C" void fdbfs_error_processor(FDBFuture *f, void *p)
  * errors, and enqueue the next step of the transaction into the thread
  * pool for execution.
  */
-extern "C" void fdbfs_error_checker(FDBFuture *f, void *p)
-{
-  Inflight *inflight = static_cast<Inflight*>(p);
+extern "C" void fdbfs_error_checker(FDBFuture *f, void *p) {
+  Inflight *inflight = static_cast<Inflight *>(p);
 
   fdb_error_t err = fdb_future_get_error(f);
 
-  if(err) {
+  if (err) {
     // got an error during normal processing. foundationdb says
     // we should call _on_error on it, and maybe we'll get to
     // try again, and maybe we won't.
-    FDBFuture *nextf = fdb_transaction_on_error(inflight->transaction.get(), err);
+    FDBFuture *nextf =
+        fdb_transaction_on_error(inflight->transaction.get(), err);
 
     auto inf = inflight->reincarnate();
-    if(fdb_future_set_callback(nextf, fdbfs_error_processor,
-                               static_cast<void*>(inf))) {
+    if (fdb_future_set_callback(nextf, fdbfs_error_processor,
+                                static_cast<void *>(inf))) {
       // hosed, we don't currently have a way to save this transaction.
       // TODO let fuse know the operation is dead.
       delete inf;
@@ -250,24 +243,22 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p)
   }
 
   // and finally toss the next bit of work onto the thread pool queue
-  pool.push_task([inflight, f]() {
-    inflight->future_ready(f);
-  });
+  pool.push_task([inflight, f]() { inflight->future_ready(f); });
 }
-
 
 // Inflight_markused
 
-Inflight_markused::Inflight_markused(fuse_req_t req, fuse_ino_t ino, unique_transaction transaction)
-  : Inflight(req, ReadWrite::Yes, std::move(transaction)), ino(ino)
-{
+Inflight_markused::Inflight_markused(fuse_req_t req, fuse_ino_t ino,
+                                     unique_transaction transaction)
+    : Inflight(req, ReadWrite::Yes, std::move(transaction)), ino(ino) {
   // we're taking place after fuse has already received the
   // real response. it doesn't care what we have to say, now.
   suppress_errors = true;
 }
 
 Inflight_markused *Inflight_markused::reincarnate() {
-  Inflight_markused *x = new Inflight_markused(req, ino, std::move(transaction));
+  Inflight_markused *x =
+      new Inflight_markused(req, ino, std::move(transaction));
   delete this;
   return x;
 }
@@ -281,10 +272,7 @@ InflightCallback Inflight_markused::issue() {
   // block until other operations complete!!! *** so if we call it
   // from within an fdb callback handler, we're deadlocked. don't do
   // that.
-  fdb_transaction_set(transaction.get(),
-		      key.data(), key.size(),
-		      &b, 1);
-  wait_on_future(fdb_transaction_commit(transaction.get()),
-		 commit);
+  fdb_transaction_set(transaction.get(), key.data(), key.size(), &b, 1);
+  wait_on_future(fdb_transaction_commit(transaction.get()), commit);
   return InflightAction::Ignore;
 }

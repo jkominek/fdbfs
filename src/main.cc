@@ -4,23 +4,23 @@
 #define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
 
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <assert.h>
-#include <pthread.h>
-#include <stdbool.h>
 
-#include <string>
 #include <memory>
+#include <string>
 
-#include "util.h"
-#include "liveness.h"
-#include "values.pb.h"
-#include "garbage_collector.h"
 #include "fdbfs_ops.h"
+#include "garbage_collector.h"
+#include "liveness.h"
+#include "util.h"
+#include "values.pb.h"
 
 // will be filled out before operation begins
 FDBDatabase *database;
@@ -35,38 +35,36 @@ uint32_t BLOCKSIZE; // 1<<BLOCKBITS
  * up the appropriate inflight structure and make the initial
  * call to the issuer.
  */
-static struct fuse_lowlevel_ops fdbfs_oper =
-  {
-    .init       = fdbfs_init,
-    .lookup	= fdbfs_lookup,
-    .forget     = fdbfs_forget,
-    .getattr	= fdbfs_getattr,
-    .setattr	= fdbfs_setattr,
-    .readlink   = fdbfs_readlink,
-    .mknod      = fdbfs_mknod,
-    .mkdir      = fdbfs_mkdir,
-    .unlink     = fdbfs_unlink,
-    .rmdir      = fdbfs_rmdir,
-    .symlink    = fdbfs_symlink,
-    .rename     = fdbfs_rename,
-    .link       = fdbfs_link,
-    .open	= fdbfs_open,
-    .read	= fdbfs_read,
-    .write      = fdbfs_write,
-    .flush      = fdbfs_flush,
-    .release	= fdbfs_release,
-    .readdir	= fdbfs_readdir,
-    .statfs     = fdbfs_statfs,
-    .setxattr   = fdbfs_setxattr,
-    .getxattr   = fdbfs_getxattr,
-    .listxattr  = fdbfs_listxattr,
-    .removexattr= fdbfs_removexattr,
-    .forget_multi= fdbfs_forget_multi,
+static struct fuse_lowlevel_ops fdbfs_oper = {
+    .init = fdbfs_init,
+    .lookup = fdbfs_lookup,
+    .forget = fdbfs_forget,
+    .getattr = fdbfs_getattr,
+    .setattr = fdbfs_setattr,
+    .readlink = fdbfs_readlink,
+    .mknod = fdbfs_mknod,
+    .mkdir = fdbfs_mkdir,
+    .unlink = fdbfs_unlink,
+    .rmdir = fdbfs_rmdir,
+    .symlink = fdbfs_symlink,
+    .rename = fdbfs_rename,
+    .link = fdbfs_link,
+    .open = fdbfs_open,
+    .read = fdbfs_read,
+    .write = fdbfs_write,
+    .flush = fdbfs_flush,
+    .release = fdbfs_release,
+    .readdir = fdbfs_readdir,
+    .statfs = fdbfs_statfs,
+    .setxattr = fdbfs_setxattr,
+    .getxattr = fdbfs_getxattr,
+    .listxattr = fdbfs_listxattr,
+    .removexattr = fdbfs_removexattr,
+    .forget_multi = fdbfs_forget_multi,
     //    .flock      = fdbfs_flock
-  };
+};
 
-void fdbfs_init(void *userdata, struct fuse_conn_info *conn)
-{
+void fdbfs_init(void *userdata, struct fuse_conn_info *conn) {
   /*
   printf("max_write %i\n", conn->max_write);
   printf("max_read  %i\n", conn->max_read);
@@ -78,8 +76,8 @@ void fdbfs_init(void *userdata, struct fuse_conn_info *conn)
   */
   // per the docs, transactions should be kept under 1MB.
   // let's stay well below that.
-  if(conn->max_write > (1<<17))
-    conn->max_write = 1<<17;
+  if (conn->max_write > (1 << 17))
+    conn->max_write = 1 << 17;
   // TODO maybe set this to the number of storage servers, or
   // half that, or somethimg. using 4 at the moment, to be
   // interesting.
@@ -88,15 +86,13 @@ void fdbfs_init(void *userdata, struct fuse_conn_info *conn)
   conn->congestion_threshold = 0;
 }
 
-
 /* Purely to get the FoundationDB network stuff running in a
  * background thread. Passing fdb_run_network straight to
  * pthread_create kind of works, but let's pretend this will
  * be robust cross platform code someday.
  */
-void *network_runner(void *ignore)
-{
-  if(fdb_run_network()) {
+void *network_runner(void *ignore) {
+  if (fdb_run_network()) {
     ;
   }
   return NULL;
@@ -105,8 +101,7 @@ void *network_runner(void *ignore)
 /* main is a mess.
  * i don't pretend any of this is reasonable.
  */
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
   struct fuse_session *se;
   struct fuse_cmdline_opts opts;
@@ -126,44 +121,43 @@ int main(int argc, char *argv[])
   fileblock_key_length = pack_fileblock_key(0, 0).size();
   dirent_prefix_length = pack_dentry_key(0, "").size();
   BLOCKBITS = 13;
-  BLOCKSIZE = 1<<BLOCKBITS;
+  BLOCKSIZE = 1 << BLOCKBITS;
 
   // give us some initial space.
   lookup_counts.reserve(128);
 
   // this probably isn't the best way to produce 128 bits in
   // a std::vector, but, whatever.
-  for(int i=0; i<16; i++) {
+  for (int i = 0; i < 16; i++) {
     inode_use_identifier.push_back(random() & 0xFF);
   }
   // TODO put our inode_use_identifier into the pid table somehow
-  
-  if(fuse_parse_cmdline(&args, &opts) != 0)
+
+  if (fuse_parse_cmdline(&args, &opts) != 0)
     return 1;
 
-  if(opts.show_help) {
+  if (opts.show_help) {
     printf("usage: %s [options] <mountpoint>\n\n", argv[0]);
     fuse_cmdline_help();
     fuse_lowlevel_help();
     err = 0;
     goto shutdown_args;
-  } else if(opts.show_version) {
+  } else if (opts.show_version) {
     printf("FUSE library version %s\n", fuse_pkgversion());
     fuse_lowlevel_version();
     err = 0;
     goto shutdown_args;
   }
 
-  if(opts.mountpoint == NULL) {
+  if (opts.mountpoint == NULL) {
     printf("usage: %s [options] <mountpoint>\n", argv[0]);
     printf("       %s --help\n", argv[0]);
     err = 1;
     goto shutdown_args;
   }
 
-  se = fuse_session_new(&args, &fdbfs_oper,
-                        sizeof(fdbfs_oper), NULL);
-  if(se == NULL) {
+  se = fuse_session_new(&args, &fdbfs_oper, sizeof(fdbfs_oper), NULL);
+  if (se == NULL) {
     err = 1;
     goto shutdown_args;
   }
@@ -187,19 +181,19 @@ int main(int argc, char *argv[])
   }
   */
 
-  if(fdb_select_api_version(FDB_API_VERSION)) {
+  if (fdb_select_api_version(FDB_API_VERSION)) {
     err = 1;
     goto shutdown_unmount;
   }
 
-  if(fdb_setup_network()) {
+  if (fdb_setup_network()) {
     err = 1;
     goto shutdown_unmount;
   }
 
   pthread_create(&network_thread, NULL, network_runner, NULL);
 
-  if(fdb_create_database(NULL, &database)) {
+  if (fdb_create_database(NULL, &database)) {
     goto shutdown_fdb;
   }
 
@@ -213,20 +207,20 @@ int main(int argc, char *argv[])
     err = fuse_session_loop_mt(se, &config);
   }
 
-  err = err || pthread_join( network_thread, NULL );
+  err = err || pthread_join(network_thread, NULL);
   fdb_database_destroy(database);
- shutdown_fdb:
+shutdown_fdb:
   err = err || fdb_stop_network();
 
- shutdown_unmount:
+shutdown_unmount:
   fuse_session_unmount(se);
   terminate_liveness();
- shutdown_handlers:
+shutdown_handlers:
   fuse_remove_signal_handlers(se);
- shutdown_session:
+shutdown_session:
   fuse_session_destroy(se);
 
- shutdown_args:
+shutdown_args:
   fuse_opt_free_args(&args);
 
   return err;

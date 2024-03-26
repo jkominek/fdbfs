@@ -1,16 +1,16 @@
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <assert.h>
-#include <pthread.h>
-#include <stdbool.h>
 
-#include "util.h"
-#include "inflight.h"
-#include "values.pb.h"
 #include "fdbfs_ops.h"
+#include "inflight.h"
+#include "util.h"
+#include "values.pb.h"
 
 /*************************************************************
  * lookup
@@ -39,6 +39,7 @@ public:
   Inflight_lookup(fuse_req_t, fuse_ino_t, std::string, unique_transaction);
   InflightCallback issue();
   Inflight_lookup *reincarnate();
+
 private:
   fuse_ino_t parent;
   std::string name;
@@ -53,41 +54,37 @@ private:
   InflightAction process_inode();
 };
 
-Inflight_lookup::Inflight_lookup(fuse_req_t req,
-				 fuse_ino_t parent,
-				 std::string name,
-				 unique_transaction transaction)
-  : Inflight(req, ReadWrite::Yes, std::move(transaction)), parent(parent), name(name)
-{
-}
+Inflight_lookup::Inflight_lookup(fuse_req_t req, fuse_ino_t parent,
+                                 std::string name,
+                                 unique_transaction transaction)
+    : Inflight(req, ReadWrite::Yes, std::move(transaction)), parent(parent),
+      name(name) {}
 
-Inflight_lookup *Inflight_lookup::reincarnate()
-{
-  Inflight_lookup *x = new Inflight_lookup(req, parent, name, std::move(transaction));
+Inflight_lookup *Inflight_lookup::reincarnate() {
+  Inflight_lookup *x =
+      new Inflight_lookup(req, parent, name, std::move(transaction));
   delete this;
   return x;
 }
 
-InflightAction Inflight_lookup::process_inode()
-{
-  fdb_bool_t present=0;
+InflightAction Inflight_lookup::process_inode() {
+  fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
   fdb_error_t err;
 
-  
   err = fdb_future_get_value(inode_fetch.get(), &present, &val, &vallen);
-  if(err)
+  if (err)
     return InflightAction::FDBError(err);
 
   // and second callback, to get the attributes
-  if(!present) {
+  if (!present) {
     return InflightAction::Abort(EIO);
   }
 
   INodeRecord inode;
   inode.ParseFromArray(val, vallen);
-  if(!inode.IsInitialized()) {
+  if (!inode.IsInitialized()) {
     return InflightAction::Abort(EIO);
   }
 
@@ -103,24 +100,23 @@ InflightAction Inflight_lookup::process_inode()
   return InflightAction::Entry(std::move(e));
 }
 
-InflightAction Inflight_lookup::lookup_inode()
-{
-  fdb_bool_t present=0;
+InflightAction Inflight_lookup::lookup_inode() {
+  fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
   fdb_error_t err;
-  
+
   err = fdb_future_get_value(dirent_fetch.get(), &present, &val, &vallen);
-  if(err)
+  if (err)
     return InflightAction::FDBError(err);
 
   // we're on the first callback, to get the directory entry
-  if(present) {
+  if (present) {
     {
       DirectoryEntry dirent;
       dirent.ParseFromArray(val, vallen);
-      if(!dirent.has_inode()) {
-	throw std::runtime_error("directory entry missing inode");
+      if (!dirent.has_inode()) {
+        throw std::runtime_error("directory entry missing inode");
       }
       target = dirent.inode();
     }
@@ -128,31 +124,32 @@ InflightAction Inflight_lookup::lookup_inode()
     const auto key = pack_inode_key(target);
 
     // and request just that inode
-    wait_on_future(fdb_transaction_get(transaction.get(),
-				       key.data(), key.size(), 1),
-                   inode_fetch);
-    return InflightAction::BeginWait(std::bind(&Inflight_lookup::process_inode, this));
+    wait_on_future(
+        fdb_transaction_get(transaction.get(), key.data(), key.size(), 1),
+        inode_fetch);
+    return InflightAction::BeginWait(
+        std::bind(&Inflight_lookup::process_inode, this));
   } else {
     return InflightAction::Abort(ENOENT);
   }
 }
 
-InflightCallback Inflight_lookup::issue()
-{
+InflightCallback Inflight_lookup::issue() {
   const auto key = pack_dentry_key(parent, name);
 
-  wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 1),
-                 dirent_fetch);
+  wait_on_future(
+      fdb_transaction_get(transaction.get(), key.data(), key.size(), 1),
+      dirent_fetch);
   return std::bind(&Inflight_lookup::lookup_inode, this);
 }
 
-extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
-{
-  if(filename_length_check(req, name)) {
+extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent,
+                             const char *name) {
+  if (filename_length_check(req, name)) {
     return;
   }
   std::string sname(name);
-  Inflight_lookup *inflight = new Inflight_lookup(req, parent, sname, make_transaction());
+  Inflight_lookup *inflight =
+      new Inflight_lookup(req, parent, sname, make_transaction());
   inflight->start();
 }

@@ -1,9 +1,9 @@
 #include "util.h"
 
-#include <strings.h>
-#include <stdio.h>
-#include <time.h>
 #include <ctype.h>
+#include <stdio.h>
+#include <strings.h>
+#include <time.h>
 
 #ifdef LZ4_BLOCK_COMPRESSION
 #include <lz4.h>
@@ -15,28 +15,25 @@
 
 #include "values.pb.h"
 
-unique_transaction make_transaction()
-{
+unique_transaction make_transaction() {
   unique_transaction ut;
   FDBTransaction *t;
-  if(fdb_database_create_transaction(database, &t)) {
+  if (fdb_database_create_transaction(database, &t)) {
     throw new std::runtime_error("failed to create transaction");
   }
   ut.reset(t);
   return ut;
 }
 
-unique_future wrap_future(FDBFuture *f)
-{
+unique_future wrap_future(FDBFuture *f) {
   unique_future uf;
   uf.reset(f);
   return uf;
 }
 
-struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *fi)
-{
+struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *fi) {
   static_assert(sizeof(fi->fh) >= sizeof(struct fdbfs_filehandle *),
-		"FUSE File handle can't hold a pointer to our structure");
+                "FUSE File handle can't hold a pointer to our structure");
   return reinterpret_cast<struct fdbfs_filehandle **>(&(fi->fh));
 }
 
@@ -51,10 +48,9 @@ std::unordered_map<fuse_ino_t, uint64_t> lookup_counts;
 
 // if this returns true, the caller is obligated to
 // insert a record adjacent to the inode to keep it alive
-bool increment_lookup_count(fuse_ino_t ino)
-{
+bool increment_lookup_count(fuse_ino_t ino) {
   auto it = lookup_counts.find(ino);
-  if(it != lookup_counts.end()) {
+  if (it != lookup_counts.end()) {
     // present
     it->second += 1;
     return false;
@@ -67,15 +63,14 @@ bool increment_lookup_count(fuse_ino_t ino)
 
 // if this returns true, the caller is obligated to
 // remove the inode adjacent record that keeps it alive
-bool decrement_lookup_count(fuse_ino_t ino, uint64_t count)
-{
+bool decrement_lookup_count(fuse_ino_t ino, uint64_t count) {
   auto it = lookup_counts.find(ino);
-  if(it == lookup_counts.end()) {
+  if (it == lookup_counts.end()) {
     // well. oops. kernel knew about something that isn't there.
     return false;
   } else {
     it->second -= count;
-    if(it->second > 0) {
+    if (it->second > 0) {
       // still cached, nothing to do.
       return false;
     } else {
@@ -89,8 +84,7 @@ bool decrement_lookup_count(fuse_ino_t ino, uint64_t count)
 // will be filled out before operation begins
 std::vector<uint8_t> key_prefix;
 
-fuse_ino_t generate_inode()
-{
+fuse_ino_t generate_inode() {
   // TODO everything that uses this will need to check that
   // it isn't trampling an existing inode.
   struct timespec tp;
@@ -111,8 +105,7 @@ fuse_ino_t generate_inode()
 
 int inode_key_length;
 std::vector<uint8_t> pack_inode_key(fuse_ino_t _ino, char prefix,
-                                    const std::vector<uint8_t> &suffix)
-{
+                                    const std::vector<uint8_t> &suffix) {
   auto key = key_prefix;
   key.push_back(prefix);
 
@@ -124,14 +117,12 @@ std::vector<uint8_t> pack_inode_key(fuse_ino_t _ino, char prefix,
   return key;
 }
 
-std::vector<uint8_t> pack_garbage_key(fuse_ino_t ino)
-{
+std::vector<uint8_t> pack_garbage_key(fuse_ino_t ino) {
   return pack_inode_key(ino, GARBAGE_PREFIX);
 }
 
 std::vector<uint8_t> pack_pid_key(std::vector<uint8_t> p,
-                                  const std::vector<uint8_t> &suffix)
-{
+                                  const std::vector<uint8_t> &suffix) {
   auto key = key_prefix;
   key.push_back(PID_PREFIX);
   key.insert(key.end(), p.begin(), p.end());
@@ -140,19 +131,18 @@ std::vector<uint8_t> pack_pid_key(std::vector<uint8_t> p,
   return key;
 }
 
-std::vector<uint8_t> pack_inode_use_key(fuse_ino_t ino)
-{
+std::vector<uint8_t> pack_inode_use_key(fuse_ino_t ino) {
   auto key = pack_inode_key(ino);
   key.push_back(INODE_USE_PREFIX);
-  key.insert(key.end(), inode_use_identifier.begin(), inode_use_identifier.end());
+  key.insert(key.end(), inode_use_identifier.begin(),
+             inode_use_identifier.end());
   return key;
 }
 
 int fileblock_prefix_length;
 int fileblock_key_length;
 std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t _block,
-                                        const std::vector<uint8_t> &suffix)
-{
+                                        const std::vector<uint8_t> &suffix) {
   auto key = pack_inode_key(ino, DATA_PREFIX);
 
   // TODO this is fast on our end, but every file block key now has 64
@@ -177,73 +167,69 @@ std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t _block,
 }
 
 int dirent_prefix_length;
-std::vector<uint8_t> pack_dentry_key(fuse_ino_t ino, const std::string &name)
-{
+std::vector<uint8_t> pack_dentry_key(fuse_ino_t ino, const std::string &name) {
   auto key = pack_inode_key(ino, DENTRY_PREFIX);
 
   key.insert(key.end(), name.begin(), name.end());
   return key;
 }
 
-std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name)
-{
+std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name) {
   auto key = pack_inode_key(ino, XATTR_NODE_PREFIX);
 
   key.insert(key.end(), name.begin(), name.end());
   return key;
 }
 
-std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino, const std::string &name)
-{
+std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino,
+                                         const std::string &name) {
   auto key = pack_inode_key(ino, XATTR_DATA_PREFIX);
 
   key.insert(key.end(), name.begin(), name.end());
   return key;
 }
 
-void print_key(std::vector<uint8_t> v)
-{
+void print_key(std::vector<uint8_t> v) {
   printf("%zu ", v.size());
   for (std::vector<uint8_t>::const_iterator i = v.begin(); i != v.end(); ++i)
-    if(isprint(*i))
+    if (isprint(*i))
       printf("%c", *i);
     else
       printf("\\x%02x", *i);
   printf("\n");
 }
 
-void pack_inode_record_into_stat(const INodeRecord &inode, struct stat &attr)
-{
+void pack_inode_record_into_stat(const INodeRecord &inode, struct stat &attr) {
   attr.st_ino = inode.inode();
   attr.st_dev = 0;
   attr.st_mode = inode.mode() | inode.type();
   attr.st_nlink = inode.nlinks();
-  if(inode.has_uid())
+  if (inode.has_uid())
     attr.st_uid = inode.uid();
   else
     attr.st_uid = 0;
 
-  if(inode.has_gid())
+  if (inode.has_gid())
     attr.st_gid = inode.gid();
   else
     attr.st_gid = 0;
 
-  if(inode.has_size())
+  if (inode.has_size())
     attr.st_size = inode.size();
   else
     attr.st_size = 0;
 
-  if(inode.has_atime()) {
+  if (inode.has_atime()) {
     attr.st_atim.tv_sec = inode.atime().sec();
     attr.st_atim.tv_nsec = inode.atime().nsec();
   }
 
-  if(inode.has_mtime()) {
+  if (inode.has_mtime()) {
     attr.st_mtim.tv_sec = inode.mtime().sec();
     attr.st_mtim.tv_nsec = inode.mtime().nsec();
   }
 
-  if(inode.has_ctime()) {
+  if (inode.has_ctime()) {
     attr.st_ctim.tv_sec = inode.ctime().sec();
     attr.st_ctim.tv_nsec = inode.ctime().nsec();
   }
@@ -262,50 +248,44 @@ void pack_inode_record_into_stat(const INodeRecord &inode, struct stat &attr)
   */
 }
 
-range_keys offset_size_to_range_keys(fuse_ino_t ino, size_t off, size_t size)
-{
+range_keys offset_size_to_range_keys(fuse_ino_t ino, size_t off, size_t size) {
   uint64_t start_block = off >> BLOCKBITS;
-  uint64_t stop_block  = ((off + size - 1) >> BLOCKBITS);
+  uint64_t stop_block = ((off + size - 1) >> BLOCKBITS);
   auto start = pack_fileblock_key(ino, start_block);
-  auto stop  = pack_fileblock_key(ino, stop_block);
+  auto stop = pack_fileblock_key(ino, stop_block);
   stop.push_back(0xff);
   return std::pair(start, stop);
 }
 
-bool filename_length_check(fuse_req_t req, const char *name, size_t maxlength)
-{
-  if(strnlen(name, maxlength+1)>maxlength) {
+bool filename_length_check(fuse_req_t req, const char *name, size_t maxlength) {
+  if (strnlen(name, maxlength + 1) > maxlength) {
     fuse_reply_err(req, ENAMETOOLONG);
     return true;
   }
   return false;
 }
 
-void update_atime(INodeRecord *inode, const struct timespec *tv)
-{
+void update_atime(INodeRecord *inode, const struct timespec *tv) {
   Timespec *atime = inode->mutable_atime();
   atime->set_sec(tv->tv_sec);
   atime->set_nsec(tv->tv_nsec);
 }
 
-void update_ctime(INodeRecord *inode, const struct timespec *tv)
-{
+void update_ctime(INodeRecord *inode, const struct timespec *tv) {
   Timespec *ctime = inode->mutable_ctime();
   ctime->set_sec(tv->tv_sec);
   ctime->set_nsec(tv->tv_nsec);
   update_atime(inode, tv);
 }
 
-void update_mtime(INodeRecord *inode, const struct timespec *tv)
-{
+void update_mtime(INodeRecord *inode, const struct timespec *tv) {
   Timespec *mtime = inode->mutable_mtime();
   mtime->set_sec(tv->tv_sec);
   mtime->set_nsec(tv->tv_nsec);
   update_ctime(inode, tv);
 }
 
-void update_directory_times(FDBTransaction *transaction, INodeRecord &inode)
-{
+void update_directory_times(FDBTransaction *transaction, INodeRecord &inode) {
   struct timespec tp;
   clock_gettime(CLOCK_REALTIME, &tp);
   inode.mutable_ctime()->set_sec(tp.tv_sec);
@@ -316,104 +296,95 @@ void update_directory_times(FDBTransaction *transaction, INodeRecord &inode)
   int inode_size = inode.ByteSizeLong();
   uint8_t inode_buffer[inode_size];
   inode.SerializeToArray(inode_buffer, inode_size);
-  fdb_transaction_set(transaction,
-		      key.data(), key.size(),
-		      inode_buffer, inode_size);
+  fdb_transaction_set(transaction, key.data(), key.size(), inode_buffer,
+                      inode_size);
 }
 
-void erase_inode(FDBTransaction *transaction, fuse_ino_t ino)
-{
+void erase_inode(FDBTransaction *transaction, fuse_ino_t ino) {
   // inode data
   auto key_start = pack_inode_key(ino);
   auto key_stop = key_start;
   key_stop.push_back('\xff');
-  fdb_transaction_clear_range(transaction,
-                              key_start.data(), key_start.size(),
-                              key_stop.data(),  key_stop.size());
+  fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
+                              key_stop.data(), key_stop.size());
 
   // TODO be clever and only isse these clears based on inode type
   // file data
   key_start = pack_fileblock_key(ino, 0);
   key_stop = pack_fileblock_key(ino, UINT64_MAX);
   key_stop.push_back('\xff');
-  fdb_transaction_clear_range(transaction,
-                              key_start.data(), key_start.size(),
-                              key_stop.data(),  key_stop.size());
+  fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
+                              key_stop.data(), key_stop.size());
 
   // directory listing
   key_start = pack_dentry_key(ino, "");
   key_stop = pack_dentry_key(ino, "\xff");
-  fdb_transaction_clear_range(transaction,
-                              key_start.data(), key_start.size(),
-                              key_stop.data(),  key_stop.size());
+  fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
+                              key_stop.data(), key_stop.size());
 
   // xattr nodes
   key_start = pack_xattr_key(ino, "");
   key_stop = pack_xattr_key(ino, "\xff");
-  fdb_transaction_clear_range(transaction,
-                              key_start.data(), key_start.size(),
-                              key_stop.data(),  key_stop.size());
+  fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
+                              key_stop.data(), key_stop.size());
 
   // xattr data
   key_start = pack_xattr_data_key(ino, "");
   key_stop = pack_xattr_data_key(ino, "\xff");
-  fdb_transaction_clear_range(transaction,
-                              key_start.data(), key_start.size(),
-                              key_stop.data(),  key_stop.size());
+  fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
+                              key_stop.data(), key_stop.size());
 }
 
-inline void sparsify(const uint8_t *block, uint64_t *write_size)
-{
+inline void sparsify(const uint8_t *block, uint64_t *write_size) {
   // sparsify our writes, by truncating nulls from the end of
   // blocks, and just clearing away totally null blocks
-  for(; *(write_size)>0; *(write_size)-=1) {
-    if(block[*(write_size)-1] != 0x00)
+  for (; *(write_size) > 0; *(write_size) -= 1) {
+    if (block[*(write_size)-1] != 0x00)
       break;
   }
 }
 
-void set_block(FDBTransaction *transaction,
-               const std::vector<uint8_t> key,
-	       const uint8_t *buffer,
-               uint64_t size, bool write_conflict)
-{
+void set_block(FDBTransaction *transaction, const std::vector<uint8_t> key,
+               const uint8_t *buffer, uint64_t size, bool write_conflict) {
   sparsify(buffer, &size);
-  if(size>0) {
-    if(!write_conflict)
-      if(fdb_transaction_set_option(transaction, FDB_TR_OPTION_NEXT_WRITE_NO_WRITE_CONFLICT_RANGE, NULL, 0))
-	/* it doesn't matter if this fails. semantics will be preserved,
-	   there will just be some performance loss. */;
+  if (size > 0) {
+    if (!write_conflict)
+      if (fdb_transaction_set_option(
+              transaction, FDB_TR_OPTION_NEXT_WRITE_NO_WRITE_CONFLICT_RANGE,
+              NULL, 0))
+        /* it doesn't matter if this fails. semantics will be preserved,
+           there will just be some performance loss. */
+        ;
 
-    // TODO here's where we'd implement the write-side cleverness for our
-    // block encoding schemes. they should all not only be ifdef'd, but
-    // check for whether or not the feature is enabled on the filesystem.
-    #ifdef BLOCK_COMPRESSION
-    if(size>=64) {
+// TODO here's where we'd implement the write-side cleverness for our
+// block encoding schemes. they should all not only be ifdef'd, but
+// check for whether or not the feature is enabled on the filesystem.
+#ifdef BLOCK_COMPRESSION
+    if (size >= 64) {
       // considering that these blocks may be stored 3 times, and over
       // their life may have to be moved repeatedly across WANs between
       // data centers, we'll accept very small amounts of compression:
       const int acceptable_size = BLOCKSIZE - 16;
       uint8_t compressed[BLOCKSIZE];
-      // we're arbitrarily saying blocks should be at least 64 bytes
-      // after sparsification, before we'll attempt to compress them.
-      #ifdef ZSTD_BLOCK_COMPRESSION
-      const int ret = ZSTD_compress(reinterpret_cast<void*>(compressed),
-                                    BLOCKSIZE,
-                                    reinterpret_cast<const void*>(buffer),
-                                    size, 10);
-      if((!ZSTD_isError(ret)) && (ret <= acceptable_size)) {
-	// ok, we'll take it.
+// we're arbitrarily saying blocks should be at least 64 bytes
+// after sparsification, before we'll attempt to compress them.
+#ifdef ZSTD_BLOCK_COMPRESSION
+      const int ret =
+          ZSTD_compress(reinterpret_cast<void *>(compressed), BLOCKSIZE,
+                        reinterpret_cast<const void *>(buffer), size, 10);
+      if ((!ZSTD_isError(ret)) && (ret <= acceptable_size)) {
+        // ok, we'll take it.
         auto compkey = key;
-	compkey.push_back('z'); // compressed
-	compkey.push_back(0x01); // 1 byte of arguments
-	compkey.push_back(0x01); // ZSTD marker
-	fdb_transaction_set(transaction, compkey.data(), compkey.size(),
-			    compressed, ret);
-	return;
+        compkey.push_back('z');  // compressed
+        compkey.push_back(0x01); // 1 byte of arguments
+        compkey.push_back(0x01); // ZSTD marker
+        fdb_transaction_set(transaction, compkey.data(), compkey.size(),
+                            compressed, ret);
+        return;
       }
-      #endif
+#endif
     }
-    #endif
+#endif
     // we'll fall back to this if none of the compression schemes bail out
     fdb_transaction_set(transaction, key.data(), key.size(), buffer, size);
   } else {
@@ -435,18 +406,17 @@ void set_block(FDBTransaction *transaction,
  *                               ^ value_offset
  *
  */
-int decode_block(const FDBKeyValue *kv, int block_offset,
-		 uint8_t *output, int targetsize, int maxsize)
-{
+int decode_block(const FDBKeyValue *kv, int block_offset, uint8_t *output,
+                 int targetsize, int maxsize) {
   const uint8_t *key = kv->key;
   const uint8_t *value = kv->value;
-  //printf("decoding block\n");
-  //print_bytes(value, kv->value_length);printf("\n");
-  if(kv->key_length == fileblock_key_length) {
-    //printf("   plain.\n");
-    // plain block. there's no added info after the block key
+  // printf("decoding block\n");
+  // print_bytes(value, kv->value_length);printf("\n");
+  if (kv->key_length == fileblock_key_length) {
+    // printf("   plain.\n");
+    //  plain block. there's no added info after the block key
     const int amount = std::min(kv->value_length - block_offset, maxsize);
-    if(amount>0) {
+    if (amount > 0) {
       bcopy(value + block_offset, output, amount);
       return amount;
     } else {
@@ -455,63 +425,65 @@ int decode_block(const FDBKeyValue *kv, int block_offset,
   }
 
 #ifdef SPECIAL_BLOCKS
-  //printf("   not plain!\n");
-  // ah! not a plain block! there might be something interesting!
-  // ... for now we just support compression
+  // printf("   not plain!\n");
+  //  ah! not a plain block! there might be something interesting!
+  //  ... for now we just support compression
   const int i = fileblock_key_length;
 
 #ifdef BLOCK_COMPRESSION
-  if(key[i] == 'z') {
-    //printf("   compressed\n");
-    const int arglen = key[i+1];
-    if(arglen<=0) {
-      //printf("    no arg\n");
-      // no argument, but we needed to know compression type
+  if (key[i] == 'z') {
+    // printf("   compressed\n");
+    const int arglen = key[i + 1];
+    if (arglen <= 0) {
+      // printf("    no arg\n");
+      //  no argument, but we needed to know compression type
       return -1;
     }
 
 #ifdef LZ4_BLOCK_COMPRESSION
     // for now we only know how to interpret a single byte of argument
-    if(key[i+2] == 0x00) {
+    if (key[i + 2] == 0x00) {
       // 0x00 means LZ4
 
       char buffer[BLOCKSIZE];
       // we'll only ask that enough be decompressed to satisfy the request
-      const int ret = LZ4_decompress_safe_partial(value, buffer, kv->value_length, BLOCKSIZE, BLOCKSIZE);
+      const int ret = LZ4_decompress_safe_partial(
+          value, buffer, kv->value_length, BLOCKSIZE, BLOCKSIZE);
       printf("%i\n", ret);
-      if(ret<0) {
-	return ret;
+      if (ret < 0) {
+        return ret;
       }
-      if(ret > block_offset) {
-	// decompression produced at least one byte worth sending back
-	const int amount = std::min(ret - block_offset, targetsize);
-	bcopy(buffer + block_offset, output, amount);
-	return amount;
+      if (ret > block_offset) {
+        // decompression produced at least one byte worth sending back
+        const int amount = std::min(ret - block_offset, targetsize);
+        bcopy(buffer + block_offset, output, amount);
+        return amount;
       } else {
-	// there was less data in the block than necessary to reach the
-	// start of the copy, so we don't have to do anything.
-	return 0;
+        // there was less data in the block than necessary to reach the
+        // start of the copy, so we don't have to do anything.
+        return 0;
       }
     }
 #endif
 
 #ifdef ZSTD_BLOCK_COMPRESSION
-    if(key[i+2] == 0x01) {
+    if (key[i + 2] == 0x01) {
       // 0x01 means ZSTD
       uint8_t buffer[BLOCKSIZE];
-      const int ret = ZSTD_decompress(buffer, BLOCKSIZE, value, kv->value_length);
-      if(ZSTD_isError(ret)) {
-	// error
-	return -1;
+      const int ret =
+          ZSTD_decompress(buffer, BLOCKSIZE, value, kv->value_length);
+      if (ZSTD_isError(ret)) {
+        // error
+        return -1;
       }
 
-      if(ret > block_offset) {
-	const int amount = std::min(ret - block_offset, targetsize);
-	bcopy(buffer + block_offset, output, amount);
-	return amount;
+      if (ret > block_offset) {
+        const int amount = std::min(ret - block_offset, targetsize);
+        bcopy(buffer + block_offset, output, amount);
+        return amount;
       } else {
-	// nothing to copy
-	return 0;
+        // nothing to copy
+        return 0;
       }
     }
 #endif

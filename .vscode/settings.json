@@ -1,5 +1,6 @@
 {
     "cmake.configureOnOpen": false,
     "C_Cpp.default.compileCommands": "/home/jkominek/fdbfs/builddir/compile_commands.json",
-    "C_Cpp.default.configurationProvider": "mesonbuild.mesonbuild"
+    "C_Cpp.default.configurationProvider": "mesonbuild.mesonbuild",
+    "C_Cpp.clang_format_fallbackStyle": "LLVM"
 }

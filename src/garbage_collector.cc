@@ -5,16 +5,16 @@
 #define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
 
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <assert.h>
 #include <time.h>
 
-#include "util.h"
 #include "inflight.h"
+#include "util.h"
 
 /*************************************************************
  * garbage collector
@@ -28,8 +28,7 @@
  * awhile, we should die.
  */
 
-void *garbage_scanner(void *ignore)
-{
+void *garbage_scanner(void *ignore) {
   uint8_t scan_spot = random() & 0xF;
   struct timespec ts;
   ts.tv_sec = 1;
@@ -37,9 +36,10 @@ void *garbage_scanner(void *ignore)
 #if DEBUG
   printf("gc starting\n");
 #endif
-  while(database != NULL) {
+  while (database != NULL) {
     // TODO vary this or do something to slow things down.
-    ts.tv_sec = 1; nanosleep(&ts, NULL);
+    ts.tv_sec = 1;
+    nanosleep(&ts, NULL);
 
     unique_transaction t = make_transaction();
 
@@ -51,41 +51,36 @@ void *garbage_scanner(void *ignore)
     uint8_t b = (scan_spot & 0xF) << 4;
     start.push_back(b);
     stop.push_back(b | 0x0F);
-    //printf("starting gc at %02x\n", b);
+    // printf("starting gc at %02x\n", b);
     scan_spot = (scan_spot + 1) % 16;
-    
-    FDBFuture *f =
-      fdb_transaction_get_range(t.get(),
-				start.data(), start.size(), 0, 1,
-				stop.data(), stop.size(), 0, 1,
-				1, 0,
-				FDB_STREAMING_MODE_SMALL, 0,
-				0,
-				// flip between forwards and backwards
-				// scanning of our randomly chosen range
-				random() & 0x1);
+
+    FDBFuture *f = fdb_transaction_get_range(
+        t.get(), start.data(), start.size(), 0, 1, stop.data(), stop.size(), 0,
+        1, 1, 0, FDB_STREAMING_MODE_SMALL, 0, 0,
+        // flip between forwards and backwards
+        // scanning of our randomly chosen range
+        random() & 0x1);
     const FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
-    if(fdb_future_block_until_ready(f) ||
-       fdb_future_get_keyvalue_array(f, &kvs, &kvcount, &more) ||
-       (kvcount <= 0)) {
+    if (fdb_future_block_until_ready(f) ||
+        fdb_future_get_keyvalue_array(f, &kvs, &kvcount, &more) ||
+        (kvcount <= 0)) {
       // errors, or nothing to do. take a longer break.
       fdb_future_destroy(f);
       // sleep extra, though.
-      ts.tv_sec = 3; nanosleep(&ts, NULL);
+      ts.tv_sec = 3;
+      nanosleep(&ts, NULL);
       continue;
     }
 
-    if(kvs[0].key_length != inode_key_length) {
+    if (kvs[0].key_length != inode_key_length) {
       // we found malformed junk in the garbage space. ironic.
-      fdb_transaction_clear(t.get(),
-			    kvs[0].key,
-			    kvs[0].key_length);
+      fdb_transaction_clear(t.get(), kvs[0].key, kvs[0].key_length);
       FDBFuture *g = fdb_transaction_commit(t.get());
       // if it fails, it fails, we'll try again the next time we
       // stumble across it.
-      if(fdb_future_block_until_ready(g)) {
+      if (fdb_future_block_until_ready(g)) {
         /* nothing to do */;
       }
 
@@ -97,8 +92,7 @@ void *garbage_scanner(void *ignore)
     // ok we found a garbage-collectible inode.
     // fetch the in-use records for it.
     fuse_ino_t ino;
-    bcopy(kvs[0].key + key_prefix.size() + 1,
-	  &ino, sizeof(fuse_ino_t));
+    bcopy(kvs[0].key + key_prefix.size() + 1, &ino, sizeof(fuse_ino_t));
     ino = be64toh(ino);
 
 #if DEBUG
@@ -111,16 +105,13 @@ void *garbage_scanner(void *ignore)
 
     // scan the use range of the inode
     // TODO we actually need to pull all use records, and compare
-    // them against 
-    f = fdb_transaction_get_range(t.get(),
-				  start.data(), start.size(), 0, 1,
-				  stop.data(),  stop.size(),  0, 1,
-				  1, 0,
-				  FDB_STREAMING_MODE_SMALL, 0,
-				  0, 0);
-    if(fdb_future_block_until_ready(f) ||
-       fdb_future_get_keyvalue_array(f, &kvs, &kvcount, &more) ||
-       kvcount>0) {
+    // them against
+    f = fdb_transaction_get_range(t.get(), start.data(), start.size(), 0, 1,
+                                  stop.data(), stop.size(), 0, 1, 1, 0,
+                                  FDB_STREAMING_MODE_SMALL, 0, 0, 0);
+    if (fdb_future_block_until_ready(f) ||
+        fdb_future_get_keyvalue_array(f, &kvs, &kvcount, &more) ||
+        kvcount > 0) {
       // welp. nothing to do.
 #if DEBUG
       printf("nothing to do on the garbage inode\n");
@@ -140,7 +131,7 @@ void *garbage_scanner(void *ignore)
     f = fdb_transaction_commit(t.get());
     // if the commit fails, it doesn't matter. we'll try again
     // later.
-    if(fdb_future_block_until_ready(f)) {
+    if (fdb_future_block_until_ready(f)) {
       printf("error when commiting a garbage collection transaction\n");
     }
     fdb_future_destroy(f);
