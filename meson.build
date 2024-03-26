@@ -16,7 +16,8 @@ deps = [
     dependency('fuse3'),
     dependency('libzstd'),
     dependency('protobuf'),
-    dependency('foundationdb-client')
+    dependency('foundationdb-client'),
+    dependency('nlohmann_json')
 ]
 
 project_source_files = [ ]

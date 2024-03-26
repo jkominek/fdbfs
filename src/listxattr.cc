@@ -10,7 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <assert.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 
 #include "util.h"
 #include "inflight.h"
@@ -40,11 +40,13 @@
  * REAL PLAN
  * ???
  */
-class Inflight_listxattr : public Inflight {
+class Inflight_listxattr : public Inflight
+{
 public:
   Inflight_listxattr(fuse_req_t, fuse_ino_t, size_t, unique_transaction);
   Inflight_listxattr *reincarnate();
   InflightCallback issue();
+
 private:
   fuse_ino_t ino;
   size_t maxsize;
@@ -57,10 +59,10 @@ private:
 };
 
 Inflight_listxattr::Inflight_listxattr(fuse_req_t req, fuse_ino_t ino,
-				       size_t maxsize,
-				       unique_transaction transaction)
-  : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)),
-    ino(ino), maxsize(maxsize), buf()
+                                       size_t maxsize,
+                                       unique_transaction transaction)
+    : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)),
+      ino(ino), maxsize(maxsize), buf()
 {
   buf.reserve(maxsize);
 }
@@ -68,7 +70,7 @@ Inflight_listxattr::Inflight_listxattr(fuse_req_t req, fuse_ino_t ino,
 Inflight_listxattr *Inflight_listxattr::reincarnate()
 {
   Inflight_listxattr *x = new Inflight_listxattr(req, ino, maxsize,
-					       std::move(transaction));
+                                                 std::move(transaction));
   delete this;
   return x;
 }
@@ -79,21 +81,24 @@ InflightAction Inflight_listxattr::process()
   int kvcount;
   fdb_bool_t more;
   fdb_error_t err;
-  
+
   err = fdb_future_get_keyvalue_array(range_fetch.get(), &kvs, &kvcount, &more);
-  if(err) return InflightAction::FDBError(err);
+  if (err)
+    return InflightAction::FDBError(err);
 
   // in both of these, we'd ideally immediately check 'more' to see
   // if we need to request additional data, and do so before spending
   // time processing things. but that would risk overwriting the future
   // that we're still pulling things out of. so...
   // TODO make the code more clever, and do this the better way
-  
-  for(int i=0; i<kvcount; i++) {
+
+  for (int i = 0; i < kvcount; i++)
+  {
     const FDBKeyValue *kv = kvs + i;
 
     int remaining_length = kv->key_length - empty_xattr_name_length;
-    if(buf.size() + remaining_length + 1 > maxsize) {
+    if (buf.size() + remaining_length + 1 > maxsize)
+    {
       // they didn't provide us with a large enough buffer
       return InflightAction::Abort(ERANGE);
     }
@@ -103,7 +108,8 @@ InflightAction Inflight_listxattr::process()
     buf.push_back(0);
   }
 
-  if((maxsize <= buf.size()) || (!more)) {
+  if ((maxsize <= buf.size()) || (!more))
+  {
     // return the buffer
     return InflightAction::Buf(buf);
   }
@@ -113,13 +119,13 @@ InflightAction Inflight_listxattr::process()
 
   // apparently, there is more, and we've got space
   wait_on_future(fdb_transaction_get_range(transaction.get(),
-					   lastkv->key,
-					   lastkv->key_length, 0, 1,
-					   stop.data(), stop.size(), 0, 1,
-					   maxsize - buf.size(), 0,
-					   FDB_STREAMING_MODE_WANT_ALL, 0,
-					   0, 0),
-		 range_fetch);
+                                           lastkv->key,
+                                           lastkv->key_length, 0, 1,
+                                           stop.data(), stop.size(), 0, 1,
+                                           maxsize - buf.size(), 0,
+                                           FDB_STREAMING_MODE_WANT_ALL, 0,
+                                           0, 0),
+                 range_fetch);
   return InflightAction::BeginWait(std::bind(&Inflight_listxattr::process, this));
 }
 
@@ -129,23 +135,25 @@ InflightCallback Inflight_listxattr::issue()
   const auto stop = pack_xattr_key(ino, "\xFF");
 
   wait_on_future(fdb_transaction_get_range(transaction.get(),
-					   start.data(), start.size(), 0, 1,
-					   stop.data(), stop.size(), 0, 1,
-					   maxsize, 0,
-					   FDB_STREAMING_MODE_WANT_ALL, 0,
-					   0, 0),
-		 range_fetch);
+                                           start.data(), start.size(), 0, 1,
+                                           stop.data(), stop.size(), 0, 1,
+                                           maxsize, 0,
+                                           FDB_STREAMING_MODE_WANT_ALL, 0,
+                                           0, 0),
+                 range_fetch);
 
   empty_xattr_name_length = start.size();
 
   return std::bind(&Inflight_listxattr::process, this);
 }
 
-class Inflight_listxattr_count : public Inflight {
+class Inflight_listxattr_count : public Inflight
+{
 public:
   Inflight_listxattr_count(fuse_req_t, fuse_ino_t, unique_transaction);
   Inflight_listxattr_count *reincarnate();
   InflightCallback issue();
+
 private:
   fuse_ino_t ino;
   int empty_xattr_name_length;
@@ -157,17 +165,17 @@ private:
 };
 
 Inflight_listxattr_count::Inflight_listxattr_count(fuse_req_t req,
-						   fuse_ino_t ino,
-						   unique_transaction transaction)
-  : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)),
-    ino(ino)
+                                                   fuse_ino_t ino,
+                                                   unique_transaction transaction)
+    : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)),
+      ino(ino)
 {
 }
 
 Inflight_listxattr_count *Inflight_listxattr_count::reincarnate()
 {
   Inflight_listxattr_count *x =
-    new Inflight_listxattr_count(req, ino, std::move(transaction));
+      new Inflight_listxattr_count(req, ino, std::move(transaction));
   delete this;
   return x;
 }
@@ -178,11 +186,13 @@ InflightAction Inflight_listxattr_count::process()
   int kvcount;
   fdb_bool_t more;
   fdb_error_t err;
-  
-  err = fdb_future_get_keyvalue_array(range_fetch.get(), &kvs, &kvcount, &more);
-  if(err) return InflightAction::FDBError(err);
 
-  for(int i=0; i<kvcount; i++) {
+  err = fdb_future_get_keyvalue_array(range_fetch.get(), &kvs, &kvcount, &more);
+  if (err)
+    return InflightAction::FDBError(err);
+
+  for (int i = 0; i < kvcount; i++)
+  {
     const FDBKeyValue *kv = kvs + i;
     accumulated_size += (kv->key_length - empty_xattr_name_length + 1);
   }
@@ -190,17 +200,20 @@ InflightAction Inflight_listxattr_count::process()
   const FDBKeyValue *lastkv = kvs + (kvcount - 1);
   const auto stop = pack_xattr_key(ino, "\xFF");
 
-  if(more) {
+  if (more)
+  {
     wait_on_future(fdb_transaction_get_range(transaction.get(),
-					     lastkv->key,
-					     lastkv->key_length, 0, 1,
-					     stop.data(), stop.size(), 0, 1,
-					     0, 0,
-					     FDB_STREAMING_MODE_WANT_ALL, 0,
-					     0, 0),
-		   range_fetch);
+                                             lastkv->key,
+                                             lastkv->key_length, 0, 1,
+                                             stop.data(), stop.size(), 0, 1,
+                                             0, 0,
+                                             FDB_STREAMING_MODE_WANT_ALL, 0,
+                                             0, 0),
+                   range_fetch);
     return InflightAction::BeginWait(std::bind(&Inflight_listxattr_count::process, this));
-  } else {
+  }
+  else
+  {
     return InflightAction::XattrSize(accumulated_size);
   }
 }
@@ -211,12 +224,12 @@ InflightCallback Inflight_listxattr_count::issue()
   const auto stop = pack_xattr_key(ino, "\xFF");
 
   wait_on_future(fdb_transaction_get_range(transaction.get(),
-					   start.data(), start.size(), 0, 1,
-					   stop.data(), stop.size(), 0, 1,
-					   0, 0,
-					   FDB_STREAMING_MODE_WANT_ALL, 0,
-					   0, 0),
-		 range_fetch);
+                                           start.data(), start.size(), 0, 1,
+                                           stop.data(), stop.size(), 0, 1,
+                                           0, 0,
+                                           FDB_STREAMING_MODE_WANT_ALL, 0,
+                                           0, 0),
+                 range_fetch);
 
   empty_xattr_name_length = start.size();
 
@@ -225,13 +238,16 @@ InflightCallback Inflight_listxattr_count::issue()
 
 extern "C" void fdbfs_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size)
 {
-  if(size == 0) {
+  if (size == 0)
+  {
     Inflight_listxattr_count *inflight =
-      new Inflight_listxattr_count(req, ino, make_transaction());
+        new Inflight_listxattr_count(req, ino, make_transaction());
     inflight->start();
-  } else {
+  }
+  else
+  {
     Inflight_listxattr *inflight =
-      new Inflight_listxattr(req, ino, size, make_transaction());
+        new Inflight_listxattr(req, ino, size, make_transaction());
     inflight->start();
   }
 }

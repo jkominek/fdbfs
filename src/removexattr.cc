@@ -10,7 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <assert.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 
 #include "util.h"
 #include "inflight.h"
@@ -69,7 +69,7 @@ InflightAction Inflight_removexattr::process()
   if(present) {
     return commit(InflightAction::OK);
   } else {
-    return InflightAction::Abort(ENOATTR);
+    return InflightAction::Abort(ENODATA);
   }
 }
 

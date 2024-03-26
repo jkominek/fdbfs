@@ -10,18 +10,18 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <assert.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 
 #include "util.h"
 #include "inflight.h"
 #include "fdbfs_ops.h"
 
 enum SetXattrBehavior
-  {
-   CanCreate = 0x1,
-   CanReplace = 0x2,
-   CreateOrReplace = 0x3
-  };
+{
+  CanCreate = 0x1,
+  CanReplace = 0x2,
+  CreateOrReplace = 0x3
+};
 
 /*************************************************************
  * setxattr
@@ -33,13 +33,15 @@ enum SetXattrBehavior
  * REAL PLAN
  * ???
  */
-class Inflight_setxattr : public Inflight {
+class Inflight_setxattr : public Inflight
+{
 public:
   Inflight_setxattr(fuse_req_t, fuse_ino_t, std::string,
-		    std::vector<uint8_t>, SetXattrBehavior,
-		    unique_transaction);
+                    std::vector<uint8_t>, SetXattrBehavior,
+                    unique_transaction);
   Inflight_setxattr *reincarnate();
   InflightCallback issue();
+
 private:
   fuse_ino_t ino;
   std::string name;
@@ -52,63 +54,73 @@ private:
 };
 
 Inflight_setxattr::Inflight_setxattr(fuse_req_t req, fuse_ino_t ino,
-				     std::string name,
-				     std::vector<uint8_t> xattr_value,
-				     SetXattrBehavior behavior,
-				     unique_transaction transaction)
-  : Inflight(req, ReadWrite::Yes, std::move(transaction)),
-    ino(ino), name(name), xattr_value(xattr_value), behavior(behavior)
+                                     std::string name,
+                                     std::vector<uint8_t> xattr_value,
+                                     SetXattrBehavior behavior,
+                                     unique_transaction transaction)
+    : Inflight(req, ReadWrite::Yes, std::move(transaction)),
+      ino(ino), name(name), xattr_value(xattr_value), behavior(behavior)
 {
 }
 
 Inflight_setxattr *Inflight_setxattr::reincarnate()
 {
   Inflight_setxattr *x = new Inflight_setxattr(req, ino, name,
-					       xattr_value, behavior,
-					       std::move(transaction));
+                                               xattr_value, behavior,
+                                               std::move(transaction));
   delete this;
   return x;
 }
 
 InflightAction Inflight_setxattr::process()
 {
-  fdb_bool_t present=0;
+  fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
   fdb_error_t err;
 
   err = fdb_future_get_value(xattr_node_fetch.get(), &present, &val, &vallen);
-  if(err) return InflightAction::FDBError(err);
+  if (err)
+    return InflightAction::FDBError(err);
 
   XAttrRecord xattr;
-  if(present) {
-    if(behavior & CanReplace) {
+  if (present)
+  {
+    if (behavior & CanReplace)
+    {
       xattr.ParseFromArray(val, vallen);
-    } else {
+    }
+    else
+    {
       return InflightAction::Abort(EEXIST);
     }
-  } else { // xattr not present
-    if(behavior & CanCreate) {
+  }
+  else
+  { // xattr not present
+    if (behavior & CanCreate)
+    {
       // set the xattr node
 
       const auto node_key = pack_xattr_key(ino, name);
       const int xattr_size = xattr.ByteSizeLong();
       uint8_t xattr_buffer[xattr_size];
       xattr.SerializeToArray(xattr_buffer, xattr_size);
- 
+
       fdb_transaction_set(transaction.get(),
-			  node_key.data(), node_key.size(),
-			  xattr_buffer, xattr_size);
-    } else {
-      return InflightAction::Abort(ENOATTR);
+                          node_key.data(), node_key.size(),
+                          xattr_buffer, xattr_size);
+    }
+    else
+    {
+      return InflightAction::Abort(ENODATA);
     }
   }
 
   // set the xattr data
   const auto data_key = pack_xattr_data_key(ino, name);
   fdb_transaction_set(transaction.get(),
-		      data_key.data(), data_key.size(),
-		      xattr_value.data(), xattr_value.size());
+                      data_key.data(), data_key.size(),
+                      xattr_value.data(), xattr_value.size());
 
   return commit(InflightAction::OK);
 }
@@ -119,31 +131,31 @@ InflightCallback Inflight_setxattr::issue()
 
   // and request just that xattr node
   wait_on_future(fdb_transaction_get(transaction.get(),
-				     key.data(), key.size(), 0),
-		 xattr_node_fetch);
+                                     key.data(), key.size(), 0),
+                 xattr_node_fetch);
 
   return std::bind(&Inflight_setxattr::process, this);
 }
 
 extern "C" void fdbfs_setxattr(fuse_req_t req, fuse_ino_t ino,
-			       const char *name, const char *value,
-			       size_t size, int flags)
+                               const char *name, const char *value,
+                               size_t size, int flags)
 {
-  if(filename_length_check(req, name))
+  if (filename_length_check(req, name))
     return;
 
   SetXattrBehavior behavior = CreateOrReplace;
-  if(flags == XATTR_CREATE)
+  if (flags == XATTR_CREATE)
     behavior = CanCreate;
-  else if(flags == XATTR_REPLACE)
+  else if (flags == XATTR_REPLACE)
     behavior = CanReplace;
 
   std::string sname(name);
-  std::vector<uint8_t> vvalue(value, value+size);
-  
+  std::vector<uint8_t> vvalue(value, value + size);
+
   Inflight_setxattr *inflight =
-    new Inflight_setxattr(req, ino, sname, vvalue,
-			  behavior,
-			  make_transaction());
+      new Inflight_setxattr(req, ino, sname, vvalue,
+                            behavior,
+                            make_transaction());
   inflight->start();
 }
