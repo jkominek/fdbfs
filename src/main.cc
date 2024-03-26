@@ -37,6 +37,7 @@ uint32_t BLOCKSIZE; // 1<<BLOCKBITS
  */
 static struct fuse_lowlevel_ops fdbfs_oper = {
     .init = fdbfs_init,
+    .destroy = fdbfs_destroy,
     .lookup = fdbfs_lookup,
     .forget = fdbfs_forget,
     .getattr = fdbfs_getattr,
@@ -86,12 +87,25 @@ void fdbfs_init(void *userdata, struct fuse_conn_info *conn) {
   conn->congestion_threshold = 0;
 }
 
+pthread_t network_thread;
+pthread_t gc_thread;
+
+void fdbfs_destroy(void *userdata) {
+  // TODO bring gc_thread to a clean halt
+  // TODO check return codes and do... what?
+  printf("fdbfs_destroy has been invoked\n");
+  (void)fdb_stop_network();
+  pthread_join(network_thread, NULL);
+  exit(0);
+}
+
 /* Purely to get the FoundationDB network stuff running in a
  * background thread. Passing fdb_run_network straight to
  * pthread_create kind of works, but let's pretend this will
  * be robust cross platform code someday.
  */
 void *network_runner(void *ignore) {
+  // TODO capture the return code and do something
   if (fdb_run_network()) {
     ;
   }
@@ -107,9 +121,6 @@ int main(int argc, char *argv[]) {
   struct fuse_cmdline_opts opts;
   struct fuse_loop_config config;
   int err = -1;
-
-  pthread_t network_thread;
-  pthread_t gc_thread;
 
   GOOGLE_PROTOBUF_VERIFY_VERSION;
 
@@ -207,11 +218,6 @@ int main(int argc, char *argv[]) {
     err = fuse_session_loop_mt(se, &config);
   }
 
-  err = err || pthread_join(network_thread, NULL);
-  fdb_database_destroy(database);
-shutdown_fdb:
-  err = err || fdb_stop_network();
-
 shutdown_unmount:
   fuse_session_unmount(se);
   terminate_liveness();
@@ -222,6 +228,11 @@ shutdown_session:
 
 shutdown_args:
   fuse_opt_free_args(&args);
+
+shutdown_fdb:
+  err = err || fdb_stop_network();
+  err = err || pthread_join(network_thread, NULL);
+  fdb_database_destroy(database);
 
   return err;
 }

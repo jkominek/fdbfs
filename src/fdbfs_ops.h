@@ -5,6 +5,7 @@
 #include <fuse_lowlevel.h>
 
 extern "C" void fdbfs_init(void *userdata, struct fuse_conn_info *conn);
+extern "C" void fdbfs_destroy(void *userdata);
 extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent,
                              const char *name);
 extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
