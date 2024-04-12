@@ -69,14 +69,17 @@ InflightAction Inflight_readdir::callback() {
   for (int i = 0; i < kvcount; i++) {
     FDBKeyValue kv = kvs[i];
 
-    char name[1024];
     if (kv.key_length <= dirent_prefix_length) {
       // serious internal error. we somehow got back a key that was too short?
       printf("eio!\n");
       return InflightAction::Abort(EIO);
     }
     int keylen = kv.key_length - dirent_prefix_length;
-    // TOOD if keylen<=0 throw internal error.
+    if ((keylen <= 0) || (keylen > MAXFILENAMELEN)) {
+      // internal error
+      return InflightAction::Abort(EIO);
+    }
+    char name[MAXFILENAMELEN + 1];
     bcopy(((uint8_t *)kv.key) + dirent_prefix_length, name, keylen);
     name[keylen] = '\0'; // null terminate
 

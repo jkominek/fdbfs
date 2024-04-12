@@ -43,6 +43,8 @@
 #define XATTR_NODE_PREFIX 'x'
 #define XATTR_DATA_PREFIX 'X'
 
+#define MAXFILENAMELEN 255
+
 // will be filled out before operation begins
 extern FDBDatabase *database;
 // must NOT be modified after it is set.
@@ -100,8 +102,9 @@ template <typename T> void print_bytes(const T *str, int strlength) {
 using range_keys = std::pair<std::vector<uint8_t>, std::vector<uint8_t>>;
 [[nodiscard]] range_keys offset_size_to_range_keys(fuse_ino_t, size_t, size_t);
 
-[[nodiscard]] extern bool filename_length_check(fuse_req_t, const char *,
-                                                size_t maxlength = 255);
+[[nodiscard]] extern bool
+filename_length_check(fuse_req_t, const char *,
+                      size_t maxlength = MAXFILENAMELEN);
 
 extern void update_atime(INodeRecord *, const struct timespec *);
 extern void update_mtime(INodeRecord *, const struct timespec *);
