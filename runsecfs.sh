@@ -8,10 +8,11 @@ mkdir /tmp/fdb
 touch /tmp/fdb/XXX
 
 # start fs
-valgrind --log-file=/tmp/valgrind.txt build/fs -o default_permissions,allow_other,nonempty /tmp/fdb &
+valgrind --log-file=/tmp/valgrind.txt build/fs -o default_permissions,allow_other /tmp/fdb &
 
 echo sleeping for a bit, because of slowness
 sleep 20
+df -h
 echo resuming...
 
 cd /tmp
@@ -30,6 +31,10 @@ cd /tmp/fdb
 # let's look at the contents of the fdb filesystem
 # we shouldn't see the XXX file.
 ls -l
+if [ -f /tmp/fdb/XXX ]; then
+    echo failed to mount fdbfs; test is invalid
+    exit 1
+fi
 sudo prove -r /tmp/secfs.test/fstest/fstest
 
 cd /tmp
