@@ -160,7 +160,10 @@ InflightAction Inflight_write::check() {
     }
     bcopy(buffer.data(), output_buffer + copy_start_off, copy_start_size);
     auto key = pack_fileblock_key(ino, off / BLOCKSIZE);
-    set_block(transaction.get(), key, output_buffer, total_buffer_size, false);
+    if (set_block(transaction.get(), key, output_buffer, total_buffer_size,
+                  false)) {
+      fdb_transaction_clear(transaction.get(), key.data(), key.size());
+    }
   }
 
   if (stop_block_fetch) {
@@ -191,10 +194,17 @@ InflightAction Inflight_write::check() {
     auto key = pack_fileblock_key(ino, (off + buffer.size()) / BLOCKSIZE);
     // we don't need to preserve whatever is in the output_buffer
     // past the end of the file.
-    // TODO but this is totally wrong.
+    // TODO we used to calculate the size of the block with:
     // uint64_t actual_block_size = std::min(total_buffer_size,
     //					  inode.size() % BLOCKSIZE);
-    set_block(transaction.get(), key, output_buffer, total_buffer_size, false);
+    // but in 8e57e2ef we stopped and switched to using total_buffer_size
+    // instead of actual_block_size. storing extra stuff in the block is
+    // probably okay, but what was wrong with the old calculation?
+    // it seems reasonable enough.
+    if (set_block(transaction.get(), key, output_buffer, total_buffer_size,
+                  false)) {
+      fdb_transaction_clear(transaction.get(), key.data(), key.size());
+    }
   }
 
   return commit([&]() { return InflightAction::Write(buffer.size()); });
@@ -301,7 +311,9 @@ InflightCallback Inflight_write::issue() {
     uint8_t *block;
     block = buffer.data() + (off % BLOCKSIZE) +
             (mid_block - iter_start) * BLOCKSIZE;
-    set_block(transaction.get(), key, block, BLOCKSIZE, false);
+    // safe to discard the return value here, since we cleared the whole
+    // range beforehand.
+    (void)set_block(transaction.get(), key, block, BLOCKSIZE, false);
   }
 
   return std::bind(&Inflight_write::check, this);

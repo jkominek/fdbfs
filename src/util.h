@@ -113,8 +113,9 @@ extern void update_directory_times(FDBTransaction *, INodeRecord &);
 
 extern void erase_inode(FDBTransaction *, fuse_ino_t);
 
-extern void set_block(FDBTransaction *, const std::vector<uint8_t>,
-                      const uint8_t *, uint64_t, bool = true);
+[[nodiscard]] extern bool set_block(FDBTransaction *,
+                                    const std::vector<uint8_t>, const uint8_t *,
+                                    uint64_t, bool = true);
 [[nodiscard]] extern int decode_block(const FDBKeyValue *, int, uint8_t *, int,
                                       int);
 

@@ -344,7 +344,12 @@ inline void sparsify(const uint8_t *block, uint64_t *write_size) {
   }
 }
 
-void set_block(FDBTransaction *transaction, const std::vector<uint8_t> key,
+/* returning false means that we've actually queued a write to the block
+ * returning true means that the block can be left empty, due to sparsity.
+ * this is so that you can write
+ * if(set_block(...)) { fdb_transaction_clear(...) }
+ */
+bool set_block(FDBTransaction *transaction, const std::vector<uint8_t> key,
                const uint8_t *buffer, uint64_t size, bool write_conflict) {
   sparsify(buffer, &size);
   if (size > 0) {
@@ -380,15 +385,18 @@ void set_block(FDBTransaction *transaction, const std::vector<uint8_t> key,
         compkey.push_back(0x01); // ZSTD marker
         fdb_transaction_set(transaction, compkey.data(), compkey.size(),
                             compressed, ret);
-        return;
+        return false;
       }
 #endif
     }
 #endif
     // we'll fall back to this if none of the compression schemes bail out
     fdb_transaction_set(transaction, key.data(), key.size(), buffer, size);
+    return false;
   } else {
     // storage model allows for sparsity; interprets missing blocks as nulls
+    // caller may need to remove the block if we return false.
+    return true;
   }
 }
 

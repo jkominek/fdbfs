@@ -88,7 +88,10 @@ InflightAction Inflight_setattr::partial_block_fixup() {
     }
     auto key = pack_fileblock_key(ino, partial_block_idx);
     // if (ret <= attr.st_size % BLOCKSIZE) then there's nothing to do.
-    set_block(transaction.get(), key, output_buffer, attr.st_size % BLOCKSIZE);
+    if (set_block(transaction.get(), key, output_buffer,
+                  attr.st_size % BLOCKSIZE)) {
+      fdb_transaction_clear(transaction.get(), key.data(), key.size());
+    }
   }
 
   return commit(std::bind(&Inflight_setattr::commit_cb, this));

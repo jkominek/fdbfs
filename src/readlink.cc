@@ -19,7 +19,9 @@
  * readlink
  *************************************************************
  * INITIAL PLAN
- * this should be a single get.
+ * this should be a single get, as we only store symlinks in
+ * the inode. we _could_ fall back to storing very large symlinks
+ * in the data blocks.
  *
  * REAL PLAN
  * ???

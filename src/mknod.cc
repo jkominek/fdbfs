@@ -125,7 +125,10 @@ InflightAction Inflight_mknod::postverification() {
     inode.set_symlink(symlink_target);
   inode.set_mode(mode);
   inode.set_nlinks((type == ft_directory) ? 2 : 1);
-  inode.set_size(0);
+  if (type == ft_symlink)
+    inode.set_size(symlink_target.size());
+  else
+    inode.set_size(0);
   inode.set_rdev(rdev);
   const fuse_ctx *ctx = fuse_req_ctx(req);
   inode.set_uid(ctx->uid);
@@ -251,6 +254,7 @@ extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
 
 extern "C" void fdbfs_symlink(fuse_req_t req, const char *target,
                               fuse_ino_t parent, const char *name) {
+  // TODO eliminate magic number for symlink target length
   if (filename_length_check(req, target, 1024) ||
       filename_length_check(req, name)) {
     return;
