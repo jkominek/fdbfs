@@ -177,6 +177,10 @@ void terminate_liveness() {
 
   // TODO are all of our outstanding transactions dead?
 
+  // TODO this is rather coarse locking, it might be possible to tighten
+  // it up, but it's not clear to me that it's necessary. ideally we would
+  // wait for all inflight transactions to finish before we reach this point.
+  std::lock_guard<std::mutex> guard(lookup_counts_mutex);
   int clears_per_batch = 64;
   for (auto it = lookup_counts.cbegin(); it != lookup_counts.cend();) {
     // it is at this moment that i begin to question my use of c++

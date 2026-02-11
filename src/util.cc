@@ -45,10 +45,12 @@ std::vector<uint8_t> inode_use_identifier;
 // we could otherwise process responses in a multithreaded
 // fashion, we'd need locking.
 std::unordered_map<fuse_ino_t, uint64_t> lookup_counts;
+std::mutex lookup_counts_mutex;
 
 // if this returns true, the caller is obligated to
 // insert a record adjacent to the inode to keep it alive
 bool increment_lookup_count(fuse_ino_t ino) {
+  std::lock_guard<std::mutex> guard(lookup_counts_mutex);
   auto it = lookup_counts.find(ino);
   if (it != lookup_counts.end()) {
     // present
@@ -64,6 +66,7 @@ bool increment_lookup_count(fuse_ino_t ino) {
 // if this returns true, the caller is obligated to
 // remove the inode adjacent record that keeps it alive
 bool decrement_lookup_count(fuse_ino_t ino, uint64_t count) {
+  std::lock_guard<std::mutex> guard(lookup_counts_mutex);
   auto it = lookup_counts.find(ino);
   if (it == lookup_counts.end()) {
     // well. oops. kernel knew about something that isn't there.
