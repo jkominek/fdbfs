@@ -1,6 +1,5 @@
 #include <assert.h>
 #include <errno.h>
-#define _GNU_SOURCE
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdbool.h>
