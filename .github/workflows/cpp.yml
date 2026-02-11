@@ -16,7 +16,7 @@ jobs:
     - name: apt-get
       run: sudo apt-get update ; sudo apt-get -y install libfuse3-dev fuse3 libprotobuf-dev protobuf-compiler liblz4-dev python3-protobuf libzstd1 libzstd-dev libattr1-dev libacl1-dev s3cmd valgrind nlohmann-json3-dev meson python3-pip
     - name: pip
-      run: sudo env PATH=$PATH pip install zstd==1.4.9.1
+      run: sudo env PATH=$PATH pip install zstd==1.5.7.3
     - name: fetch fdb
       run: wget https://github.com/apple/foundationdb/releases/download/6.3.23/foundationdb-{clients,server}_6.3.23-1_amd64.deb
     - name: dpkg install
