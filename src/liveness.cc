@@ -38,6 +38,7 @@ ProcessTableEntry pt_entry;
 struct fuse_session *fuse_session;
 pthread_t liveness_thread;
 bool terminate = true;
+bool liveness_started = false;
 
 void send_pt_entry(bool startup) {
   std::function<int(FDBTransaction *)> f = [startup](FDBTransaction *t) {
@@ -123,6 +124,12 @@ void *liveness_manager(void *ignore) {
 }
 
 void start_liveness(struct fuse_session *se) {
+  if (liveness_started) {
+    return;
+  }
+
+  pid.clear();
+
   // this probably isn't the best way to produce 128 bits in
   // a std::vector, but, whatever.
   for (int i = 0; i < 16; i++) {
@@ -135,11 +142,23 @@ void start_liveness(struct fuse_session *se) {
 
   terminate = false;
 
-  pthread_create(&liveness_thread, NULL, liveness_manager, NULL);
+  if (pthread_create(&liveness_thread, NULL, liveness_manager, NULL)) {
+    terminate = true;
+    fuse_session = NULL;
+    pid.clear();
+    return;
+  }
+
+  liveness_started = true;
 }
 
 // we're being called after unmount
 void terminate_liveness() {
+  if (!liveness_started || pid.empty()) {
+    return;
+  }
+  liveness_started = false;
+
   terminate = true;
 
   // wait until the liveness_manager is done
@@ -178,4 +197,8 @@ void terminate_liveness() {
     else
       /* if there was failure, don't advance it; we'll try again. */;
   }
+
+  pid.clear();
+  pt_entry.Clear();
+  fuse_session = NULL;
 }
