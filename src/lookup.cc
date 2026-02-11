@@ -116,7 +116,7 @@ InflightAction Inflight_lookup::lookup_inode() {
       DirectoryEntry dirent;
       dirent.ParseFromArray(val, vallen);
       if (!dirent.has_inode()) {
-        throw std::runtime_error("directory entry missing inode");
+        return InflightAction::Abort(EIO, "directory entry missing inode");
       }
       target = dirent.inode();
     }

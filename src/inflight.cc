@@ -33,6 +33,14 @@ void shut_it_down() {
   shut_it_down_forever = true;
 }
 
+static void fail_inflight(Inflight *i, int err, const char *why) {
+  // TODO log or print out 'why'
+  if (!i->suppress_errors)
+    fuse_reply_err(i->req, err);
+  i->cleanup();
+  delete i;
+}
+
 /******************************************************
  * This encapsulates all of our retry logic
  *
@@ -145,7 +153,8 @@ void Inflight::future_ready(FDBFuture *f) {
     } else {
       std::cout << "no callback was set for " << typeid(*this).name()
                 << " when we needed one" << std::endl;
-      throw std::runtime_error("no callback was set when we needed one");
+      fail_inflight(this, EIO, "no callback was set when we needed one");
+      return;
     }
   } else {
     // there are still futures we need to wait on before we
@@ -159,15 +168,16 @@ void Inflight::begin_wait() {
   if (future_queue.empty()) {
     // we could try to resume processing the transaction, but really this
     // just shouldn't be possible, so i'm inclined to bail on it.
-    throw std::runtime_error("tried to start waiting on empty future queue");
+    fail_inflight(this, EIO, "tried to start waiting on empty future queue");
+    return;
   }
   if (fdb_future_set_callback(future_queue.front(), fdbfs_error_checker,
                               static_cast<void *>(this))) {
     // we don't have a way to deal with this, so destroy the
     // transaction so that nothing leaks. ideally we'd notify
     // fuse at this point that the operation is dead.
-    delete this;
-    throw std::runtime_error("failed to set future callback");
+    fail_inflight(this, EIO, "failed to set future callback");
+    return;
   }
 }
 
@@ -236,8 +246,7 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p) {
                                 static_cast<void *>(inf))) {
       // hosed, we don't currently have a way to save this transaction.
       // TODO let fuse know the operation is dead.
-      delete inf;
-      throw std::runtime_error("failed to set an fdb callback");
+      fail_inflight(inf, EIO, "failed to set an FDB callback");
     }
     return;
   }

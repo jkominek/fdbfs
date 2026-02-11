@@ -26,6 +26,7 @@
 // for mode_t
 #include <sys/types.h>
 
+#include <expected>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -167,7 +168,8 @@ typedef std::unique_ptr<FDBFuture, FDBFutureDeleter> unique_future;
  * anywhere performance critical.
  */
 template <typename T>
-std::optional<T> run_sync_transaction(std::function<T(FDBTransaction *)> f) {
+std::expected<T, fdb_error_t>
+run_sync_transaction(std::function<T(FDBTransaction *)> f) {
   unique_transaction t = make_transaction();
 
   while (true) {
@@ -176,8 +178,9 @@ std::optional<T> run_sync_transaction(std::function<T(FDBTransaction *)> f) {
     try {
       retval = f(t.get());
       unique_future commitfuture = wrap_future(fdb_transaction_commit(t.get()));
-      if (fdb_future_block_until_ready(commitfuture.get())) {
-        throw new std::runtime_error("failed to block for future");
+      fdb_error_t berr = fdb_future_block_until_ready(commitfuture.get());
+      if (berr) {
+        return std::unexpected(berr);
       }
       if (fdb_future_get_error(commitfuture.get())) {
         err = fdb_future_get_error(commitfuture.get());
@@ -187,16 +190,17 @@ std::optional<T> run_sync_transaction(std::function<T(FDBTransaction *)> f) {
     }
 
     if (!err) {
-      return std::make_optional(retval);
+      return retval;
     } else {
       unique_future retryfuture =
           wrap_future(fdb_transaction_on_error(t.get(), err));
-      if (fdb_future_block_until_ready(retryfuture.get())) {
-        throw new std::runtime_error("failed to block for future");
+      fdb_error_t berr = fdb_future_block_until_ready(retryfuture.get());
+      if (berr) {
+        return std::unexpected(berr);
       }
       if (fdb_future_get_error(retryfuture.get())) {
         // failed utterly
-        return std::nullopt;
+        return std::unexpected(fdb_future_get_error(retryfuture.get()));
       }
       // fall out and loop
     }

@@ -196,7 +196,7 @@ void terminate_liveness() {
           return jt;
         };
     auto maybe_jt = run_sync_transaction(f);
-    if (maybe_jt)
+    if (maybe_jt.has_value())
       it = *maybe_jt;
     else
       /* if there was failure, don't advance it; we'll try again. */;

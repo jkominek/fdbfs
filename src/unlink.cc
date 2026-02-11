@@ -132,7 +132,7 @@ InflightAction Inflight_unlink_rmdir::inode_check() {
   if (kvcount <= 0) {
     // uh. serious referential integrity error. some dirent pointed
     // at a non-existant inode.
-    return InflightAction::Abort(EIO);
+    return InflightAction::Abort(EIO, "dirent pointed to nonexistant inode");
   }
 
   const FDBKeyValue inode_kv = kvs[0];

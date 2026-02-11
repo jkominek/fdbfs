@@ -36,7 +36,7 @@ public:
 
 private:
   fuse_ino_t ino;
-  struct stat attr {};
+  struct stat attr{};
   INodeRecord inode;
   int to_set;
 
@@ -62,7 +62,7 @@ Inflight_setattr *Inflight_setattr::reincarnate() {
 }
 
 InflightAction Inflight_setattr::commit_cb() {
-  struct stat newattr {};
+  struct stat newattr{};
   pack_inode_record_into_stat(inode, newattr);
   return InflightAction::Attr(newattr);
 }

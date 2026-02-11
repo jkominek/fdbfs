@@ -19,7 +19,9 @@ unique_transaction make_transaction() {
   unique_transaction ut;
   FDBTransaction *t;
   if (fdb_database_create_transaction(database, &t)) {
-    throw new std::runtime_error("failed to create transaction");
+    // this is catastrophic. we can no longer communicate with the database.
+    // TODO log a message or something
+    std::terminate();
   }
   ut.reset(t);
   return ut;

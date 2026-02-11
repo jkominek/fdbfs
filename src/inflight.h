@@ -122,6 +122,8 @@ public:
     }
   }
   static InflightAction Restart() {
+    // TODO someday track how many restarts we've done, so that after
+    // N of them, we can switch to an abort?
     return InflightAction(false, false, true, [](Inflight *) {});
   }
   static InflightAction None() {
@@ -137,7 +139,7 @@ public:
     return InflightAction(true, false, false,
                           [](Inflight *i) { fuse_reply_err(i->req, 0); });
   };
-  static InflightAction Abort(int err) {
+  static InflightAction Abort(int err, const char *why = "") {
     return InflightAction(true, false, false,
                           [err](Inflight *i) { fuse_reply_err(i->req, err); });
   }
@@ -152,6 +154,9 @@ public:
         // optimization/simplification, in that this write could
         // fail, despite us thinking that the inode will continue to
         // exist as long as we want it.
+        // it would require slightly(?!) exotic circumstances to break
+        // correctness; transactionally this can't fail, as it is
+        // a single set.
         (new Inflight_markused(i->req, e->ino, make_transaction()))->start();
       }
     });
@@ -196,7 +201,7 @@ protected:
   InflightAction(bool delete_this, bool begin_wait, bool restart,
                  std::function<void(Inflight *)> perform)
       : delete_this(delete_this), begin_wait(begin_wait), restart(restart),
-        perform(std::move(perform)){};
+        perform(std::move(perform)) {};
 
   bool delete_this = false;
   bool begin_wait = false;
