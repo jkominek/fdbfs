@@ -69,7 +69,12 @@ bool decrement_lookup_count(fuse_ino_t ino, uint64_t count) {
     // well. oops. kernel knew about something that isn't there.
     return false;
   } else {
-    it->second -= count;
+    if (count >= it->second) {
+      // TODO this should be logged, as it suggests that our
+      // counts fell out of sync somehow
+      it->second = 0;
+    } else
+      it->second -= count;
     if (it->second > 0) {
       // still cached, nothing to do.
       return false;

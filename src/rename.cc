@@ -255,10 +255,15 @@ InflightAction Inflight_rename::check() {
     }
     // turns out you can move a directory on top of another,
     // empty directory. look to see if we're moving a directory
-    if (origin_dirent.has_type() && (origin_dirent.type() == ft_directory) &&
-        destination_dirent.has_type() &&
-        (destination_dirent.type() != ft_directory)) {
-      return InflightAction::Abort(EISDIR);
+    if (origin_dirent.has_type() && destination_dirent.has_type()) {
+      if ((origin_dirent.type() == ft_directory) &&
+          (destination_dirent.type() != ft_directory)) {
+        return InflightAction::Abort(ENOTDIR);
+      }
+      if ((origin_dirent.type() != ft_directory) &&
+          (destination_dirent.type() == ft_directory)) {
+        return InflightAction::Abort(EISDIR);
+      }
     }
   } else if (flags == RENAME_EXCHANGE) {
     // need to both exist
@@ -377,7 +382,7 @@ InflightAction Inflight_rename::check() {
                        // records there are, we just
                        // need to know if there are
                        // 0, or >0. so, limit=2
-                       2, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+                       2, 0, FDB_STREAMING_MODE_EXACT, 0, 0, 0),
                    inode_metadata_fetch);
     return InflightAction::BeginWait(
         std::bind(&Inflight_rename::complicated, this));

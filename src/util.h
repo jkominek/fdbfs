@@ -27,6 +27,7 @@
 #include <sys/types.h>
 
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -62,10 +63,27 @@ extern std::unordered_map<fuse_ino_t, uint64_t> lookup_counts;
 [[nodiscard]] extern bool decrement_lookup_count(fuse_ino_t, uint64_t);
 
 struct fdbfs_filehandle {
-  // we're not putting anything in this yet,
-  // but we're attempting to pass it around
-  // and track it properly so that we could,
-  // later.
+  // TODO include a 'noatime' flag, possibly an enum with multiple settings
+  // such as: none, normal, rel, lazy.
+  // we also need to track the latest atime here, along with whatever Inflight
+  // is trying to update the atime. only want to try running one at a time
+  // per inode, since we've got to read and then write the inode to update the
+  // atime, there's an opportunity for multiple reads to finish, incrementing
+  // the atime here before we get around to applying it to fdb. we'll need
+  // to be able to lock the value.
+
+  // immutable; if true, update atime field when appropriate.
+  bool atime;
+  // take before manipulating any of the atime fields
+  std::mutex atime_mutex;
+  bool atime_update_needed;
+  // the time of our most recent access. when updating the database,
+  // wait to take the lock and read this for as long as possible.
+  struct timespec atime_target;
+  // update this whenever we're sure the atime is a larger value.
+  // other systems might dramatically increase the atime, at which point
+  // we can avoid wasting our time attempting updates.
+  struct timespec atime_last_known;
 };
 [[nodiscard]] extern struct fdbfs_filehandle **
 extract_fdbfs_filehandle(struct fuse_file_info *);

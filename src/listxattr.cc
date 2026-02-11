@@ -177,10 +177,15 @@ InflightAction Inflight_listxattr_count::process() {
     accumulated_size += (kv->key_length - empty_xattr_name_length + 1);
   }
 
-  const FDBKeyValue *lastkv = kvs + (kvcount - 1);
-  const auto stop = pack_xattr_key(ino, "\xFF");
-
-  if (more) {
+  // kvcount>0 check is to make kvcount-1 safe.
+  // i don't think it would be possible for more to
+  // be true, but we received 0 KV pairs. if that can
+  // happen, revisit this. (sounds like it'd be the
+  // result of some degenerate situation in fdb, and
+  // we'd effectively be reissuing the initial fdb_transaction_get_range)
+  if (more && (kvcount > 0)) {
+    const FDBKeyValue *lastkv = kvs + (kvcount - 1);
+    const auto stop = pack_xattr_key(ino, "\xFF");
     wait_on_future(fdb_transaction_get_range(
                        transaction.get(), lastkv->key, lastkv->key_length, 0, 1,
                        stop.data(), stop.size(), 0, 1, 0, 0,

@@ -115,7 +115,18 @@ InflightAction Inflight_read::callback() {
     // normal
   }
 
-  const size_t size = std::min(requested_size, inode.size() - off);
+  // being very cautious here when dealing with these different specialty types
+  const uint64_t file_size = inode.size();
+  const uint64_t uoff = static_cast<uint64_t>(off);
+  // read starting at or after the end of the file should EOF
+  if (uoff >= file_size)
+    return InflightAction::Buf({}, 0);
+  const uint64_t avail64 = file_size - uoff;
+  const size_t avail =
+      (avail64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
+          ? std::numeric_limits<size_t>::max()
+          : static_cast<size_t>(avail64);
+  const size_t size = std::min(requested_size, avail);
 
   for (int i = 0; i < kvcount; i++) {
     const FDBKeyValue kv = kvs[i];
@@ -179,6 +190,11 @@ InflightCallback Inflight_read::issue() {
 
 extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
                            off_t off, struct fuse_file_info *fi) {
+  // reject negative offset reads
+  if (off < 0) {
+    fuse_reply_err(req, EINVAL);
+    return;
+  }
   // given inode, figure out the appropriate key range, and
   // start reading it, filling it into a buffer to be sent back
   // with fuse_reply_buf

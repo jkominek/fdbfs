@@ -42,7 +42,7 @@ private:
 
   fuse_ino_t parent;
   fuse_ino_t ino;
-  struct stat attr {};
+  struct stat attr{};
   std::string name;
   filetype type;
   mode_t mode;
@@ -63,8 +63,9 @@ Inflight_mknod::Inflight_mknod(
 }
 
 Inflight_mknod *Inflight_mknod::reincarnate() {
-  Inflight_mknod *x = new Inflight_mknod(req, parent, name, mode, type, rdev,
-                                         std::move(transaction));
+  Inflight_mknod *x =
+      new Inflight_mknod(req, parent, name, mode, type, rdev,
+                         std::move(transaction), symlink_target);
   delete this;
   return x;
 }

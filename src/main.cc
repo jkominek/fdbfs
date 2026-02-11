@@ -88,6 +88,7 @@ void fdbfs_init(void *userdata, struct fuse_conn_info *conn) {
 }
 
 pthread_t network_thread;
+bool network_thread_created = false;
 pthread_t gc_thread;
 
 void fdbfs_destroy(void *userdata) {
@@ -115,7 +116,7 @@ void *network_runner(void *ignore) {
 }
 
 /* main is a mess.
- * i don't pretend any of this is reasonable.
+ * TODO structure main more clearly, perhaps break things out
  */
 int main(int argc, char *argv[]) {
   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
@@ -123,9 +124,13 @@ int main(int argc, char *argv[]) {
   struct fuse_cmdline_opts opts;
   struct fuse_loop_config config;
   int err = -1;
+  bool fdb_network_setup_done = false;
 
   GOOGLE_PROTOBUF_VERIFY_VERSION;
 
+  // TODO key_prefix needs to be configurable, both
+  // to prevent key space conflicts, and to allow multiple
+  // filesystems in one database.
   key_prefix.push_back('F');
   key_prefix.push_back('S');
   inode_key_length = pack_inode_key(0).size();
@@ -133,18 +138,20 @@ int main(int argc, char *argv[]) {
   // careful, we might make this variable
   fileblock_key_length = pack_fileblock_key(0, 0).size();
   dirent_prefix_length = pack_dentry_key(0, "").size();
+  // TODO should be stored in the filesystem metadata and
+  // pulled from there.
   BLOCKBITS = 13;
   BLOCKSIZE = 1 << BLOCKBITS;
 
   // give us some initial space.
   lookup_counts.reserve(128);
 
-  // this probably isn't the best way to produce 128 bits in
-  // a std::vector, but, whatever.
+  // TODO inode_use_identifier needs to be unified with the
+  // liveness manager's pid. probably by just throwing it away
+  // and switching the one use to the pid value.
   for (int i = 0; i < 16; i++) {
     inode_use_identifier.push_back(random() & 0xFF);
   }
-  // TODO put our inode_use_identifier into the pid table somehow
 
   if (fuse_parse_cmdline(&args, &opts) != 0)
     return 1;
@@ -203,8 +210,11 @@ int main(int argc, char *argv[]) {
     err = 1;
     goto shutdown_unmount;
   }
+  fdb_network_setup_done = true;
 
-  pthread_create(&network_thread, NULL, network_runner, NULL);
+  if (pthread_create(&network_thread, NULL, network_runner, NULL))
+    goto shutdown_fdb;
+  network_thread_created = true;
 
   if (fdb_create_database(NULL, &database)) {
     goto shutdown_fdb;
@@ -232,8 +242,10 @@ shutdown_args:
   fuse_opt_free_args(&args);
 
 shutdown_fdb:
-  err = err || fdb_stop_network();
-  err = err || pthread_join(network_thread, NULL);
+  if (fdb_network_setup_done)
+    err = err || fdb_stop_network();
+  if (network_thread_created)
+    err = err || pthread_join(network_thread, NULL);
 
   return err;
 }

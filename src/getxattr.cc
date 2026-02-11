@@ -83,9 +83,13 @@ InflightAction Inflight_getxattr::process() {
         // just want the decoded size
         return InflightAction::XattrSize(vallen);
       } else {
-        std::vector<uint8_t> buffer;
-        buffer.assign(val, val + vallen);
-        return InflightAction::Buf(buffer);
+        if (static_cast<uint64_t>(vallen) > static_cast<uint64_t>(maxsize)) {
+          return InflightAction::Abort(ERANGE);
+        } else {
+          std::vector<uint8_t> buffer;
+          buffer.assign(val, val + vallen);
+          return InflightAction::Buf(buffer);
+        }
       }
     } else {
       if (maxsize == 0) {
