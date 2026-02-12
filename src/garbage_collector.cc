@@ -57,20 +57,19 @@ void *garbage_scanner(void *ignore) {
     // printf("starting gc at %02x\n", b);
     scan_spot = (scan_spot + 1) % 16;
 
-    FDBFuture *f = fdb_transaction_get_range(
+    unique_future f = wrap_future(fdb_transaction_get_range(
         t.get(), start.data(), start.size(), 0, 1, stop.data(), stop.size(), 0,
         1, 1, 0, FDB_STREAMING_MODE_SMALL, 0, 0,
         // flip between forwards and backwards
         // scanning of our randomly chosen range
-        random() & 0x1);
+        random() & 0x1));
     const FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
-    if (fdb_future_block_until_ready(f) ||
-        fdb_future_get_keyvalue_array(f, &kvs, &kvcount, &more) ||
+    if (fdb_future_block_until_ready(f.get()) ||
+        fdb_future_get_keyvalue_array(f.get(), &kvs, &kvcount, &more) ||
         (kvcount <= 0)) {
       // errors, or nothing to do. take a longer break.
-      fdb_future_destroy(f);
       // sleep extra, though.
       ts.tv_sec = 3;
       nanosleep(&ts, NULL);
@@ -80,15 +79,12 @@ void *garbage_scanner(void *ignore) {
     if (kvs[0].key_length != inode_key_length) {
       // we found malformed junk in the garbage space. ironic.
       fdb_transaction_clear(t.get(), kvs[0].key, kvs[0].key_length);
-      FDBFuture *g = fdb_transaction_commit(t.get());
+      auto g = wrap_future(fdb_transaction_commit(t.get()));
       // if it fails, it fails, we'll try again the next time we
       // stumble across it.
-      if (fdb_future_block_until_ready(g)) {
+      if (fdb_future_block_until_ready(g.get())) {
         /* nothing to do */;
       }
-
-      fdb_future_destroy(f);
-      fdb_future_destroy(g);
       continue;
     }
 
@@ -97,6 +93,12 @@ void *garbage_scanner(void *ignore) {
     fuse_ino_t ino;
     bcopy(kvs[0].key + key_prefix.size() + 1, &ino, sizeof(fuse_ino_t));
     ino = be64toh(ino);
+    if (lookup_count_nonzero(ino)) {
+      // we're still using it, don't bother checking the use records
+      continue;
+    }
+    // at this point we shouldn't have a use record in the database, we'd
+    // only be finding other hosts' use records for the inode.
 
 #if DEBUG
     printf("found garbage inode %lx\n", ino);
@@ -108,21 +110,35 @@ void *garbage_scanner(void *ignore) {
 
     // scan the use range of the inode
     // TODO we actually need to pull all use records, and compare
-    // them against
-    f = fdb_transaction_get_range(t.get(), start.data(), start.size(), 0, 1,
-                                  stop.data(), stop.size(), 0, 1, 1, 0,
-                                  FDB_STREAMING_MODE_SMALL, 0, 0, 0);
-    if (fdb_future_block_until_ready(f) ||
-        fdb_future_get_keyvalue_array(f, &kvs, &kvcount, &more) ||
-        kvcount > 0) {
-      // welp. nothing to do.
+    // them against the known live processes
+    {
+      auto g = wrap_future(fdb_transaction_get_range(
+          t.get(), start.data(), start.size(), 0, 1, stop.data(), stop.size(),
+          0, 1, 1, 0, FDB_STREAMING_MODE_SMALL, 0, 0, 0));
+      if (fdb_future_block_until_ready(g.get()) ||
+          fdb_future_get_keyvalue_array(g.get(), &kvs, &kvcount, &more) ||
+          kvcount > 0) {
+        // welp. nothing to do.
 #if DEBUG
-      printf("nothing to do on the garbage inode\n");
+        printf("nothing to do on the garbage inode\n");
 #endif
-      fdb_future_destroy(f);
-      continue;
+        continue;
+      }
     }
 
+    // it shouldn't be possible for this to be true, but if it is, that's
+    // a problem.
+    if (lookup_count_nonzero(ino)) {
+      // we've started using it
+      // TODO  we're in a very weird situation, we've somehow recently
+      // started locally using an inode for which there are no use records
+      // despite the fact that it's been waiting for garbage collection.
+      // we should at least log this, and possibly attempt to repair the
+      // situation (restore a use record?) because another host running
+      // the GC will not know about our lookup count, and will delete the
+      // inode soon.
+      continue;
+    }
     // wooo no usage, we get to erase it.
 #if DEBUG
     printf("cleaning garbage inode\n");
@@ -131,13 +147,13 @@ void *garbage_scanner(void *ignore) {
     fdb_transaction_clear(t.get(), garbagekey.data(), garbagekey.size());
 
     erase_inode(t.get(), ino);
-    f = fdb_transaction_commit(t.get());
-    // if the commit fails, it doesn't matter. we'll try again
-    // later.
-    if (fdb_future_block_until_ready(f)) {
-      printf("error when commiting a garbage collection transaction\n");
+    {
+      auto g = wrap_future(fdb_transaction_commit(t.get()));
+      // if the commit fails, it doesn't matter. we'll try again later.
+      if (fdb_future_block_until_ready(g.get())) {
+        printf("error when commiting a garbage collection transaction\n");
+      }
     }
-    fdb_future_destroy(f);
   }
 #if DEBUG
   printf("gc done\n");

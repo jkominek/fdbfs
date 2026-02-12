@@ -62,6 +62,7 @@ extern std::mutex lookup_counts_mutex;
 
 [[nodiscard]] extern bool increment_lookup_count(fuse_ino_t);
 [[nodiscard]] extern bool decrement_lookup_count(fuse_ino_t, uint64_t);
+[[nodiscard]] extern bool lookup_count_nonzero(fuse_ino_t);
 
 struct fdbfs_filehandle {
   // TODO include a 'noatime' flag, possibly an enum with multiple settings

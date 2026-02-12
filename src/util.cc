@@ -90,6 +90,18 @@ bool decrement_lookup_count(fuse_ino_t ino, uint64_t count) {
   }
 }
 
+bool lookup_count_nonzero(fuse_ino_t ino) {
+  std::lock_guard<std::mutex> guard(lookup_counts_mutex);
+  auto it = lookup_counts.find(ino);
+  if (it == lookup_counts.end()) {
+    // record isn't present, so it's zero
+    return false;
+  } else {
+    // record is present, so it's nonzero
+    return true;
+  }
+}
+
 // will be filled out before operation begins
 std::vector<uint8_t> key_prefix;
 
