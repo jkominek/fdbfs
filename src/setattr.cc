@@ -236,14 +236,8 @@ InflightAction Inflight_setattr::callback() {
   }
   // done updating inode!
 
-  const int inode_size = inode.ByteSizeLong();
-  uint8_t inode_buffer[inode_size];
-  inode.SerializeToArray(inode_buffer, inode_size);
-
-  const auto key = pack_inode_key(ino);
-
-  fdb_transaction_set(transaction.get(), key.data(), key.size(), inode_buffer,
-                      inode_size);
+  if (!fdb_set_protobuf(transaction.get(), pack_inode_key(ino), inode))
+    return InflightAction::Abort(EIO);
 
   if (do_commit) {
     wait_on_future(fdb_transaction_commit(transaction.get()), _commit);

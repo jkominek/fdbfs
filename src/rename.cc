@@ -151,12 +151,10 @@ InflightAction Inflight_rename::complicated() {
   struct timespec tv;
   clock_gettime(CLOCK_REALTIME, &tv);
   update_ctime(&inode, &tv);
-  const int inode_size = inode.ByteSizeLong();
-  uint8_t inode_buffer[inode_size];
-  inode.SerializeToArray(inode_buffer, inode_size);
 
-  fdb_transaction_set(transaction.get(), inode_kv.key, inode_kv.key_length,
-                      inode_buffer, inode_size);
+  std::vector<uint8_t> key(inode_kv.key, inode_kv.key + inode_kv.key_length);
+  if (!fdb_set_protobuf(transaction.get(), key, inode))
+    return InflightAction::Abort(EIO);
 
   if ((directory_listing_fetch && (inode.nlinks() <= 1)) ||
       (inode.nlinks() == 0)) {
@@ -175,14 +173,9 @@ InflightAction Inflight_rename::complicated() {
   }
 
   // set the new dirent to the correct value
-  {
-    const auto key = pack_dentry_key(newparent, newname);
-    const int dirent_size = origin_dirent.ByteSizeLong();
-    uint8_t dirent_buffer[dirent_size];
-    origin_dirent.SerializeToArray(dirent_buffer, dirent_size);
-    fdb_transaction_set(transaction.get(), key.data(), key.size(),
-                        dirent_buffer, dirent_size);
-  }
+  if (!fdb_set_protobuf(transaction.get(), pack_dentry_key(newparent, newname),
+                        origin_dirent))
+    return InflightAction::Abort(EIO);
 
   return commit(InflightAction::OK);
 }
@@ -304,16 +297,10 @@ InflightAction Inflight_rename::check() {
     }
 
     // take the old directory entry contents, repack it.
-    const int olddirent_size = origin_dirent.ByteSizeLong();
-    uint8_t olddirent_buf[olddirent_size];
-    origin_dirent.SerializeToArray(olddirent_buf, olddirent_size);
-
     // and save it into the new directory entry
-    {
-      const auto key = pack_dentry_key(newparent, newname);
-      fdb_transaction_set(transaction.get(), key.data(), key.size(),
-                          olddirent_buf, olddirent_size);
-    }
+    if (!fdb_set_protobuf(transaction.get(),
+                          pack_dentry_key(newparent, newname), origin_dirent))
+      return InflightAction::Abort(EIO);
   }
 #ifdef RENAME_EXCHANGE
   else if (flags == RENAME_EXCHANGE) {
@@ -322,24 +309,14 @@ InflightAction Inflight_rename::check() {
      * the previous case. Here we swap the contents of the
      * two directory entries, but nothing is unlinked.
      */
-    const int olddirent_size = origin_dirent.ByteSizeLong();
-    uint8_t olddirent_buf[olddirent_size];
-    origin_dirent.SerializeToArray(olddirent_buf, olddirent_size);
-
-    const int newdirent_size = destination_dirent.ByteSizeLong();
-    uint8_t newdirent_buf[newdirent_size];
-    destination_dirent.SerializeToArray(newdirent_buf, newdirent_size);
-
-    {
-      const auto key = pack_dentry_key(oldparent, oldname);
-      fdb_transaction_set(transaction.get(), key.data(), key.size(),
-                          newdirent_buf, newdirent_size);
+    if (!fdb_set_protobuf(transaction.get(),
+                          pack_dentry_key(oldparent, oldname),
+                          destination_dirent)) {
+      return InflightAction::Abort(EIO);
     }
-
-    {
-      const auto key = pack_dentry_key(newparent, newname);
-      fdb_transaction_set(transaction.get(), key.data(), key.size(),
-                          olddirent_buf, olddirent_size);
+    if (!fdb_set_protobuf(transaction.get(),
+                          pack_dentry_key(newparent, newname), origin_dirent)) {
+      return InflightAction::Abort(EIO);
     }
   }
 #endif

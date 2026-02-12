@@ -148,25 +148,16 @@ InflightAction Inflight_mknod::postverification() {
   pack_inode_record_into_stat(inode, attr);
 
   // set the inode KV pair
-  auto key = pack_inode_key(ino);
-  int inode_size = inode.ByteSizeLong();
-  uint8_t inode_buffer[inode_size];
-  inode.SerializeToArray(inode_buffer, inode_size);
-
-  fdb_transaction_set(transaction.get(), key.data(), key.size(), inode_buffer,
-                      inode_size);
+  if (!fdb_set_protobuf(transaction.get(), pack_inode_key(ino), inode))
+    return InflightAction::Abort(EIO);
 
   DirectoryEntry dirent;
   dirent.set_inode(ino);
   dirent.set_type(type);
 
-  int dirent_size = dirent.ByteSizeLong();
-  uint8_t dirent_buffer[dirent_size];
-  dirent.SerializeToArray(dirent_buffer, dirent_size);
-
-  key = pack_dentry_key(parent, name);
-  fdb_transaction_set(transaction.get(), key.data(), key.size(), dirent_buffer,
-                      dirent_size);
+  if (!fdb_set_protobuf(transaction.get(), pack_dentry_key(parent, name),
+                        dirent))
+    return InflightAction::Abort(EIO);
 
   return commit([&]() {
     auto e = std::make_unique<struct fuse_entry_param>();

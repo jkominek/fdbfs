@@ -312,12 +312,9 @@ void update_directory_times(FDBTransaction *transaction, INodeRecord &inode) {
   inode.mutable_ctime()->set_nsec(tp.tv_nsec);
   inode.mutable_mtime()->set_sec(tp.tv_sec);
   inode.mutable_mtime()->set_nsec(tp.tv_nsec);
-  auto key = pack_inode_key(inode.inode());
-  int inode_size = inode.ByteSizeLong();
-  uint8_t inode_buffer[inode_size];
-  inode.SerializeToArray(inode_buffer, inode_size);
-  fdb_transaction_set(transaction, key.data(), key.size(), inode_buffer,
-                      inode_size);
+  // discard the error; failure shouldn't be possible and even if it does
+  // somehow happen, failing to update directory times is minor.
+  (void)fdb_set_protobuf(transaction, pack_inode_key(inode.inode()), inode);
 }
 
 void erase_inode(FDBTransaction *transaction, fuse_ino_t ino) {
@@ -524,4 +521,24 @@ int decode_block(const FDBKeyValue *kv, int block_offset, uint8_t *output,
 
   // unrecognized block type.
   return -1;
+}
+
+std::expected<void, int>
+fdb_set_protobuf(FDBTransaction *tx, const std::vector<uint8_t> &key,
+                 const google::protobuf::MessageLite &msg) {
+  if (key.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+    return std::unexpected(EOVERFLOW);
+
+  const size_t n = msg.ByteSizeLong();
+  if (n > static_cast<size_t>(std::numeric_limits<int>::max()))
+    return std::unexpected(EOVERFLOW);
+
+  std::vector<uint8_t> buf(n);
+  if (!msg.SerializeToArray(buf.data(), static_cast<int>(n)))
+    return std::unexpected(EIO);
+
+  fdb_transaction_set(tx, key.data(), static_cast<int>(key.size()), buf.data(),
+                      static_cast<int>(n));
+
+  return {};
 }

@@ -162,12 +162,12 @@ InflightAction Inflight_unlink_rmdir::inode_check() {
   clock_gettime(CLOCK_REALTIME, &tv);
   update_ctime(&inode, &tv);
 
-  const int inode_size = inode.ByteSizeLong();
-  uint8_t inode_buffer[inode_size];
-  inode.SerializeToArray(inode_buffer, inode_size);
+  {
+    std::vector<uint8_t> key(inode_kv.key, inode_kv.key + inode_kv.key_length);
+    if (!fdb_set_protobuf(transaction.get(), key, inode))
+      return InflightAction::Abort(EIO);
+  }
 
-  fdb_transaction_set(transaction.get(), inode_kv.key, inode_kv.key_length,
-                      inode_buffer, inode_size);
   if (inode.nlinks() == 0) {
     // nlinks == 0? it might be time to clean up the inode
 

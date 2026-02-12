@@ -74,11 +74,12 @@ void send_pt_entry(bool startup) {
         return 0;
       }
     }
-    const int entry_size = pt_entry.ByteSizeLong();
-    uint8_t entry_buffer[entry_size];
-    pt_entry.SerializeToArray(entry_buffer, entry_size);
 
-    fdb_transaction_set(t, key.data(), key.size(), entry_buffer, entry_size);
+    if (!fdb_set_protobuf(t, key, pt_entry)) {
+      // failure shouldn't be possible since we control the inputs here
+      std::terminate();
+    }
+
     return 0;
   };
   run_sync_transaction(f);

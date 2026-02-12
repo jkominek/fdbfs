@@ -162,6 +162,10 @@ typedef std::unique_ptr<FDBFuture, FDBFutureDeleter> unique_future;
 [[nodiscard]] extern unique_transaction make_transaction();
 [[nodiscard]] extern unique_future wrap_future(FDBFuture *);
 
+[[nodiscard]] std::expected<void, int>
+fdb_set_protobuf(FDBTransaction *tx, const std::vector<uint8_t> &key,
+                 const google::protobuf::MessageLite &msg);
+
 /**
  * This is for simple retryable synchronous transactions, like the
  * ones we'll run in our background threads. It shouldn't be used

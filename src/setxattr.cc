@@ -85,14 +85,9 @@ InflightAction Inflight_setxattr::process() {
   } else { // xattr not present
     if (behavior & CanCreate) {
       // set the xattr node
-
-      const auto node_key = pack_xattr_key(ino, name);
-      const int xattr_size = xattr.ByteSizeLong();
-      uint8_t xattr_buffer[xattr_size];
-      xattr.SerializeToArray(xattr_buffer, xattr_size);
-
-      fdb_transaction_set(transaction.get(), node_key.data(), node_key.size(),
-                          xattr_buffer, xattr_size);
+      if (!fdb_set_protobuf(transaction.get(), pack_xattr_key(ino, name),
+                            xattr))
+        return InflightAction::Abort(EIO);
     } else {
       return InflightAction::Abort(ENODATA);
     }

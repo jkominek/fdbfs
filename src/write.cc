@@ -125,13 +125,10 @@ InflightAction Inflight_write::check() {
     clock_gettime(CLOCK_REALTIME, &tv);
     update_mtime(&inode, &tv);
 
-    auto key = pack_inode_key(inode.inode());
     // we've updated the inode appropriately.
-    const int inode_size = inode.ByteSizeLong();
-    uint8_t inode_buffer[inode_size];
-    inode.SerializeToArray(inode_buffer, inode_size);
-    fdb_transaction_set(transaction.get(), key.data(), key.size(), inode_buffer,
-                        inode_size);
+    if (!fdb_set_protobuf(transaction.get(), pack_inode_key(inode.inode()),
+                          inode))
+      return InflightAction::Abort(EIO);
   }
 
   // merge the edge writes into the blocks
