@@ -76,6 +76,7 @@ private:
   // whether we're intended as r/w or not.
   ReadWrite readwrite;
   std::queue<FDBFuture *> future_queue;
+  bool run_current_callback();
   void begin_wait();
 
 #if DEBUG
@@ -116,7 +117,9 @@ public:
     } else {
       // can't be retried, surface an error.
       return InflightAction(true, false, false, [](Inflight *i) {
-        // is EIO most appropriate?
+        // NOTE we could, perhaps, improve this slightly by digging out
+        // a list of fdb_error_t values from the code and doing a switch
+        // on them, but that's not stable, and wouldn't add much value.
         fuse_reply_err(i->req, EIO);
       });
     }

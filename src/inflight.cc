@@ -103,12 +103,49 @@ void Inflight::start() {
   }
 
   cb.emplace(issue());
+  if (future_queue.empty()) {
+    run_current_callback();
+    return;
+  }
   begin_wait();
 }
 
 InflightAction Inflight::commit(InflightCallback cb) {
   wait_on_future(fdb_transaction_commit(transaction.get()), _commit);
   return InflightAction::BeginWait(cb);
+}
+
+bool Inflight::run_current_callback() {
+  if (bool(cb)) {
+    std::function<InflightAction()> f = cb.value();
+    cb = std::nullopt;
+    InflightAction a = f();
+    a.perform(this);
+
+    if (a.begin_wait) {
+      begin_wait();
+    }
+
+    if (a.restart) {
+      fdb_transaction_reset(transaction.get());
+      this->reincarnate()->start();
+      return false;
+    }
+
+    if (a.delete_this) {
+      // we're dead and done, for whatever reason
+      cleanup();
+      delete this;
+      return false;
+    }
+
+    return true;
+  }
+
+  std::cout << "no callback was set for " << typeid(*this).name()
+            << " when we needed one" << std::endl;
+  fail_inflight(this, EIO, "no callback was set when we needed one");
+  return false;
 }
 
 void Inflight::future_ready(FDBFuture *f) {
@@ -130,32 +167,8 @@ void Inflight::future_ready(FDBFuture *f) {
   }
 
   if (future_queue.empty()) {
-    if (bool(cb)) {
-      std::function<InflightAction()> f = cb.value();
-      cb = std::nullopt;
-      InflightAction a = f();
-      a.perform(this);
-
-      if (a.begin_wait) {
-        begin_wait();
-      }
-
-      if (a.restart) {
-        fdb_transaction_reset(transaction.get());
-        this->reincarnate()->start();
-      }
-
-      if (a.delete_this) {
-        // we're dead and done, for whatever reason
-        cleanup();
-        delete this;
-      }
-    } else {
-      std::cout << "no callback was set for " << typeid(*this).name()
-                << " when we needed one" << std::endl;
-      fail_inflight(this, EIO, "no callback was set when we needed one");
-      return;
-    }
+    run_current_callback();
+    return;
   } else {
     // there are still futures we need to wait on before we
     // can return to processing the transaction, so enqueue

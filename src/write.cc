@@ -104,8 +104,11 @@ InflightAction Inflight_write::check() {
 
   INodeRecord inode;
   inode.ParseFromArray(val, vallen);
-  if ((!inode.IsInitialized()) || (!inode.has_type()) || (!inode.has_size()) ||
-      (inode.type() != ft_regular)) {
+  if ((!inode.IsInitialized()) || (!inode.has_type()) || (!inode.has_size())) {
+    return InflightAction::Abort(EIO);
+  } else if (inode.type() == ft_directory) {
+    return InflightAction::Abort(EISDIR);
+  } else if (inode.type() != ft_regular) {
     return InflightAction::Abort(EINVAL);
   } else {
     if (inode.size() < (off + buffer.size())) {
@@ -215,12 +218,7 @@ InflightCallback Inflight_write::issue() {
   // we interleave our reads and writes.
   if (fdb_transaction_set_option(
           transaction.get(), FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, NULL, 0)) {
-    // hmm.
-    // TODO how do we generate an error here?
-    return []() {
-      // i don't think this will be run, since we've registered no futures?
-      return InflightAction::Abort(EIO);
-    };
+    return []() { return InflightAction::Abort(EIO); };
   }
 
   // step 1 is easy, we'll need the inode record

@@ -52,9 +52,9 @@ InflightAction Inflight_statfs::process_status() {
   if (err)
     return InflightAction::FDBError(err);
   if (!present)
-    return InflightAction::Abort(EIO);
+    return InflightAction::Abort(ENOSYS);
 
-  // nlohmann::json doesn't specify that it retquires
+  // nlohmann::json doesn't specify that it requires
   // null-terminated arrays, but it does.
   char buffer[vallen + 1];
   bcopy(val, buffer, vallen);

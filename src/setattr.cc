@@ -130,7 +130,7 @@ InflightAction Inflight_setattr::callback() {
     return InflightAction::FDBError(err);
 
   if (!present) {
-    return InflightAction::Abort(EFAULT);
+    return InflightAction::Abort(ENOENT);
   }
 
   bool do_commit = true;
@@ -257,12 +257,7 @@ InflightCallback Inflight_setattr::issue() {
   // we interleave our reads and writes.
   if (fdb_transaction_set_option(
           transaction.get(), FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, NULL, 0)) {
-    // hmm.
-    // TODO how do we generate an error here?
-    return []() {
-      // i don't think this will be run, since we've registered no futures?
-      return InflightAction::Abort(EIO);
-    };
+    return []() { return InflightAction::Abort(EIO); };
   }
 
   const auto key = pack_inode_key(ino);

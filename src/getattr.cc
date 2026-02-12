@@ -62,7 +62,7 @@ InflightAction Inflight_getattr::callback() {
   if (err)
     return InflightAction::FDBError(err);
   if (!present) {
-    return InflightAction::Abort(EFAULT);
+    return InflightAction::Abort(ENOENT);
   }
 
   INodeRecord inode;
@@ -71,7 +71,7 @@ InflightAction Inflight_getattr::callback() {
     return InflightAction::Abort(EIO);
   }
 
-  struct stat attr {};
+  struct stat attr{};
   pack_inode_record_into_stat(inode, attr);
   return InflightAction::Attr(attr);
 }
