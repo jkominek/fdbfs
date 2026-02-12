@@ -28,6 +28,9 @@
  * awhile, we should die.
  */
 
+pthread_t gc_thread;
+bool gc_stop = false;
+
 void *garbage_scanner(void *ignore) {
   uint8_t scan_spot = random() & 0xF;
   struct timespec ts;
@@ -36,7 +39,7 @@ void *garbage_scanner(void *ignore) {
 #if DEBUG
   printf("gc starting\n");
 #endif
-  while (database != NULL) {
+  while (!gc_stop) {
     // TODO vary this or do something to slow things down.
     ts.tv_sec = 1;
     nanosleep(&ts, NULL);
@@ -140,4 +143,17 @@ void *garbage_scanner(void *ignore) {
   printf("gc done\n");
 #endif
   return NULL;
+}
+
+bool start_gc() {
+  gc_stop = false; // just in case we restart the gc for some reason
+  if (pthread_create(&gc_thread, NULL, garbage_scanner, NULL)) {
+    return true;
+  }
+  return false;
+}
+
+void terminate_gc() {
+  gc_stop = true;
+  pthread_join(gc_thread, NULL);
 }

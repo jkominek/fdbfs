@@ -89,17 +89,9 @@ void fdbfs_init(void *userdata, struct fuse_conn_info *conn) {
 
 pthread_t network_thread;
 bool network_thread_created = false;
-pthread_t gc_thread;
 
 void fdbfs_destroy(void *userdata) {
-  // TODO bring gc_thread to a clean halt
-  // TODO check return codes and do... what?
-  fdb_database_destroy(database);
-  if (fdb_stop_network()) {
-    ;
-  }
-  pthread_join(network_thread, NULL);
-  exit(0);
+  // no-op. main takes care of everything when the session loop ends.
 }
 
 /* Purely to get the FoundationDB network stuff running in a
@@ -175,13 +167,10 @@ int main(int argc, char *argv[]) {
     goto shutdown_args;
   }
   if (fuse_set_signal_handlers(se) != 0) {
-    fuse_session_destroy(se);
     err = 1;
     goto shutdown_session;
   }
   if (fuse_session_mount(se, opts.mountpoint) != 0) {
-    fuse_remove_signal_handlers(se);
-    fuse_session_destroy(se);
     err = 1;
     goto shutdown_handlers;
   }
@@ -196,28 +185,35 @@ int main(int argc, char *argv[]) {
 
   if (fdb_select_api_version(FDB_API_VERSION)) {
     err = 1;
-    goto shutdown_unmount;
+    goto unmount_session;
   }
 
   if (fdb_setup_network()) {
     err = 1;
-    goto shutdown_unmount;
+    goto shutdown_fdb;
   }
   fdb_network_setup_done = true;
 
-  if (pthread_create(&network_thread, NULL, network_runner, NULL))
+  if (pthread_create(&network_thread, NULL, network_runner, NULL)) {
+    err = 1;
     goto shutdown_fdb;
+  }
   network_thread_created = true;
 
   if (fdb_create_database(NULL, &database)) {
+    database = NULL; // it failed, contents of the pointer are unspecified
     goto shutdown_fdb;
   }
 
   if (start_liveness(se)) {
-    goto shutdown_unmount;
+    err = 1;
+    goto shutdown_fdb;
   }
 
-  pthread_create(&gc_thread, NULL, garbage_scanner, NULL);
+  if (start_gc()) {
+    err = 1;
+    goto shutdown_liveness;
+  }
 
   if (opts.singlethread) {
     err = fuse_session_loop(se);
@@ -227,22 +223,27 @@ int main(int argc, char *argv[]) {
     err = fuse_session_loop_mt(se, &config);
   }
 
-shutdown_unmount:
-  fuse_session_unmount(se);
+  terminate_gc();
+shutdown_liveness:
   terminate_liveness();
-shutdown_handlers:
-  fuse_remove_signal_handlers(se);
-shutdown_session:
-  fuse_session_destroy(se);
-
-shutdown_args:
-  fuse_opt_free_args(&args);
 
 shutdown_fdb:
+  if (database)
+    fdb_database_destroy(database);
+
   if (fdb_network_setup_done)
     err = err || fdb_stop_network();
   if (network_thread_created)
     err = err || pthread_join(network_thread, NULL);
+
+unmount_session:
+  fuse_session_unmount(se);
+shutdown_handlers:
+  fuse_remove_signal_handlers(se);
+shutdown_session:
+  fuse_session_destroy(se);
+shutdown_args:
+  fuse_opt_free_args(&args);
 
   return err;
 }
