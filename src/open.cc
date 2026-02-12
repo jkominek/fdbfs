@@ -24,6 +24,12 @@
 
 extern "C" void fdbfs_open(fuse_req_t req, fuse_ino_t ino,
                            struct fuse_file_info *fi) {
+  if (fi->flags & O_TRUNC) {
+    // truncate and time updates are handled through setattr logic.
+    fdbfs_setattr_open_trunc(req, ino, fi);
+    return;
+  }
+
   struct fdbfs_filehandle *fh = new fdbfs_filehandle;
   fh->atime_update_needed = false;
 
@@ -42,10 +48,6 @@ extern "C" void fdbfs_open(fuse_req_t req, fuse_ino_t ino,
 #else
   fh->atime = true;
 #endif
-  if (fi->flags & O_TRUNC) {
-    // TODO run setattr truncate code, including time changes
-  }
-
   if (fuse_reply_open(req, fi) < 0) {
     // had some sort of error, so release will never be called, we'll leak
     // memory if we don't clean up right now.

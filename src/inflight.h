@@ -166,6 +166,19 @@ public:
       fuse_reply_attr(i->req, &attr, 0.0);
     });
   }
+  static InflightAction Open(struct fuse_file_info fi) {
+    return InflightAction(true, false, false, [fi](Inflight *i) mutable {
+      if (fuse_reply_open(i->req, &fi) < 0) {
+        // NOTE while simple, this should be kept in sync with
+        // the tail end of fdbfs_open
+
+        // release won't be called if open failed.
+        auto f = extract_fdbfs_filehandle(&fi);
+        if ((f != nullptr) && (*f != nullptr))
+          delete *f;
+      }
+    });
+  }
   static InflightAction Buf(std::vector<uint8_t> buf, int actual_size = -1) {
     // Note, per the default value for actual_size, we might receive
     // a buffer which is larger than the amount of useful/valid data

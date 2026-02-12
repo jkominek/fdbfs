@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <variant>
 
 #include "fdbfs_ops.h"
 #include "inflight.h"
@@ -29,8 +30,14 @@
  */
 class Inflight_setattr : public Inflight {
 public:
-  Inflight_setattr(fuse_req_t, fuse_ino_t, struct stat, int,
-                   unique_transaction);
+  struct SuccessReplyAttr {};
+  struct SuccessReplyOpen {
+    struct fuse_file_info fi;
+  };
+  using SuccessReply = std::variant<SuccessReplyAttr, SuccessReplyOpen>;
+
+  Inflight_setattr(fuse_req_t, fuse_ino_t, struct stat, int, unique_transaction,
+                   SuccessReply = SuccessReplyAttr{});
   Inflight_setattr *reincarnate();
   InflightCallback issue();
 
@@ -39,6 +46,7 @@ private:
   struct stat attr{};
   INodeRecord inode;
   int to_set;
+  SuccessReply success_reply;
 
   unique_future inode_fetch;
   InflightAction callback();
@@ -50,18 +58,32 @@ private:
 
 Inflight_setattr::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
                                    struct stat attr, int to_set,
-                                   unique_transaction transaction)
+                                   unique_transaction transaction,
+                                   SuccessReply success_reply)
     : Inflight(req, ReadWrite::Yes, std::move(transaction)), ino(ino),
-      attr(attr), to_set(to_set) {}
+      attr(attr), to_set(to_set), success_reply(std::move(success_reply)) {}
 
 Inflight_setattr *Inflight_setattr::reincarnate() {
-  Inflight_setattr *x =
-      new Inflight_setattr(req, ino, attr, to_set, std::move(transaction));
+  Inflight_setattr *x = new Inflight_setattr(
+      req, ino, attr, to_set, std::move(transaction), success_reply);
   delete this;
   return x;
 }
 
 InflightAction Inflight_setattr::commit_cb() {
+  auto open_reply = std::get_if<SuccessReplyOpen>(&success_reply);
+  if (open_reply != nullptr) {
+    // NOTE this needs to be kept in sync with code in fdbfs_open
+    struct fdbfs_filehandle *fh = new fdbfs_filehandle;
+    fh->atime_update_needed = false;
+#ifdef O_NOATIME
+    fh->atime = ((open_reply->fi.flags & O_NOATIME) == 0);
+#else
+    fh->atime = true;
+#endif
+    *(extract_fdbfs_filehandle(&(open_reply->fi))) = fh;
+    return InflightAction::Open(open_reply->fi);
+  }
   struct stat newattr{};
   pack_inode_record_into_stat(inode, newattr);
   return InflightAction::Attr(newattr);
@@ -256,5 +278,15 @@ extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
                               int to_set, struct fuse_file_info *fi) {
   Inflight_setattr *inflight =
       new Inflight_setattr(req, ino, *attr, to_set, make_transaction());
+  inflight->start();
+}
+
+extern "C" void fdbfs_setattr_open_trunc(fuse_req_t req, fuse_ino_t ino,
+                                         struct fuse_file_info *fi) {
+  struct stat attr{};
+  attr.st_size = 0;
+  Inflight_setattr *inflight = new Inflight_setattr(
+      req, ino, attr, FUSE_SET_ATTR_SIZE, make_transaction(),
+      Inflight_setattr::SuccessReplyOpen{*fi});
   inflight->start();
 }

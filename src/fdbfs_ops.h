@@ -52,4 +52,9 @@ extern "C" void fdbfs_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size);
 extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
                             struct fuse_file_info *fi);
 
+/* Pseudo ops, that don't correspond to fuse ops */
+
+extern "C" void fdbfs_setattr_open_trunc(fuse_req_t req, fuse_ino_t ino,
+                                         struct fuse_file_info *fi);
+
 #endif
