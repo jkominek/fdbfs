@@ -1,4 +1,5 @@
 #include "util.h"
+#include "liveness.h" // manages pid
 
 #include <ctype.h>
 #include <stdio.h>
@@ -38,8 +39,6 @@ struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *fi) {
                 "FUSE File handle can't hold a pointer to our structure");
   return reinterpret_cast<struct fdbfs_filehandle **>(&(fi->fh));
 }
-
-std::vector<uint8_t> inode_use_identifier;
 
 // tracks kernel cache of lookups, so we can avoid fdb
 // calls except when we're going from zero to not-zero
@@ -144,8 +143,7 @@ std::vector<uint8_t> pack_pid_key(std::vector<uint8_t> p,
 std::vector<uint8_t> pack_inode_use_key(fuse_ino_t ino) {
   auto key = pack_inode_key(ino);
   key.push_back(INODE_USE_PREFIX);
-  key.insert(key.end(), inode_use_identifier.begin(),
-             inode_use_identifier.end());
+  key.insert(key.end(), pid.begin(), pid.end());
   return key;
 }
 

@@ -57,7 +57,6 @@ extern int fileblock_prefix_length;
 extern int fileblock_key_length;
 extern int inode_key_length;
 extern int dirent_prefix_length;
-extern std::vector<uint8_t> inode_use_identifier;
 extern std::unordered_map<fuse_ino_t, uint64_t> lookup_counts;
 extern std::mutex lookup_counts_mutex;
 

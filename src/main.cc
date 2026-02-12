@@ -146,13 +146,6 @@ int main(int argc, char *argv[]) {
   // give us some initial space.
   lookup_counts.reserve(128);
 
-  // TODO inode_use_identifier needs to be unified with the
-  // liveness manager's pid. probably by just throwing it away
-  // and switching the one use to the pid value.
-  for (int i = 0; i < 16; i++) {
-    inode_use_identifier.push_back(random() & 0xFF);
-  }
-
   if (fuse_parse_cmdline(&args, &opts) != 0)
     return 1;
 
@@ -218,6 +211,10 @@ int main(int argc, char *argv[]) {
 
   if (fdb_create_database(NULL, &database)) {
     goto shutdown_fdb;
+  }
+
+  if (start_liveness(se)) {
+    goto shutdown_unmount;
   }
 
   pthread_create(&gc_thread, NULL, garbage_scanner, NULL);

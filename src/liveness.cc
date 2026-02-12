@@ -123,9 +123,10 @@ void *liveness_manager(void *ignore) {
   return NULL;
 }
 
-void start_liveness(struct fuse_session *se) {
+// returns false if liveness is started by the time the function returns
+bool start_liveness(struct fuse_session *se) {
   if (liveness_started) {
-    return;
+    return false;
   }
 
   pid.clear();
@@ -146,10 +147,11 @@ void start_liveness(struct fuse_session *se) {
     terminate = true;
     fuse_session = NULL;
     pid.clear();
-    return;
+    return true;
   }
 
   liveness_started = true;
+  return false;
 }
 
 // we're being called after unmount
