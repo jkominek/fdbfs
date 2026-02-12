@@ -14,6 +14,10 @@ echo sleeping for a bit, because of slowness
 sleep 20
 df -h
 echo resuming...
+if [ -f /tmp/fdb/XXX ]; then
+    echo failed to mount fdbfs; test is invalid
+    exit 1
+fi
 
 cd /tmp
 git clone https://github.com/billziss-gh/secfs.test
@@ -31,13 +35,12 @@ cd /tmp/fdb
 # let's look at the contents of the fdb filesystem
 # we shouldn't see the XXX file.
 ls -l
-if [ -f /tmp/fdb/XXX ]; then
-    echo failed to mount fdbfs; test is invalid
-    exit 1
-fi
 sudo prove -r /tmp/secfs.test/fstest/fstest
+actualexit=$?
 
 cd /tmp
 umount /tmp/fdb
 sleep 2
 cat /tmp/valgrind.txt
+
+exit $actualexit
