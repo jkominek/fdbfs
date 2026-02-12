@@ -54,41 +54,53 @@ InflightAction Inflight_statfs::process_status() {
   if (!present)
     return InflightAction::Abort(ENOSYS);
 
-  // nlohmann::json doesn't specify that it requires
-  // null-terminated arrays, but it does.
-  char buffer[vallen + 1];
-  bcopy(val, buffer, vallen);
-  buffer[vallen] = '\0';
+  const std::string buffer(reinterpret_cast<const char *>(val), vallen);
 
   fsblkcnt_t used_blocks = 0;
   fsblkcnt_t min_available_blocks = 1000; // UINT64_MAX;
 
-  // the reinterpret_cast avoids some weird c++ error
-  // where ::parse things buffer has a strange type that
-  // it can't operate on.
-  nlohmann::json status =
-      nlohmann::json::parse(reinterpret_cast<char *>(buffer));
+  // be careful when using the JSON stuff to avoid generating any exceptions
+  // or unhandled errors. we've got to walk through a bunch of JSON and that
+  // can go wrong at almost every step. 🙄
+  nlohmann::json status = nlohmann::json::parse(buffer, nullptr, false);
+  if (status.is_discarded())
+    return InflightAction::Abort(EIO);
 
   // very rough estimation of space used and space available in the
   // fdb cluster
 
-  auto processes = status["cluster"]["processes"];
+  auto cluster_it = status.find("cluster");
+  if ((cluster_it == status.end()) || !cluster_it->is_object())
+    return InflightAction::Abort(EIO);
+  auto processes_it = cluster_it->find("processes");
+  if ((processes_it == cluster_it->end()) || !processes_it->is_object())
+    return InflightAction::Abort(EIO);
+  auto &processes = *processes_it;
+
   for (auto it = processes.begin(); it != processes.end(); ++it) {
-    auto roles = it.value()["roles"];
+    auto roles_it = it.value().find("roles");
+    if ((roles_it == it.value().end()) || !roles_it->is_array())
+      continue;
+    auto &roles = *roles_it;
     for (auto jt = roles.begin(); jt != roles.end(); ++jt) {
-      if ((*jt)["role"] == "storage") {
-        auto storage = *jt;
-        // std::cout << storage << std::endl;
-        used_blocks +=
-            ((unsigned long)storage["kvstore_used_bytes"]) / BLOCKSIZE;
-        // std::cout << ((unsigned long)storage["kvstore_used_bytes"]) <<
-        // std::endl; std::cout << ((unsigned
-        // long)storage["kvstore_available_bytes"]) << std::endl;
-        min_available_blocks = std::min(
-            min_available_blocks,
-            static_cast<unsigned long>(storage["kvstore_available_bytes"]) /
-                BLOCKSIZE);
-      }
+      if (!jt->is_object())
+        continue;
+      auto role_it = jt->find("role");
+      if ((role_it == jt->end()) || !role_it->is_string() ||
+          role_it->get_ref<const std::string &>() != "storage")
+        continue;
+      auto used_it = jt->find("kvstore_used_bytes");
+      auto available_it = jt->find("kvstore_available_bytes");
+      if ((used_it == jt->end()) || (available_it == jt->end()) ||
+          !used_it->is_number_unsigned() || !available_it->is_number_unsigned())
+        continue;
+      const fsblkcnt_t used_blocks_for_process =
+          used_it->template get<uint64_t>() / BLOCKSIZE;
+      const fsblkcnt_t available_blocks_for_process =
+          available_it->template get<uint64_t>() / BLOCKSIZE;
+      used_blocks += used_blocks_for_process;
+      min_available_blocks =
+          std::min(min_available_blocks, available_blocks_for_process);
     }
   }
 
