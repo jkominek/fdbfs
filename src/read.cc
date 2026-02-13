@@ -102,15 +102,16 @@ InflightAction Inflight_read::callback() {
     }
     auto last_kv = &kvs[kvcount - 1];
 
-    FDBFuture *f = fdb_transaction_get_range(
-        transaction.get(),
-        FDB_KEYSEL_FIRST_GREATER_THAN(last_kv->key, last_kv->key_length),
-        FDB_KEYSEL_FIRST_GREATER_THAN(requested_range.second.data(),
-                                      requested_range.second.size()),
-        0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0);
     // we store into a new unique_future so that the old one won't
     // be deallocated while we're still using the FDBKeyValue* from it
-    wait_on_future(f, next_range_fetch);
+    wait_on_future(
+        fdb_transaction_get_range(
+            transaction.get(),
+            FDB_KEYSEL_FIRST_GREATER_THAN(last_kv->key, last_kv->key_length),
+            FDB_KEYSEL_FIRST_GREATER_THAN(requested_range.second.data(),
+                                          requested_range.second.size()),
+            0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+        next_range_fetch);
   } else {
     // normal
   }
@@ -177,14 +178,15 @@ InflightCallback Inflight_read::issue() {
 
   requested_range = offset_size_to_range_keys(ino, off, requested_size);
 
-  FDBFuture *f = fdb_transaction_get_range(
-      transaction.get(),
-      FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(requested_range.first.data(),
-                                        requested_range.first.size()),
-      FDB_KEYSEL_FIRST_GREATER_THAN(requested_range.second.data(),
-                                    requested_range.second.size()),
-      0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0);
-  wait_on_future(f, range_fetch);
+  wait_on_future(
+      fdb_transaction_get_range(
+          transaction.get(),
+          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(requested_range.first.data(),
+                                            requested_range.first.size()),
+          FDB_KEYSEL_FIRST_GREATER_THAN(requested_range.second.data(),
+                                        requested_range.second.size()),
+          0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+      range_fetch);
   return std::bind(&Inflight_read::callback, this);
 }
 

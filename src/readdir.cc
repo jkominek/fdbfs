@@ -120,10 +120,11 @@ InflightCallback Inflight_readdir::issue() {
   int limit = 10; // we should try to guess this better
 
   // well this is tricky. how large a range should we request?
-  FDBFuture *f = fdb_transaction_get_range(
-      transaction.get(), start.data(), start.size(), 0, 1 + offset, stop.data(),
-      stop.size(), 0, 1, limit, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0);
-  wait_on_future(f, range_fetch);
+  wait_on_future(
+      fdb_transaction_get_range(transaction.get(), start.data(), start.size(),
+                                0, 1 + offset, stop.data(), stop.size(), 0, 1,
+                                limit, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+      range_fetch);
   return std::bind(&Inflight_readdir::callback, this);
 }
 

@@ -80,9 +80,9 @@ InflightCallback Inflight_getattr::issue() {
   auto key = pack_inode_key(ino);
 
   // and request just that inode
-  FDBFuture *f =
-      fdb_transaction_get(transaction.get(), key.data(), key.size(), 0);
-  wait_on_future(f, inode_fetch);
+  wait_on_future(
+      fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
+      inode_fetch);
   return std::bind(&Inflight_getattr::callback, this);
 }
 
