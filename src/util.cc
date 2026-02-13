@@ -105,25 +105,6 @@ bool lookup_count_nonzero(fuse_ino_t ino) {
 // will be filled out before operation begins
 std::vector<uint8_t> key_prefix;
 
-fuse_ino_t generate_inode() {
-  // TODO everything that uses this will need to check that
-  // it isn't trampling an existing inode.
-  struct timespec tp;
-  clock_gettime(CLOCK_REALTIME, &tp);
-  // we get 30 bits from the nanoseconds. we'll move
-  // those up to the high end of what will be the key.
-  // the low 34 bit of the seconds will be moved to
-  // the low end of the key.
-  uint64_t l = (tp.tv_sec & 0x3FFFFFFFF);
-  uint64_t h = (tp.tv_nsec & 0x3FFFFFFF) << 34;
-
-  // returning MAX_UINT64 would probably be bad, because i'm
-  // not convinced we've correctly covered all of the edge
-  // cases around that. but considering our generation method,
-  // i don't think it'll be a concern
-  return (h | l);
-}
-
 int inode_key_length;
 std::vector<uint8_t> pack_inode_key(fuse_ino_t _ino, char prefix,
                                     const std::vector<uint8_t> &suffix) {

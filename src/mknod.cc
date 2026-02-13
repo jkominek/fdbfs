@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 
 #include "fdbfs_ops.h"
 #include "inflight.h"
@@ -172,7 +173,24 @@ InflightAction Inflight_mknod::postverification() {
 }
 
 InflightCallback Inflight_mknod::issue() {
-  ino = generate_inode();
+  ino = 0x47d8d31b9848016f;
+  do {
+    if (getrandom(reinterpret_cast<void *>(&ino), sizeof(ino), GRND_NONBLOCK) <
+        static_cast<ssize_t>(sizeof(ino))) {
+      // didn't get as many bytes as we wanted.
+      struct timespec ts;
+      if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1) {
+        // we are just having a bad time today. we're going to
+        // have to fail, we don't have any way of making plausibly
+        // random inode numbers at the moment.
+        return []() { return InflightAction::Abort(EIO); };
+      }
+      // take whatever was laying around in ino after the getrandom call
+      // and xor it with the current nanoseconds. it isn't random, but it'll
+      // at least be somewhat distributed over the space.
+      ino ^= ts.tv_nsec;
+    }
+  } while (ino < 128); // treat the first 128 as reserved
 
   {
     const auto key = pack_inode_key(parent);

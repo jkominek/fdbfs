@@ -92,7 +92,6 @@ struct fdbfs_filehandle {
 [[nodiscard]] extern struct fdbfs_filehandle **
 extract_fdbfs_filehandle(struct fuse_file_info *);
 
-[[nodiscard]] extern fuse_ino_t generate_inode();
 [[nodiscard]] extern std::vector<uint8_t>
 pack_inode_key(fuse_ino_t, char = INODE_PREFIX,
                const std::vector<uint8_t> &suffix = {});
