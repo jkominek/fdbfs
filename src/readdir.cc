@@ -25,32 +25,27 @@
  * ?
  */
 
-class Inflight_readdir : public Inflight {
+struct AttemptState_readdir : public AttemptState {
+  unique_future range_fetch;
+};
+
+class Inflight_readdir : public InflightWithAttempt<AttemptState_readdir> {
 public:
   Inflight_readdir(fuse_req_t, fuse_ino_t, size_t, off_t, unique_transaction);
   InflightCallback issue();
-  Inflight_readdir *reincarnate();
 
 private:
-  fuse_ino_t ino;
-  size_t size;
-  off_t off;
+  const fuse_ino_t ino;
+  const size_t size;
+  const off_t off;
 
-  unique_future range_fetch;
   InflightAction callback();
 };
 
 Inflight_readdir::Inflight_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
                                    off_t off, unique_transaction transaction)
-    : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)), ino(ino),
-      size(size), off(off) {}
-
-Inflight_readdir *Inflight_readdir::reincarnate() {
-  Inflight_readdir *x =
-      new Inflight_readdir(req, ino, size, off, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+      ino(ino), size(size), off(off) {}
 
 InflightAction Inflight_readdir::callback() {
   const FDBKeyValue *kvs;
@@ -58,7 +53,8 @@ InflightAction Inflight_readdir::callback() {
   fdb_bool_t more;
   fdb_error_t err;
 
-  err = fdb_future_get_keyvalue_array(range_fetch.get(), &kvs, &kvcount, &more);
+  err = fdb_future_get_keyvalue_array(a().range_fetch.get(), &kvs, &kvcount,
+                                      &more);
   if (err)
     return InflightAction::FDBError(err);
 
@@ -124,7 +120,7 @@ InflightCallback Inflight_readdir::issue() {
       fdb_transaction_get_range(transaction.get(), start.data(), start.size(),
                                 0, 1 + offset, stop.data(), stop.size(), 0, 1,
                                 limit, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-      range_fetch);
+      a().range_fetch);
   return std::bind(&Inflight_readdir::callback, this);
 }
 

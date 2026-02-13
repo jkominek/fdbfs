@@ -32,20 +32,21 @@ enum SetXattrBehavior {
  * REAL PLAN
  * ???
  */
-class Inflight_setxattr : public Inflight {
+struct AttemptState_setxattr : public AttemptState {
+  unique_future xattr_node_fetch;
+};
+
+class Inflight_setxattr : public InflightWithAttempt<AttemptState_setxattr> {
 public:
   Inflight_setxattr(fuse_req_t, fuse_ino_t, std::string, std::vector<uint8_t>,
                     SetXattrBehavior, unique_transaction);
-  Inflight_setxattr *reincarnate();
   InflightCallback issue();
 
 private:
-  fuse_ino_t ino;
-  std::string name;
-  std::vector<uint8_t> xattr_value;
-  SetXattrBehavior behavior;
-
-  unique_future xattr_node_fetch;
+  const fuse_ino_t ino;
+  const std::string name;
+  const std::vector<uint8_t> xattr_value;
+  const SetXattrBehavior behavior;
 
   InflightAction process();
 };
@@ -55,15 +56,9 @@ Inflight_setxattr::Inflight_setxattr(fuse_req_t req, fuse_ino_t ino,
                                      std::vector<uint8_t> xattr_value,
                                      SetXattrBehavior behavior,
                                      unique_transaction transaction)
-    : Inflight(req, ReadWrite::Yes, std::move(transaction)), ino(ino),
-      name(name), xattr_value(xattr_value), behavior(behavior) {}
-
-Inflight_setxattr *Inflight_setxattr::reincarnate() {
-  Inflight_setxattr *x = new Inflight_setxattr(
-      req, ino, name, xattr_value, behavior, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+      ino(ino), name(std::move(name)), xattr_value(std::move(xattr_value)),
+      behavior(behavior) {}
 
 InflightAction Inflight_setxattr::process() {
   fdb_bool_t present = 0;
@@ -71,7 +66,8 @@ InflightAction Inflight_setxattr::process() {
   int vallen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(xattr_node_fetch.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().xattr_node_fetch.get(), &present, &val,
+                             &vallen);
   if (err)
     return InflightAction::FDBError(err);
 
@@ -107,7 +103,7 @@ InflightCallback Inflight_setxattr::issue() {
   // and request just that xattr node
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-      xattr_node_fetch);
+      a().xattr_node_fetch);
 
   return std::bind(&Inflight_setxattr::process, this);
 }

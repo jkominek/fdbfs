@@ -25,35 +25,30 @@
  * REAL PLAN
  * ???
  */
-class Inflight_getxattr : public Inflight {
+struct AttemptState_getxattr : public AttemptState {
+  unique_future xattr_node_fetch;
+  unique_future xattr_data_fetch;
+};
+
+class Inflight_getxattr : public InflightWithAttempt<AttemptState_getxattr> {
 public:
   Inflight_getxattr(fuse_req_t, fuse_ino_t, std::string, size_t,
                     unique_transaction);
-  Inflight_getxattr *reincarnate();
   InflightCallback issue();
 
 private:
-  fuse_ino_t ino;
-  std::string name;
-  size_t maxsize;
+  const fuse_ino_t ino;
+  const std::string name;
+  const size_t maxsize;
 
-  unique_future xattr_node_fetch;
-  unique_future xattr_data_fetch;
   InflightAction process();
 };
 
 Inflight_getxattr::Inflight_getxattr(fuse_req_t req, fuse_ino_t ino,
                                      std::string name, size_t maxsize,
                                      unique_transaction transaction)
-    : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)), ino(ino),
-      name(name), maxsize(maxsize) {}
-
-Inflight_getxattr *Inflight_getxattr::reincarnate() {
-  Inflight_getxattr *x =
-      new Inflight_getxattr(req, ino, name, maxsize, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+      ino(ino), name(name), maxsize(maxsize) {}
 
 InflightAction Inflight_getxattr::process() {
   fdb_bool_t present = 0;
@@ -61,7 +56,8 @@ InflightAction Inflight_getxattr::process() {
   int vallen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(xattr_node_fetch.get(), &present, &val, &vallen);
+  err =
+      fdb_future_get_value(a().xattr_node_fetch.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
 
@@ -73,7 +69,8 @@ InflightAction Inflight_getxattr::process() {
       return InflightAction::Abort(EIO);
     }
 
-    err = fdb_future_get_value(xattr_data_fetch.get(), &present, &val, &vallen);
+    err =
+        fdb_future_get_value(a().xattr_data_fetch.get(), &present, &val, &vallen);
     if (err)
       return InflightAction::FDBError(err);
 
@@ -112,14 +109,14 @@ InflightCallback Inflight_getxattr::issue() {
     const auto key = pack_xattr_key(ino, name);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        xattr_node_fetch);
+        a().xattr_node_fetch);
   }
 
   {
     const auto key = pack_xattr_data_key(ino, name);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        xattr_data_fetch);
+        a().xattr_data_fetch);
   }
 
   return std::bind(&Inflight_getxattr::process, this);

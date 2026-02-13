@@ -25,17 +25,19 @@
  * REAL PLAN
  * ???
  */
-class Inflight_removexattr : public Inflight {
+struct AttemptState_removexattr : public AttemptState {
+  unique_future xattr_node_fetch;
+};
+
+class Inflight_removexattr
+    : public InflightWithAttempt<AttemptState_removexattr> {
 public:
   Inflight_removexattr(fuse_req_t, fuse_ino_t, std::string, unique_transaction);
-  Inflight_removexattr *reincarnate();
   InflightCallback issue();
 
 private:
-  fuse_ino_t ino;
-  std::string name;
-
-  unique_future xattr_node_fetch;
+  const fuse_ino_t ino;
+  const std::string name;
 
   InflightAction process();
 };
@@ -43,15 +45,8 @@ private:
 Inflight_removexattr::Inflight_removexattr(fuse_req_t req, fuse_ino_t ino,
                                            std::string name,
                                            unique_transaction transaction)
-    : Inflight(req, ReadWrite::Yes, std::move(transaction)), ino(ino),
-      name(name) {}
-
-Inflight_removexattr *Inflight_removexattr::reincarnate() {
-  Inflight_removexattr *x =
-      new Inflight_removexattr(req, ino, name, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+      ino(ino), name(std::move(name)) {}
 
 InflightAction Inflight_removexattr::process() {
   fdb_bool_t present = 0;
@@ -59,7 +54,8 @@ InflightAction Inflight_removexattr::process() {
   int vallen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(xattr_node_fetch.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().xattr_node_fetch.get(), &present, &val,
+                             &vallen);
   if (err)
     return InflightAction::FDBError(err);
 
@@ -82,7 +78,7 @@ InflightCallback Inflight_removexattr::issue() {
     const auto key = pack_xattr_key(ino, name);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        xattr_node_fetch);
+        a().xattr_node_fetch);
 
     fdb_transaction_clear(transaction.get(), key.data(), key.size());
   }

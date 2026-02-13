@@ -26,42 +26,32 @@
  * TRANSACTIONAL BEHAVIOR
  * nothing special
  */
-class Inflight_link : public Inflight {
+struct AttemptState_link : public AttemptState {
+  INodeRecord inode;
+  unique_future file_lookup;
+  unique_future dir_lookup;
+  unique_future target_lookup;
+};
+
+class Inflight_link : public InflightWithAttempt<AttemptState_link> {
 public:
   Inflight_link(fuse_req_t, fuse_ino_t, fuse_ino_t, std::string,
                 unique_transaction);
-  Inflight_link *reincarnate();
   InflightCallback issue();
 
 private:
-  fuse_ino_t ino;
-  fuse_ino_t newparent;
-  std::string newname;
-
-  INodeRecord inode;
+  const fuse_ino_t ino;
+  const fuse_ino_t newparent;
+  const std::string newname;
 
   InflightAction check();
-
-  // is the file to link a non-directory?
-  unique_future file_lookup;
-  // is the destination location a directory?
-  unique_future dir_lookup;
-  // does the destination location already exist?
-  unique_future target_lookup;
 };
 
 Inflight_link::Inflight_link(fuse_req_t req, fuse_ino_t ino,
                              fuse_ino_t newparent, std::string newname,
                              unique_transaction transaction)
-    : Inflight(req, ReadWrite::Yes, std::move(transaction)), ino(ino),
-      newparent(newparent), newname(newname) {}
-
-Inflight_link *Inflight_link::reincarnate() {
-  Inflight_link *x =
-      new Inflight_link(req, ino, newparent, newname, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+      ino(ino), newparent(newparent), newname(std::move(newname)) {}
 
 InflightAction Inflight_link::check() {
   fdb_bool_t present = 0;
@@ -70,15 +60,15 @@ InflightAction Inflight_link::check() {
   fdb_error_t err;
 
   // is the file a non-directory?
-  err = fdb_future_get_value(file_lookup.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().file_lookup.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
   if (present) {
-    inode.ParseFromArray(val, vallen);
-    if (!inode.has_type()) {
+    a().inode.ParseFromArray(val, vallen);
+    if (!a().inode.has_type()) {
       // error
       return InflightAction::Abort(EIO);
-    } else if (inode.type() == ft_directory) {
+    } else if (a().inode.type() == ft_directory) {
       // can hardlink anything except a directory
       return InflightAction::Abort(EPERM);
     }
@@ -90,7 +80,7 @@ InflightAction Inflight_link::check() {
   }
 
   // is the directory a directory?
-  err = fdb_future_get_value(dir_lookup.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().dir_lookup.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
   if (present) {
@@ -111,7 +101,7 @@ InflightAction Inflight_link::check() {
   }
 
   // Does the target exist?
-  err = fdb_future_get_value(target_lookup.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().target_lookup.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
   if (present) {
@@ -120,21 +110,21 @@ InflightAction Inflight_link::check() {
   }
 
   // need to update the inode attributes
-  inode.set_nlinks(inode.nlinks() + 1);
+  a().inode.set_nlinks(a().inode.nlinks() + 1);
   struct timespec tv;
   clock_gettime(CLOCK_REALTIME, &tv);
-  update_ctime(&inode, &tv);
+  update_ctime(&a().inode, &tv);
 
   // TODO do we need to touch any other inode attributes when
   // creating a hard link?
 
-  if (!fdb_set_protobuf(transaction.get(), pack_inode_key(ino), inode))
+  if (!fdb_set_protobuf(transaction.get(), pack_inode_key(ino), a().inode))
     return InflightAction::Abort(EIO);
 
   // also need to add the new directory entry
   DirectoryEntry dirent;
   dirent.set_inode(ino);
-  dirent.set_type(inode.type());
+  dirent.set_type(a().inode.type());
 
   if (!fdb_set_protobuf(transaction.get(), pack_dentry_key(newparent, newname),
                         dirent))
@@ -145,7 +135,7 @@ InflightAction Inflight_link::check() {
     bzero(e.get(), sizeof(struct fuse_entry_param));
     e->ino = ino;
     e->generation = 1;
-    pack_inode_record_into_stat(inode, e->attr);
+    pack_inode_record_into_stat(a().inode, e->attr);
     e->attr_timeout = 0.01;
     e->entry_timeout = 0.01;
     return InflightAction::Entry(std::move(e));
@@ -158,7 +148,7 @@ InflightCallback Inflight_link::issue() {
     const auto key = pack_inode_key(ino);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        file_lookup);
+        a().file_lookup);
   }
 
   // check/update destination directory
@@ -166,7 +156,7 @@ InflightCallback Inflight_link::issue() {
     const auto key = pack_inode_key(newparent);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        dir_lookup);
+        a().dir_lookup);
   }
 
   // check nothing exists in the destination
@@ -174,7 +164,7 @@ InflightCallback Inflight_link::issue() {
     const auto key = pack_dentry_key(newparent, newname);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        target_lookup);
+        a().target_lookup);
   }
 
   return std::bind(&Inflight_link::check, this);

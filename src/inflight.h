@@ -7,6 +7,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <queue>
 
 #if DEBUG
@@ -29,6 +30,16 @@ class InflightAction;
 
 typedef std::function<InflightAction()> InflightCallback;
 
+extern "C" void fdbfs_error_processor(FDBFuture *, void *);
+extern "C" void fdbfs_error_checker(FDBFuture *, void *);
+
+struct AttemptState {
+  std::optional<InflightCallback> cb;
+  unique_future commit;
+  std::queue<FDBFuture *> future_queue;
+  virtual ~AttemptState() = default;
+};
+
 class Inflight {
 public:
   // issuer is what we'll have to run if the future fails.
@@ -36,9 +47,6 @@ public:
   // (which is guaranteed by fdb)
   [[nodiscard]] virtual InflightCallback issue() = 0;
 
-  // makes a new fresh version of the inflight object
-  // and suicides the old one.
-  [[nodiscard]] virtual Inflight *reincarnate() = 0;
   void future_ready(FDBFuture *);
 
   virtual ~Inflight() = default;
@@ -66,16 +74,16 @@ protected:
   Inflight(fuse_req_t, ReadWrite, unique_transaction);
 
   void wait_on_future(FDBFuture *, unique_future &);
-
-  std::optional<InflightCallback> cb;
-
-  // not used for readonly operations
-  unique_future _commit;
+  [[nodiscard]] virtual std::unique_ptr<AttemptState>
+  create_attempt_state() = 0;
+  AttemptState &attempt_state();
+  const AttemptState &attempt_state() const;
+  void reset_attempt_state();
 
 private:
   // whether we're intended as r/w or not.
   ReadWrite readwrite;
-  std::queue<FDBFuture *> future_queue;
+  std::unique_ptr<AttemptState> attempt;
   bool run_current_callback();
   void begin_wait();
 
@@ -84,17 +92,39 @@ private:
 #endif
 
   friend class InflightAction;
+  friend void fdbfs_error_processor(FDBFuture *, void *);
+  friend void fdbfs_error_checker(FDBFuture *, void *);
 };
 
-class Inflight_markused : public Inflight {
+template <typename AttemptT> class InflightWithAttempt : public Inflight {
+public:
+  InflightWithAttempt(fuse_req_t req, ReadWrite readwrite,
+                      unique_transaction transaction)
+      : Inflight(req, readwrite, std::move(transaction)) {
+    reset_attempt_state();
+  }
+
+protected:
+  AttemptT &a() { return static_cast<AttemptT &>(attempt_state()); }
+  const AttemptT &a() const {
+    return static_cast<const AttemptT &>(attempt_state());
+  }
+
+private:
+  std::unique_ptr<AttemptState> create_attempt_state() override {
+    return std::make_unique<AttemptT>();
+  }
+};
+
+struct AttemptState_markused : public AttemptState {};
+
+class Inflight_markused : public InflightWithAttempt<AttemptState_markused> {
 public:
   Inflight_markused(fuse_req_t, fuse_ino_t, unique_transaction);
-  Inflight_markused *reincarnate();
   InflightCallback issue();
 
 private:
-  fuse_ino_t ino;
-  unique_future commit;
+  const fuse_ino_t ino;
 };
 
 // TODO consider how we might pull the FUSE bits out of these,
@@ -107,8 +137,9 @@ private:
 class InflightAction {
 public:
   static InflightAction BeginWait(InflightCallback newcb) {
-    return InflightAction(false, true, false,
-                          [newcb](Inflight *i) { i->cb.emplace(newcb); });
+    return InflightAction(false, true, false, [newcb](Inflight *i) {
+      i->attempt_state().cb.emplace(newcb);
+    });
   }
   static InflightAction FDBError(fdb_error_t err) {
     if (fdb_error_predicate(FDB_ERROR_PREDICATE_RETRYABLE, err)) {
@@ -226,8 +257,5 @@ protected:
 
   friend class Inflight;
 };
-
-extern "C" void fdbfs_error_processor(FDBFuture *, void *);
-extern "C" void fdbfs_error_checker(FDBFuture *, void *);
 
 #endif // __INFLIGHT_H_

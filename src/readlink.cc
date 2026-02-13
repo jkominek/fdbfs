@@ -26,28 +26,25 @@
  * REAL PLAN
  * ???
  */
-class Inflight_readlink : public Inflight {
+struct AttemptState_readlink : public AttemptState {
+  unique_future inode_fetch;
+};
+
+class Inflight_readlink
+    : public InflightWithAttempt<AttemptState_readlink> {
 public:
   Inflight_readlink(fuse_req_t, fuse_ino_t, unique_transaction);
-  Inflight_readlink *reincarnate();
   InflightCallback issue();
 
 private:
-  fuse_ino_t ino;
-  unique_future inode_fetch;
+  const fuse_ino_t ino;
   InflightAction callback();
 };
 
 Inflight_readlink::Inflight_readlink(fuse_req_t req, fuse_ino_t ino,
                                      unique_transaction transaction)
-    : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)), ino(ino) {}
-
-Inflight_readlink *Inflight_readlink::reincarnate() {
-  Inflight_readlink *x =
-      new Inflight_readlink(req, ino, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+      ino(ino) {}
 
 InflightAction Inflight_readlink::callback() {
   fdb_bool_t present = 0;
@@ -55,7 +52,7 @@ InflightAction Inflight_readlink::callback() {
   int vallen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(inode_fetch.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
 
@@ -81,7 +78,7 @@ InflightCallback Inflight_readlink::issue() {
   // and request just that inode
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-      inode_fetch);
+      a().inode_fetch);
   return std::bind(&Inflight_readlink::callback, this);
 }
 

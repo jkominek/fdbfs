@@ -19,26 +19,21 @@
  * forget
  *************************************************************
  */
-class Inflight_forget : public Inflight {
+struct AttemptState_forget : public AttemptState {};
+
+class Inflight_forget : public InflightWithAttempt<AttemptState_forget> {
 public:
   Inflight_forget(fuse_req_t, std::vector<fuse_ino_t>, unique_transaction);
-  Inflight_forget *reincarnate();
   InflightCallback issue();
 
 private:
-  std::vector<fuse_ino_t> inos;
-  unique_future commit;
+  const std::vector<fuse_ino_t> inos;
 };
 
 Inflight_forget::Inflight_forget(fuse_req_t req, std::vector<fuse_ino_t> inos,
                                  unique_transaction transaction)
-    : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)), inos(inos) {}
-
-Inflight_forget *Inflight_forget::reincarnate() {
-  Inflight_forget *x = new Inflight_forget(req, inos, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+      inos(std::move(inos)) {}
 
 InflightCallback Inflight_forget::issue() {
   for (auto it = inos.cbegin(); it != inos.cend(); it++) {
@@ -52,7 +47,7 @@ InflightCallback Inflight_forget::issue() {
     fdb_transaction_clear(transaction.get(), key.data(), key.size());
   }
 
-  wait_on_future(fdb_transaction_commit(transaction.get()), commit);
+  wait_on_future(fdb_transaction_commit(transaction.get()), a().commit);
   return InflightAction::None;
 }
 

@@ -53,23 +53,25 @@
  * ???
  */
 
-class Inflight_write : public Inflight {
-public:
-  Inflight_write(fuse_req_t, fuse_ino_t, std::vector<uint8_t>, off_t,
-                 unique_transaction);
-  Inflight_write *reincarnate();
-  InflightCallback issue();
-
-private:
+struct AttemptState_write : public AttemptState {
   unique_future inode_fetch;
   // the future getting the two blocks that can be at the ends
   // of a write, which thus have to be read in order to perform
   // this write. 0, 1 or 2 of them may be null.
   unique_future start_block_fetch;
   unique_future stop_block_fetch;
-  fuse_ino_t ino;
-  std::vector<uint8_t> buffer;
-  off_t off;
+};
+
+class Inflight_write : public InflightWithAttempt<AttemptState_write> {
+public:
+  Inflight_write(fuse_req_t, fuse_ino_t, std::vector<uint8_t>, off_t,
+                 unique_transaction);
+  InflightCallback issue();
+
+private:
+  const fuse_ino_t ino;
+  const std::vector<uint8_t> buffer;
+  const off_t off;
 
   InflightAction check();
 };
@@ -77,15 +79,8 @@ private:
 Inflight_write::Inflight_write(fuse_req_t req, fuse_ino_t ino,
                                std::vector<uint8_t> buffer, off_t off,
                                unique_transaction transaction)
-    : Inflight(req, ReadWrite::Yes, std::move(transaction)), ino(ino),
-      buffer(buffer), off(off) {}
-
-Inflight_write *Inflight_write::reincarnate() {
-  Inflight_write *x =
-      new Inflight_write(req, ino, buffer, off, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+      ino(ino), buffer(std::move(buffer)), off(off) {}
 
 InflightAction Inflight_write::check() {
   fdb_bool_t present;
@@ -93,7 +88,7 @@ InflightAction Inflight_write::check() {
 
   const uint8_t *val;
   int vallen;
-  err = fdb_future_get_value(inode_fetch.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
   // check everything about the inode
@@ -132,13 +127,13 @@ InflightAction Inflight_write::check() {
   }
 
   // merge the edge writes into the blocks
-  if (start_block_fetch) {
+  if (a().start_block_fetch) {
     const FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
     fdb_error_t err;
-    err = fdb_future_get_keyvalue_array(start_block_fetch.get(), &kvs, &kvcount,
-                                        &more);
+    err = fdb_future_get_keyvalue_array(a().start_block_fetch.get(), &kvs,
+                                        &kvcount, &more);
     if (err)
       return InflightAction::FDBError(err);
 
@@ -165,14 +160,14 @@ InflightAction Inflight_write::check() {
       return InflightAction::Abort(EIO);
   }
 
-  if (stop_block_fetch) {
+  if (a().stop_block_fetch) {
     const FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
     fdb_error_t err;
 
-    err = fdb_future_get_keyvalue_array(stop_block_fetch.get(), &kvs, &kvcount,
-                                        &more);
+    err = fdb_future_get_keyvalue_array(a().stop_block_fetch.get(), &kvs,
+                                        &kvcount, &more);
     if (err)
       return InflightAction::FDBError(err);
 
@@ -220,7 +215,7 @@ InflightCallback Inflight_write::issue() {
     const auto key = pack_inode_key(ino);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        inode_fetch);
+        a().inode_fetch);
   }
 
   const auto conflict_start_key = pack_fileblock_key(ino, off / BLOCKSIZE);
@@ -255,7 +250,7 @@ InflightCallback Inflight_write::issue() {
                                               start_key.size()),
             FDB_KEYSEL_FIRST_GREATER_THAN(stop_key.data(), stop_key.size()), 1,
             0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-        start_block_fetch);
+        a().start_block_fetch);
     iter_start = start_block + 1;
     doing_start_block = 1;
   } else {
@@ -277,7 +272,7 @@ InflightCallback Inflight_write::issue() {
                                                 start_key.size()),
               FDB_KEYSEL_FIRST_GREATER_THAN(stop_key.data(), stop_key.size()),
               1, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-          stop_block_fetch);
+          a().stop_block_fetch);
     }
     iter_stop = stop_block;
   } else {
@@ -300,7 +295,7 @@ InflightCallback Inflight_write::issue() {
   // require a read-write cycle.
   for (int mid_block = iter_start; mid_block < iter_stop; mid_block++) {
     const auto key = pack_fileblock_key(ino, mid_block);
-    uint8_t *block;
+    const uint8_t *block;
     block = buffer.data() + (off % BLOCKSIZE) +
             (mid_block - iter_start) * BLOCKSIZE;
     const auto sret =

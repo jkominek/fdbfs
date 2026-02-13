@@ -36,38 +36,34 @@
  * handle multiple futures in the end.
  */
 
-class Inflight_read : public Inflight {
-public:
-  Inflight_read(fuse_req_t, fuse_ino_t, size_t, off_t, unique_transaction);
-  InflightCallback issue();
-  Inflight_read *reincarnate();
-
-private:
+struct AttemptState_read : public AttemptState {
   unique_future inode_fetch;
   unique_future range_fetch;
-  InflightAction callback();
-
-  fuse_ino_t ino;
-  size_t requested_size; // size of the read
-  off_t off;             // offset into file
-
   range_keys requested_range;
-
   // we pad the buffer some so special block decoders have room to work
   // without having to perform extra copies or allocations.
   std::vector<uint8_t> buffer;
 };
 
+class Inflight_read : public InflightWithAttempt<AttemptState_read> {
+public:
+  Inflight_read(fuse_req_t, fuse_ino_t, size_t, off_t, unique_transaction);
+  InflightCallback issue();
+
+private:
+  InflightAction callback();
+
+  const fuse_ino_t ino;
+  const size_t requested_size; // size of the read
+  const off_t off;             // offset into file
+
+};
+
 Inflight_read::Inflight_read(fuse_req_t req, fuse_ino_t ino, size_t size,
                              off_t off, unique_transaction transaction)
-    : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)), ino(ino),
-      requested_size(size), off(off), buffer(size + 32, 0) {}
-
-Inflight_read *Inflight_read::reincarnate() {
-  Inflight_read *x =
-      new Inflight_read(req, ino, requested_size, off, std::move(transaction));
-  delete this;
-  return x;
+    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+      ino(ino), requested_size(size), off(off) {
+  a().buffer.assign(requested_size + 32, 0);
 }
 
 InflightAction Inflight_read::callback() {
@@ -75,7 +71,7 @@ InflightAction Inflight_read::callback() {
   int vallen;
   fdb_bool_t present;
   fdb_error_t err;
-  err = fdb_future_get_value(inode_fetch.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
   if (!present) {
@@ -90,7 +86,8 @@ InflightAction Inflight_read::callback() {
   const FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
-  err = fdb_future_get_keyvalue_array(range_fetch.get(), &kvs, &kvcount, &more);
+  err = fdb_future_get_keyvalue_array(a().range_fetch.get(), &kvs, &kvcount,
+                                      &more);
   if (err)
     return InflightAction::FDBError(err);
 
@@ -108,8 +105,8 @@ InflightAction Inflight_read::callback() {
         fdb_transaction_get_range(
             transaction.get(),
             FDB_KEYSEL_FIRST_GREATER_THAN(last_kv->key, last_kv->key_length),
-            FDB_KEYSEL_FIRST_GREATER_THAN(requested_range.second.data(),
-                                          requested_range.second.size()),
+            FDB_KEYSEL_FIRST_GREATER_THAN(a().requested_range.second.data(),
+                                          a().requested_range.second.size()),
             0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
         next_range_fetch);
   } else {
@@ -145,7 +142,7 @@ InflightAction Inflight_read::callback() {
       // starts before (or at) the requested read area
       const uint64_t block_off = off - block * BLOCKSIZE;
       const auto dret =
-          decode_block(&kv, block_off, std::span<uint8_t>(buffer), size);
+          decode_block(&kv, block_off, std::span<uint8_t>(a().buffer), size);
       if (!dret) {
         return InflightAction::Abort(EIO);
       }
@@ -153,7 +150,7 @@ InflightAction Inflight_read::callback() {
       // we need an offset into the target buffer, as our block
       // starts after the requested read area.
       const size_t bufferoff = block * BLOCKSIZE - off;
-      auto out = std::span<uint8_t>(buffer).subspan(bufferoff);
+      auto out = std::span<uint8_t>(a().buffer).subspan(bufferoff);
       const auto dret = decode_block(&kv, 0, out, size - bufferoff);
       if (!dret) {
         return InflightAction::Abort(EIO);
@@ -162,10 +159,10 @@ InflightAction Inflight_read::callback() {
   }
 
   if (more) {
-    range_fetch = std::move(next_range_fetch);
+    a().range_fetch = std::move(next_range_fetch);
     return InflightAction::BeginWait(std::bind(&Inflight_read::callback, this));
   } else {
-    return InflightAction::Buf(buffer, size);
+    return InflightAction::Buf(a().buffer, size);
   }
 }
 
@@ -174,19 +171,20 @@ InflightCallback Inflight_read::issue() {
   const auto key = pack_inode_key(ino);
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-      inode_fetch);
+      a().inode_fetch);
 
-  requested_range = offset_size_to_range_keys(ino, off, requested_size);
+  a().requested_range = offset_size_to_range_keys(ino, off, requested_size);
+  a().buffer.assign(requested_size + 32, 0);
 
   wait_on_future(
       fdb_transaction_get_range(
           transaction.get(),
-          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(requested_range.first.data(),
-                                            requested_range.first.size()),
-          FDB_KEYSEL_FIRST_GREATER_THAN(requested_range.second.data(),
-                                        requested_range.second.size()),
+          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(a().requested_range.first.data(),
+                                            a().requested_range.first.size()),
+          FDB_KEYSEL_FIRST_GREATER_THAN(a().requested_range.second.data(),
+                                        a().requested_range.second.size()),
           0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-      range_fetch);
+      a().range_fetch);
   return std::bind(&Inflight_read::callback, this);
 }
 

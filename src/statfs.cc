@@ -23,32 +23,28 @@
  * ???
  */
 
-class Inflight_statfs : public Inflight {
+struct AttemptState_statfs : public AttemptState {
+  unique_future status_fetch;
+};
+
+class Inflight_statfs : public InflightWithAttempt<AttemptState_statfs> {
 public:
   Inflight_statfs(fuse_req_t, unique_transaction);
   InflightCallback issue();
-  Inflight_statfs *reincarnate();
 
 private:
-  unique_future status_fetch;
   InflightAction process_status();
 };
 
 Inflight_statfs::Inflight_statfs(fuse_req_t req, unique_transaction transaction)
-    : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)) {}
-
-Inflight_statfs *Inflight_statfs::reincarnate() {
-  Inflight_statfs *x = new Inflight_statfs(req, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)) {}
 
 InflightAction Inflight_statfs::process_status() {
   fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
   fdb_error_t err =
-      fdb_future_get_value(status_fetch.get(), &present, &val, &vallen);
+      fdb_future_get_value(a().status_fetch.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
   if (!present)
@@ -127,7 +123,7 @@ InflightCallback Inflight_statfs::issue() {
                      transaction.get(),
                      reinterpret_cast<const uint8_t *>("\xff\xff/status/json"),
                      14, 1),
-                 status_fetch);
+                 a().status_fetch);
   return std::bind(&Inflight_statfs::process_status, this);
 }
 

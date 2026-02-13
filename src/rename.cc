@@ -28,33 +28,32 @@
  * TRANSACTIONAL BEHAVIOR
  * nothing special
  */
-class Inflight_rename : public Inflight {
-public:
-  Inflight_rename(fuse_req_t, fuse_ino_t, std::string, fuse_ino_t, std::string,
-                  int, unique_transaction transaction);
-  Inflight_rename *reincarnate();
-  InflightCallback issue();
-
-private:
-  fuse_ino_t oldparent;
-  std::string oldname;
-
-  fuse_ino_t newparent;
-  std::string newname;
-
-  unsigned int flags;
-
+struct AttemptState_rename : public AttemptState {
   unique_future oldparent_inode_lookup;
   unique_future newparent_inode_lookup;
-
   unique_future origin_lookup;
   DirectoryEntry origin_dirent;
   unique_future destination_lookup;
   DirectoryEntry destination_dirent;
   bool destination_in_use = false;
-
   unique_future directory_listing_fetch;
   unique_future inode_metadata_fetch;
+};
+
+class Inflight_rename : public InflightWithAttempt<AttemptState_rename> {
+public:
+  Inflight_rename(fuse_req_t, fuse_ino_t, std::string, fuse_ino_t, std::string,
+                  int, unique_transaction transaction);
+  InflightCallback issue();
+
+private:
+  const fuse_ino_t oldparent;
+  const std::string oldname;
+
+  const fuse_ino_t newparent;
+  const std::string newname;
+
+  const unsigned int flags;
 
   InflightAction check();
   InflightAction complicated();
@@ -64,17 +63,9 @@ Inflight_rename::Inflight_rename(fuse_req_t req, fuse_ino_t oldparent,
                                  std::string oldname, fuse_ino_t newparent,
                                  std::string newname, int flags,
                                  unique_transaction transaction)
-    : Inflight(req, ReadWrite::Yes, std::move(transaction)),
-      oldparent(oldparent), oldname(oldname), newparent(newparent),
-      newname(newname), flags(flags) {}
-
-Inflight_rename *Inflight_rename::reincarnate() {
-  Inflight_rename *x =
-      new Inflight_rename(req, oldparent, oldname, newparent, newname, flags,
-                          std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+      oldparent(oldparent), oldname(std::move(oldname)),
+      newparent(newparent), newname(std::move(newname)), flags(flags) {}
 
 InflightAction Inflight_rename::complicated() {
   /**
@@ -97,7 +88,7 @@ InflightAction Inflight_rename::complicated() {
   fdb_bool_t more;
   fdb_error_t err;
 
-  err = fdb_future_get_keyvalue_array(inode_metadata_fetch.get(), &kvs,
+  err = fdb_future_get_keyvalue_array(a().inode_metadata_fetch.get(), &kvs,
                                       &kvcount, &more);
   if (err)
     return InflightAction::FDBError(err);
@@ -120,19 +111,19 @@ InflightAction Inflight_rename::complicated() {
     if ((kv.key_length > (inode_key_length + 1)) &&
         kv.key[inode_key_length] == 0x01) {
       // there's a use record present.
-      destination_in_use = true;
+      a().destination_in_use = true;
     }
   }
 
   // TODO permissions checking on the whatever being removed
 
-  if (directory_listing_fetch) {
+  if (a().directory_listing_fetch) {
     const FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
     fdb_error_t err;
 
-    err = fdb_future_get_keyvalue_array(directory_listing_fetch.get(), &kvs,
+    err = fdb_future_get_keyvalue_array(a().directory_listing_fetch.get(), &kvs,
                                         &kvcount, &more);
     if (err)
       return InflightAction::FDBError(err);
@@ -156,14 +147,14 @@ InflightAction Inflight_rename::complicated() {
   if (!fdb_set_protobuf(transaction.get(), key, inode))
     return InflightAction::Abort(EIO);
 
-  if ((directory_listing_fetch && (inode.nlinks() <= 1)) ||
+  if ((a().directory_listing_fetch && (inode.nlinks() <= 1)) ||
       (inode.nlinks() == 0)) {
     // if the nlinks has dropped low enough, we may be able
     // to erase the entire inode. even if we can't erase
     // the whole thing, we should mark it for garbage collection.
 
     // TODO locking?
-    if (destination_in_use) {
+    if (a().destination_in_use) {
       const auto key = pack_garbage_key(inode.inode());
       const uint8_t b = 0;
       fdb_transaction_set(transaction.get(), key.data(), key.size(), &b, 1);
@@ -174,7 +165,7 @@ InflightAction Inflight_rename::complicated() {
 
   // set the new dirent to the correct value
   if (!fdb_set_protobuf(transaction.get(), pack_dentry_key(newparent, newname),
-                        origin_dirent))
+                        a().origin_dirent))
     return InflightAction::Abort(EIO);
 
   return commit(InflightAction::OK);
@@ -191,18 +182,19 @@ InflightAction Inflight_rename::check() {
     int vallen;
     fdb_error_t err;
 
-    err = fdb_future_get_value(origin_lookup.get(), &present, &val, &vallen);
+    err = fdb_future_get_value(a().origin_lookup.get(), &present, &val,
+                               &vallen);
     if (err)
       return InflightAction::FDBError(err);
     if (present)
-      origin_dirent.ParseFromArray(val, vallen);
+      a().origin_dirent.ParseFromArray(val, vallen);
 
-    err =
-        fdb_future_get_value(destination_lookup.get(), &present, &val, &vallen);
+    err = fdb_future_get_value(a().destination_lookup.get(), &present, &val,
+                               &vallen);
     if (err)
       return InflightAction::FDBError(err);
     if (present)
-      destination_dirent.ParseFromArray(val, vallen);
+      a().destination_dirent.ParseFromArray(val, vallen);
   }
 
   {
@@ -211,7 +203,7 @@ InflightAction Inflight_rename::check() {
     int vallen;
     fdb_error_t err;
 
-    err = fdb_future_get_value(oldparent_inode_lookup.get(), &present, &val,
+    err = fdb_future_get_value(a().oldparent_inode_lookup.get(), &present, &val,
                                &vallen);
     if (err)
       return InflightAction::FDBError(err);
@@ -222,7 +214,7 @@ InflightAction Inflight_rename::check() {
     oldparent.ParseFromArray(val, vallen);
     update_directory_times(transaction.get(), oldparent);
 
-    err = fdb_future_get_value(newparent_inode_lookup.get(), &present, &val,
+    err = fdb_future_get_value(a().newparent_inode_lookup.get(), &present, &val,
                                &vallen);
     if (err)
       return InflightAction::FDBError(err);
@@ -243,33 +235,33 @@ InflightAction Inflight_rename::check() {
   if (flags == 0) {
     // default. we want an origin, and don't care about existance
     // of the destination, yet.
-    if (!origin_dirent.has_inode()) {
+    if (!a().origin_dirent.has_inode()) {
       return InflightAction::Abort(ENOENT);
     }
     // turns out you can move a directory on top of another,
     // empty directory. look to see if we're moving a directory
-    if (origin_dirent.has_type() && destination_dirent.has_type()) {
-      if ((origin_dirent.type() == ft_directory) &&
-          (destination_dirent.type() != ft_directory)) {
+    if (a().origin_dirent.has_type() && a().destination_dirent.has_type()) {
+      if ((a().origin_dirent.type() == ft_directory) &&
+          (a().destination_dirent.type() != ft_directory)) {
         return InflightAction::Abort(ENOTDIR);
       }
-      if ((origin_dirent.type() != ft_directory) &&
-          (destination_dirent.type() == ft_directory)) {
+      if ((a().origin_dirent.type() != ft_directory) &&
+          (a().destination_dirent.type() == ft_directory)) {
         return InflightAction::Abort(EISDIR);
       }
     }
   } else if (flags == RENAME_EXCHANGE) {
     // need to both exist
-    if ((!origin_dirent.has_inode()) || (!destination_dirent.has_inode())) {
+    if ((!a().origin_dirent.has_inode()) || (!a().destination_dirent.has_inode())) {
       return InflightAction::Abort(ENOENT);
     }
   }
 #ifdef RENAME_NOREPLACE
   else if (flags == RENAME_NOREPLACE) {
-    if (!origin_dirent.has_inode()) {
+    if (!a().origin_dirent.has_inode()) {
       return InflightAction::Abort(ENOENT);
     }
-    if (destination_dirent.has_inode()) {
+    if (a().destination_dirent.has_inode()) {
       return InflightAction::Abort(EEXIST);
     }
   }
@@ -279,7 +271,7 @@ InflightAction Inflight_rename::check() {
    * We've established that we (so far) have all of the
    * information necessary to finish this request.
    */
-  if (((flags == 0) && (!destination_dirent.has_inode()))
+  if (((flags == 0) && (!a().destination_dirent.has_inode()))
 #ifdef RENAME_NOREPLACE
       || (flags == RENAME_NOREPLACE)
 #endif
@@ -299,7 +291,7 @@ InflightAction Inflight_rename::check() {
     // take the old directory entry contents, repack it.
     // and save it into the new directory entry
     if (!fdb_set_protobuf(transaction.get(),
-                          pack_dentry_key(newparent, newname), origin_dirent))
+                          pack_dentry_key(newparent, newname), a().origin_dirent))
       return InflightAction::Abort(EIO);
   }
 #ifdef RENAME_EXCHANGE
@@ -311,11 +303,12 @@ InflightAction Inflight_rename::check() {
      */
     if (!fdb_set_protobuf(transaction.get(),
                           pack_dentry_key(oldparent, oldname),
-                          destination_dirent)) {
+                          a().destination_dirent)) {
       return InflightAction::Abort(EIO);
     }
     if (!fdb_set_protobuf(transaction.get(),
-                          pack_dentry_key(newparent, newname), origin_dirent)) {
+                          pack_dentry_key(newparent, newname),
+                          a().origin_dirent)) {
       return InflightAction::Abort(EIO);
     }
   }
@@ -328,27 +321,28 @@ InflightAction Inflight_rename::check() {
      * have to get rid of it.
      * TODO ugh can we share this code with unlink/rmdir?
      **/
-    if (destination_dirent.type() == ft_directory) {
+    if (a().destination_dirent.type() == ft_directory) {
       /**
        * The destination is a directory. We'll need to know
        * if it is empty before we can remove it.
        */
-      const auto key_start = pack_dentry_key(destination_dirent.inode(), "");
-      const auto key_stop = pack_dentry_key(destination_dirent.inode(), "\xff");
+      const auto key_start = pack_dentry_key(a().destination_dirent.inode(), "");
+      const auto key_stop =
+          pack_dentry_key(a().destination_dirent.inode(), "\xff");
 
       wait_on_future(fdb_transaction_get_range(
                          transaction.get(), key_start.data(), key_start.size(),
                          0, 1, key_stop.data(), key_stop.size(), 0, 1, 1, 0,
                          FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-                     directory_listing_fetch);
+                     a().directory_listing_fetch);
     }
 
     /**
      * Regardless of what the destination is, we need to
      * fetch its inode and use records.
      */
-    const auto key_start = pack_inode_key(destination_dirent.inode());
-    auto key_stop = pack_inode_key(destination_dirent.inode());
+    const auto key_start = pack_inode_key(a().destination_dirent.inode());
+    auto key_stop = pack_inode_key(a().destination_dirent.inode());
     // this ensures we cover the use records, located at \x01
     key_stop.push_back('\x02');
 
@@ -360,7 +354,7 @@ InflightAction Inflight_rename::check() {
                        // need to know if there are
                        // 0, or >0. so, limit=2
                        2, 0, FDB_STREAMING_MODE_EXACT, 0, 0, 0),
-                   inode_metadata_fetch);
+                   a().inode_metadata_fetch);
     return InflightAction::BeginWait(
         std::bind(&Inflight_rename::complicated, this));
   } else {
@@ -380,28 +374,28 @@ InflightCallback Inflight_rename::issue() {
     const auto key = pack_inode_key(oldparent);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        oldparent_inode_lookup);
+        a().oldparent_inode_lookup);
   }
 
   {
     const auto key = pack_inode_key(newparent);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        newparent_inode_lookup);
+        a().newparent_inode_lookup);
   }
 
   {
     const auto key = pack_dentry_key(oldparent, oldname);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        origin_lookup);
+        a().origin_lookup);
   }
 
   {
     const auto key = pack_dentry_key(newparent, newname);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        destination_lookup);
+        a().destination_lookup);
   }
 
   // TODO probably also need to fetch information about the parent inodes

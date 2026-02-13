@@ -28,7 +28,14 @@
  * REAL PLAN
  * ???
  */
-class Inflight_setattr : public Inflight {
+struct AttemptState_setattr : public AttemptState {
+  INodeRecord inode;
+  unique_future inode_fetch;
+  unique_future partial_block_fetch;
+  uint64_t partial_block_idx = 0;
+};
+
+class Inflight_setattr : public InflightWithAttempt<AttemptState_setattr> {
 public:
   struct SuccessReplyAttr {};
   struct SuccessReplyOpen {
@@ -38,20 +45,15 @@ public:
 
   Inflight_setattr(fuse_req_t, fuse_ino_t, struct stat, int, unique_transaction,
                    SuccessReply = SuccessReplyAttr{});
-  Inflight_setattr *reincarnate();
   InflightCallback issue();
 
 private:
-  fuse_ino_t ino;
-  struct stat attr{};
-  INodeRecord inode;
-  int to_set;
-  SuccessReply success_reply;
+  const fuse_ino_t ino;
+  const struct stat attr{};
+  const int to_set;
+  const SuccessReply success_reply;
 
-  unique_future inode_fetch;
   InflightAction callback();
-  unique_future partial_block_fetch;
-  uint64_t partial_block_idx;
   InflightAction partial_block_fixup();
   InflightAction commit_cb();
 };
@@ -60,32 +62,28 @@ Inflight_setattr::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
                                    struct stat attr, int to_set,
                                    unique_transaction transaction,
                                    SuccessReply success_reply)
-    : Inflight(req, ReadWrite::Yes, std::move(transaction)), ino(ino),
-      attr(attr), to_set(to_set), success_reply(std::move(success_reply)) {}
-
-Inflight_setattr *Inflight_setattr::reincarnate() {
-  Inflight_setattr *x = new Inflight_setattr(
-      req, ino, attr, to_set, std::move(transaction), success_reply);
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+      ino(ino), attr(attr), to_set(to_set),
+      success_reply(std::move(success_reply)) {}
 
 InflightAction Inflight_setattr::commit_cb() {
   auto open_reply = std::get_if<SuccessReplyOpen>(&success_reply);
   if (open_reply != nullptr) {
     // NOTE this needs to be kept in sync with code in fdbfs_open
+    // we copy fi because success_reply is const
+    struct fuse_file_info fi = open_reply->fi;
     struct fdbfs_filehandle *fh = new fdbfs_filehandle;
     fh->atime_update_needed = false;
 #ifdef O_NOATIME
-    fh->atime = ((open_reply->fi.flags & O_NOATIME) == 0);
+    fh->atime = ((fi.flags & O_NOATIME) == 0);
 #else
     fh->atime = true;
 #endif
-    *(extract_fdbfs_filehandle(&(open_reply->fi))) = fh;
-    return InflightAction::Open(open_reply->fi);
+    *(extract_fdbfs_filehandle(&fi)) = fh;
+    return InflightAction::Open(fi);
   }
   struct stat newattr{};
-  pack_inode_record_into_stat(inode, newattr);
+  pack_inode_record_into_stat(a().inode, newattr);
   return InflightAction::Attr(newattr);
 }
 
@@ -94,8 +92,8 @@ InflightAction Inflight_setattr::partial_block_fixup() {
   int kvcount;
   fdb_bool_t more;
   fdb_error_t err;
-  err = fdb_future_get_keyvalue_array(partial_block_fetch.get(), &kvs, &kvcount,
-                                      &more);
+  err = fdb_future_get_keyvalue_array(a().partial_block_fetch.get(), &kvs,
+                                      &kvcount, &more);
   if (err)
     return InflightAction::FDBError(err);
 
@@ -108,7 +106,7 @@ InflightAction Inflight_setattr::partial_block_fixup() {
       // block can't be decoded. big problem.
       return InflightAction::Abort(EIO);
     }
-    auto key = pack_fileblock_key(ino, partial_block_idx);
+    auto key = pack_fileblock_key(ino, a().partial_block_idx);
     // if (ret <= attr.st_size % BLOCKSIZE) then there's nothing to do.
     const auto write_size = static_cast<size_t>(attr.st_size % BLOCKSIZE);
     const auto sret =
@@ -127,7 +125,7 @@ InflightAction Inflight_setattr::callback() {
   int vallen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(inode_fetch.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
 
@@ -139,8 +137,8 @@ InflightAction Inflight_setattr::callback() {
   auto next_action =
       InflightAction::BeginWait(std::bind(&Inflight_setattr::commit_cb, this));
 
-  inode.ParseFromArray(val, vallen);
-  if (!inode.IsInitialized()) {
+  a().inode.ParseFromArray(val, vallen);
+  if (!a().inode.IsInitialized()) {
     // bad inode
     return InflightAction::Abort(EIO);
   }
@@ -149,19 +147,19 @@ InflightAction Inflight_setattr::callback() {
 
   bool substantial_update = false;
   if (to_set & FUSE_SET_ATTR_MODE) {
-    inode.set_mode(attr.st_mode & 07777);
+    a().inode.set_mode(attr.st_mode & 07777);
     substantial_update = true;
   }
   if (to_set & FUSE_SET_ATTR_UID) {
-    inode.set_uid(attr.st_uid);
+    a().inode.set_uid(attr.st_uid);
     substantial_update = true;
   }
   if (to_set & FUSE_SET_ATTR_GID) {
-    inode.set_gid(attr.st_gid);
+    a().inode.set_gid(attr.st_gid);
     substantial_update = true;
   }
   if (to_set & FUSE_SET_ATTR_SIZE) {
-    if (static_cast<uint64_t>(attr.st_size) < inode.size()) {
+    if (static_cast<uint64_t>(attr.st_size) < a().inode.size()) {
       // they want to truncate the file. compute what blocks
       // need to be cleared.
       auto start_block_key =
@@ -175,8 +173,8 @@ InflightAction Inflight_setattr::callback() {
       if ((attr.st_size % BLOCKSIZE) != 0) {
         // we should have a partially truncated block
         // we're responsible for reading it and writing a corrected version
-        partial_block_idx = attr.st_size / BLOCKSIZE;
-        auto start_key = pack_fileblock_key(ino, partial_block_idx);
+        a().partial_block_idx = attr.st_size / BLOCKSIZE;
+        auto start_key = pack_fileblock_key(ino, a().partial_block_idx);
         auto stop_key = start_key;
         stop_key.push_back(0xff);
         wait_on_future(
@@ -186,29 +184,29 @@ InflightAction Inflight_setattr::callback() {
                                                   start_key.size()),
                 FDB_KEYSEL_FIRST_GREATER_THAN(stop_key.data(), stop_key.size()),
                 0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-            partial_block_fetch);
+            a().partial_block_fetch);
         do_commit = false;
         next_action = InflightAction::BeginWait(
             std::bind(&Inflight_setattr::partial_block_fixup, this));
       }
     }
-    if (static_cast<uint64_t>(attr.st_size) != inode.size()) {
-      inode.set_size(attr.st_size);
+    if (static_cast<uint64_t>(attr.st_size) != a().inode.size()) {
+      a().inode.set_size(attr.st_size);
       substantial_update = true;
     }
   }
   if (to_set & FUSE_SET_ATTR_ATIME) {
-    inode.mutable_atime()->set_sec(attr.st_atim.tv_sec);
-    inode.mutable_atime()->set_nsec(attr.st_atim.tv_nsec);
+    a().inode.mutable_atime()->set_sec(attr.st_atim.tv_sec);
+    a().inode.mutable_atime()->set_nsec(attr.st_atim.tv_nsec);
   }
   if (to_set & FUSE_SET_ATTR_MTIME) {
-    inode.mutable_mtime()->set_sec(attr.st_mtim.tv_sec);
-    inode.mutable_mtime()->set_nsec(attr.st_mtim.tv_nsec);
+    a().inode.mutable_mtime()->set_sec(attr.st_mtim.tv_sec);
+    a().inode.mutable_mtime()->set_nsec(attr.st_mtim.tv_nsec);
   }
 #ifdef FUSE_SET_ATTR_CTIME
   if (to_set & FUSE_SET_ATTR_CTIME) {
-    inode.mutable_ctime()->set_sec(attr.st_ctim.tv_sec);
-    inode.mutable_ctime()->set_nsec(attr.st_ctim.tv_nsec);
+    a().inode.mutable_ctime()->set_sec(attr.st_ctim.tv_sec);
+    a().inode.mutable_ctime()->set_nsec(attr.st_ctim.tv_nsec);
   }
 #endif
 
@@ -217,32 +215,32 @@ InflightAction Inflight_setattr::callback() {
     struct timespec tp;
     clock_gettime(CLOCK_REALTIME, &tp);
     if (to_set & FUSE_SET_ATTR_ATIME_NOW) {
-      inode.mutable_atime()->set_sec(tp.tv_sec);
-      inode.mutable_atime()->set_nsec(tp.tv_nsec);
+      a().inode.mutable_atime()->set_sec(tp.tv_sec);
+      a().inode.mutable_atime()->set_nsec(tp.tv_nsec);
     }
     if ((to_set & FUSE_SET_ATTR_MTIME_NOW) || substantial_update) {
-      inode.mutable_mtime()->set_sec(tp.tv_sec);
-      inode.mutable_mtime()->set_nsec(tp.tv_nsec);
+      a().inode.mutable_mtime()->set_sec(tp.tv_sec);
+      a().inode.mutable_mtime()->set_nsec(tp.tv_nsec);
     }
     if (substantial_update) {
-      inode.mutable_ctime()->set_sec(tp.tv_sec);
-      inode.mutable_ctime()->set_nsec(tp.tv_nsec);
+      a().inode.mutable_ctime()->set_sec(tp.tv_sec);
+      a().inode.mutable_ctime()->set_nsec(tp.tv_nsec);
     }
   }
 
   if (substantial_update && !(to_set & FUSE_SET_ATTR_MODE) &&
-      !(inode.has_type() && inode.type() == ft_directory)) {
+      !(a().inode.has_type() && a().inode.type() == ft_directory)) {
     // strip setuid and setgid unless we just updated the mode,
     // or we're operating on a directory.
-    inode.set_mode(inode.mode() & 01777);
+    a().inode.set_mode(a().inode.mode() & 01777);
   }
   // done updating inode!
 
-  if (!fdb_set_protobuf(transaction.get(), pack_inode_key(ino), inode))
+  if (!fdb_set_protobuf(transaction.get(), pack_inode_key(ino), a().inode))
     return InflightAction::Abort(EIO);
 
   if (do_commit) {
-    wait_on_future(fdb_transaction_commit(transaction.get()), _commit);
+    wait_on_future(fdb_transaction_commit(transaction.get()), a().commit);
   }
 
   return next_action;
@@ -261,7 +259,7 @@ InflightCallback Inflight_setattr::issue() {
   // and request just that inode
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-      inode_fetch);
+      a().inode_fetch);
   return std::bind(&Inflight_setattr::callback, this);
 }
 

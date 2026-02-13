@@ -30,35 +30,31 @@
  * maybe a small range read to pick up extended attributes
  * or less common values?
  */
-class Inflight_getattr : public Inflight {
+struct AttemptState_getattr : public AttemptState {
+  unique_future inode_fetch;
+};
+
+class Inflight_getattr : public InflightWithAttempt<AttemptState_getattr> {
 public:
   Inflight_getattr(fuse_req_t, fuse_ino_t, unique_transaction);
   InflightCallback issue();
-  Inflight_getattr *reincarnate();
 
 private:
-  fuse_ino_t ino;
-
-  unique_future inode_fetch;
+  const fuse_ino_t ino;
   InflightAction callback();
 };
 
 Inflight_getattr::Inflight_getattr(fuse_req_t req, fuse_ino_t ino,
                                    unique_transaction transaction)
-    : Inflight(req, ReadWrite::ReadOnly, std::move(transaction)), ino(ino) {}
-
-Inflight_getattr *Inflight_getattr::reincarnate() {
-  Inflight_getattr *x = new Inflight_getattr(req, ino, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+      ino(ino) {}
 
 InflightAction Inflight_getattr::callback() {
   fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
   fdb_error_t err;
-  err = fdb_future_get_value(inode_fetch.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
   if (!present) {
@@ -82,7 +78,7 @@ InflightCallback Inflight_getattr::issue() {
   // and request just that inode
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-      inode_fetch);
+      a().inode_fetch);
   return std::bind(&Inflight_getattr::callback, this);
 }
 

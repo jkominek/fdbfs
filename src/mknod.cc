@@ -29,26 +29,27 @@
  * REAL PLAN
  * ???
  */
-class Inflight_mknod : public Inflight {
-public:
-  Inflight_mknod(fuse_req_t, fuse_ino_t, std::string, mode_t, filetype, dev_t,
-                 unique_transaction, std::optional<std::string>);
-  Inflight_mknod *reincarnate();
-  InflightCallback issue();
-
-private:
+struct AttemptState_mknod : public AttemptState {
   unique_future dirinode_fetch;
   unique_future inode_check;
   unique_future dirent_check;
-
-  fuse_ino_t parent;
-  fuse_ino_t ino;
+  fuse_ino_t ino = 0;
   struct stat attr{};
-  std::string name;
-  filetype type;
-  mode_t mode;
-  dev_t rdev;
-  std::string symlink_target;
+};
+
+class Inflight_mknod : public InflightWithAttempt<AttemptState_mknod> {
+public:
+  Inflight_mknod(fuse_req_t, fuse_ino_t, std::string, mode_t, filetype, dev_t,
+                 unique_transaction, std::optional<std::string>);
+  InflightCallback issue();
+
+private:
+  const fuse_ino_t parent;
+  const std::string name;
+  const filetype type;
+  const mode_t mode;
+  const dev_t rdev;
+  const std::string symlink_target;
 
   InflightAction postverification();
 };
@@ -56,20 +57,12 @@ private:
 Inflight_mknod::Inflight_mknod(
     fuse_req_t req, fuse_ino_t parent, std::string name, mode_t mode,
     filetype type, dev_t rdev, unique_transaction transaction,
-    std::optional<std::string> symlink_target = std::nullopt)
-    : Inflight(req, ReadWrite::Yes, std::move(transaction)), parent(parent),
-      name(name), type(type), mode(mode), rdev(rdev) {
-  if (type == ft_symlink)
-    this->symlink_target = symlink_target.value();
-}
-
-Inflight_mknod *Inflight_mknod::reincarnate() {
-  Inflight_mknod *x =
-      new Inflight_mknod(req, parent, name, mode, type, rdev,
-                         std::move(transaction), symlink_target);
-  delete this;
-  return x;
-}
+    std::optional<std::string> symlink_target_opt = std::nullopt)
+    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+      parent(parent), name(std::move(name)), type(type), mode(mode), rdev(rdev),
+      symlink_target((type == ft_symlink && symlink_target_opt.has_value())
+                         ? std::move(*symlink_target_opt)
+                         : std::string()) {}
 
 InflightAction Inflight_mknod::postverification() {
   fdb_bool_t dirinode_present, inode_present, dirent_present;
@@ -77,8 +70,8 @@ InflightAction Inflight_mknod::postverification() {
   int valuelen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(dirinode_fetch.get(), &dirinode_present, &value,
-                             &valuelen);
+  err = fdb_future_get_value(a().dirinode_fetch.get(), &dirinode_present,
+                             &value, &valuelen);
   if (err)
     return InflightAction::FDBError(err);
 
@@ -90,12 +83,12 @@ InflightAction Inflight_mknod::postverification() {
   INodeRecord parentinode;
   parentinode.ParseFromArray(value, valuelen);
 
-  err = fdb_future_get_value(dirent_check.get(), &dirent_present, &value,
+  err = fdb_future_get_value(a().dirent_check.get(), &dirent_present, &value,
                              &valuelen);
   if (err)
     return InflightAction::FDBError(err);
 
-  err = fdb_future_get_value(inode_check.get(), &inode_present, &value,
+  err = fdb_future_get_value(a().inode_check.get(), &inode_present, &value,
                              &valuelen);
   if (err)
     return InflightAction::FDBError(err);
@@ -121,7 +114,7 @@ InflightAction Inflight_mknod::postverification() {
   update_directory_times(transaction.get(), parentinode);
 
   INodeRecord inode;
-  inode.set_inode(ino);
+  inode.set_inode(a().ino);
   inode.set_type(type);
   if (type == ft_symlink)
     inode.set_symlink(symlink_target);
@@ -146,14 +139,14 @@ InflightAction Inflight_mknod::postverification() {
   inode.mutable_ctime()->set_nsec(tp.tv_nsec);
 
   // wrap it up to be returned to fuse later
-  pack_inode_record_into_stat(inode, attr);
+  pack_inode_record_into_stat(inode, a().attr);
 
   // set the inode KV pair
-  if (!fdb_set_protobuf(transaction.get(), pack_inode_key(ino), inode))
+  if (!fdb_set_protobuf(transaction.get(), pack_inode_key(a().ino), inode))
     return InflightAction::Abort(EIO);
 
   DirectoryEntry dirent;
-  dirent.set_inode(ino);
+  dirent.set_inode(a().ino);
   dirent.set_type(type);
 
   if (!fdb_set_protobuf(transaction.get(), pack_dentry_key(parent, name),
@@ -163,9 +156,9 @@ InflightAction Inflight_mknod::postverification() {
   return commit([&]() {
     auto e = std::make_unique<struct fuse_entry_param>();
     bzero(e.get(), sizeof(struct fuse_entry_param));
-    e->ino = ino;
+    e->ino = a().ino;
     e->generation = 1;
-    e->attr = attr;
+    e->attr = a().attr;
     e->attr_timeout = 0.01;
     e->entry_timeout = 0.01;
     return InflightAction::Entry(std::move(e));
@@ -173,10 +166,10 @@ InflightAction Inflight_mknod::postverification() {
 }
 
 InflightCallback Inflight_mknod::issue() {
-  ino = 0x47d8d31b9848016f;
+  a().ino = 0x47d8d31b9848016f;
   do {
-    if (getrandom(reinterpret_cast<void *>(&ino), sizeof(ino), GRND_NONBLOCK) <
-        static_cast<ssize_t>(sizeof(ino))) {
+    if (getrandom(reinterpret_cast<void *>(&a().ino), sizeof(a().ino),
+                  GRND_NONBLOCK) < static_cast<ssize_t>(sizeof(a().ino))) {
       // didn't get as many bytes as we wanted.
       struct timespec ts;
       if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1) {
@@ -188,29 +181,29 @@ InflightCallback Inflight_mknod::issue() {
       // take whatever was laying around in ino after the getrandom call
       // and xor it with the current nanoseconds. it isn't random, but it'll
       // at least be somewhat distributed over the space.
-      ino ^= ts.tv_nsec;
+      a().ino ^= ts.tv_nsec;
     }
-  } while (ino < 128); // treat the first 128 as reserved
+  } while (a().ino < 128); // treat the first 128 as reserved
 
   {
     const auto key = pack_inode_key(parent);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        dirinode_fetch);
+        a().dirinode_fetch);
   }
 
   {
     const auto key = pack_dentry_key(parent, name);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        dirent_check);
+        a().dirent_check);
   }
 
   {
-    const auto key = pack_inode_key(ino);
+    const auto key = pack_inode_key(a().ino);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-        inode_check);
+        a().inode_check);
   }
 
   return std::bind(&Inflight_mknod::postverification, this);

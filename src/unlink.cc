@@ -34,14 +34,7 @@
  */
 enum class Op { Unlink, Rmdir };
 
-class Inflight_unlink_rmdir : public Inflight {
-public:
-  Inflight_unlink_rmdir(fuse_req_t, fuse_ino_t, std::string, Op,
-                        unique_transaction);
-  Inflight_unlink_rmdir *reincarnate();
-  InflightCallback issue();
-
-private:
+struct AttemptState_unlink_rmdir : public AttemptState {
   // parent inode, for perms checking
   unique_future parent_lookup;
   // for fetching the dirent given parent inode and path name
@@ -50,40 +43,40 @@ private:
   unique_future inode_metadata_fetch;
   // fetches 0-1 of the directory entries in a directory
   unique_future directory_listing_fetch;
+  // inode of the thing we're removing
+  fuse_ino_t ino = 0;
+  // if we find use records for the inode, we'll mark this
+  bool inode_in_use = false;
+};
 
+class Inflight_unlink_rmdir
+    : public InflightWithAttempt<AttemptState_unlink_rmdir> {
+public:
+  Inflight_unlink_rmdir(fuse_req_t, fuse_ino_t, std::string, Op,
+                        unique_transaction);
+  InflightCallback issue();
+
+private:
   InflightAction postlookup();
   InflightAction inode_check();
   InflightAction rmdir_inode_dirlist_check();
 
   // parent directory
-  fuse_ino_t parent;
-  // inode of the thing we're removing
-  fuse_ino_t ino;
+  const fuse_ino_t parent;
   // provided name and length
-  std::string name;
+  const std::string name;
   // computed key of the dirent.
-  std::vector<uint8_t> dirent_key;
+  const std::vector<uint8_t> dirent_key;
   // how we were invoked, rmdir or unlink
-  Op op;
-
-  // if we find use records for the inode, we'll mark this
-  bool inode_in_use = false;
+  const Op op;
 };
 
 Inflight_unlink_rmdir::Inflight_unlink_rmdir(fuse_req_t req, fuse_ino_t parent,
                                              std::string name, Op op,
                                              unique_transaction transaction)
-    : Inflight(req, ReadWrite::Yes, std::move(transaction)), parent(parent),
-      name(name), op(op) {
-  dirent_key = pack_dentry_key(parent, name);
-}
-
-Inflight_unlink_rmdir *Inflight_unlink_rmdir::reincarnate() {
-  Inflight_unlink_rmdir *x =
-      new Inflight_unlink_rmdir(req, parent, name, op, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+      parent(parent), name(std::move(name)),
+      dirent_key(pack_dentry_key(parent, this->name)), op(op) {}
 
 InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check() {
   // got the directory listing future back, we can check to see if we're done.
@@ -92,7 +85,7 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check() {
   fdb_bool_t more;
   fdb_error_t err;
 
-  err = fdb_future_get_keyvalue_array(directory_listing_fetch.get(), &kvs,
+  err = fdb_future_get_keyvalue_array(a().directory_listing_fetch.get(), &kvs,
                                       &kvcount, &more);
   if (err)
     return InflightAction::FDBError(err);
@@ -111,7 +104,7 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check() {
   fdb_transaction_clear(transaction.get(), dirent_key.data(),
                         dirent_key.size());
 
-  erase_inode(transaction.get(), ino);
+  erase_inode(transaction.get(), a().ino);
 
   return commit(InflightAction::OK);
 }
@@ -122,7 +115,7 @@ InflightAction Inflight_unlink_rmdir::inode_check() {
   fdb_bool_t more;
   fdb_error_t err;
 
-  err = fdb_future_get_keyvalue_array(inode_metadata_fetch.get(), &kvs,
+  err = fdb_future_get_keyvalue_array(a().inode_metadata_fetch.get(), &kvs,
                                       &kvcount, &more);
   if (err)
     return InflightAction::FDBError(err);
@@ -152,7 +145,7 @@ InflightAction Inflight_unlink_rmdir::inode_check() {
     if ((kv.key_length > inode_key_length) &&
         (kv.key[inode_key_length] == 0x01)) {
       // there's a use record in place, we can't erase the inode.
-      inode_in_use = true;
+      a().inode_in_use = true;
     }
   }
 
@@ -173,13 +166,13 @@ InflightAction Inflight_unlink_rmdir::inode_check() {
 
     // zero locks? zero in-use records? clear the whole file.
     // otherwise, add an entry to the async garbage collection queue
-    if (!inode_in_use) {
+    if (!a().inode_in_use) {
       // we're basically never going to hit this, as to have found
       // this inode, we probably caused some use records to be added.
-      erase_inode(transaction.get(), ino);
+      erase_inode(transaction.get(), a().ino);
     } else {
       // the inode is in use, but we've dropped its last reference.
-      const auto key = pack_garbage_key(ino);
+      const auto key = pack_garbage_key(a().ino);
       uint8_t b = 0x00;
       // insert a record for the garbage collector
       fdb_transaction_set(transaction.get(), key.data(), key.size(), &b, 1);
@@ -195,7 +188,7 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
   int valuelen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(parent_lookup.get(), &dirinode_present, &value,
+  err = fdb_future_get_value(a().parent_lookup.get(), &dirinode_present, &value,
                              &valuelen);
   if (err)
     return InflightAction::FDBError(err);
@@ -208,7 +201,7 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
   parent.ParseFromArray(value, valuelen);
   update_directory_times(transaction.get(), parent);
 
-  err = fdb_future_get_value(dirent_lookup.get(), &dirent_present, &value,
+  err = fdb_future_get_value(a().dirent_lookup.get(), &dirent_present, &value,
                              &valuelen);
   if (err)
     return InflightAction::FDBError(err);
@@ -227,7 +220,7 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
       return InflightAction::Abort(EIO);
     }
 
-    ino = dirent.inode();
+    a().ino = dirent.inode();
     dirent_type = dirent.type();
   }
 
@@ -243,8 +236,8 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
       // dirents in the directory.
 
       {
-        const auto start = pack_inode_key(ino);
-        auto stop = pack_inode_key(ino);
+        const auto start = pack_inode_key(a().ino);
+        auto stop = pack_inode_key(a().ino);
         // based on our KV layout, this will fetch all of the metadata
         // about the directory except the extended attributes.
         stop.push_back('\x02');
@@ -253,7 +246,7 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
                            transaction.get(), start.data(), start.size(), 0, 1,
                            stop.data(), stop.size(), 0, 1, 1000, 0,
                            FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-                       inode_metadata_fetch);
+                       a().inode_metadata_fetch);
       }
 
       // we want to scan for any directory entries inside of this
@@ -261,8 +254,8 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
       // possible directory entry, and one for after the last
       // possible, and then get the range, limit 1.
       {
-        const auto start = pack_dentry_key(ino, "");
-        const auto stop = pack_dentry_key(ino, "\xff");
+        const auto start = pack_dentry_key(a().ino, "");
+        const auto stop = pack_dentry_key(a().ino, "\xff");
 
         wait_on_future(
             fdb_transaction_get_range(
@@ -270,7 +263,7 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
                 FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start.data(), start.size()),
                 FDB_KEYSEL_FIRST_GREATER_THAN(stop.data(), stop.size()), 1, 0,
                 FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-            directory_listing_fetch);
+            a().directory_listing_fetch);
       }
 
       return InflightAction::BeginWait(
@@ -286,8 +279,8 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
       fdb_transaction_clear(transaction.get(), dirent_key.data(),
                             dirent_key.size());
 
-      const auto start = pack_inode_key(ino);
-      auto stop = pack_inode_key(ino);
+      const auto start = pack_inode_key(a().ino);
+      auto stop = pack_inode_key(a().ino);
       // based on our KV layout, this will fetch all of the metadata
       // about the file except the extended attributes.
       stop.push_back('\x02');
@@ -298,7 +291,7 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
                          transaction.get(), start.data(), start.size(), 0, 1,
                          stop.data(), stop.size(), 0, 1, 1000, 0,
                          FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-                     inode_metadata_fetch);
+                     a().inode_metadata_fetch);
       return InflightAction::BeginWait(
           std::bind(&Inflight_unlink_rmdir::inode_check, this));
     } else {
@@ -313,12 +306,12 @@ InflightCallback Inflight_unlink_rmdir::issue() {
   const auto key = pack_inode_key(parent);
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
-      parent_lookup);
+      a().parent_lookup);
 
   // fetch the dirent so we can get the inode info.
   wait_on_future(fdb_transaction_get(transaction.get(), dirent_key.data(),
                                      dirent_key.size(), 0),
-                 dirent_lookup);
+                 a().dirent_lookup);
   return std::bind(&Inflight_unlink_rmdir::postlookup, this);
 }
 

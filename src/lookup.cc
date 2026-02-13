@@ -34,20 +34,20 @@
  * much matter if it changes by a little or a lot. Just want to
  * ensure that we show the user something that was true.
  */
-class Inflight_lookup : public Inflight {
+struct AttemptState_lookup : public AttemptState {
+  fuse_ino_t target = 0;
+  unique_future dirent_fetch;
+  unique_future inode_fetch;
+};
+
+class Inflight_lookup : public InflightWithAttempt<AttemptState_lookup> {
 public:
   Inflight_lookup(fuse_req_t, fuse_ino_t, std::string, unique_transaction);
   InflightCallback issue();
-  Inflight_lookup *reincarnate();
 
 private:
-  fuse_ino_t parent;
-  std::string name;
-
-  fuse_ino_t target;
-
-  unique_future dirent_fetch;
-  unique_future inode_fetch;
+  const fuse_ino_t parent;
+  const std::string name;
 
   // issue looks up the dirent and then...
   InflightAction lookup_inode();
@@ -57,15 +57,8 @@ private:
 Inflight_lookup::Inflight_lookup(fuse_req_t req, fuse_ino_t parent,
                                  std::string name,
                                  unique_transaction transaction)
-    : Inflight(req, ReadWrite::Yes, std::move(transaction)), parent(parent),
-      name(name) {}
-
-Inflight_lookup *Inflight_lookup::reincarnate() {
-  Inflight_lookup *x =
-      new Inflight_lookup(req, parent, name, std::move(transaction));
-  delete this;
-  return x;
-}
+    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+      parent(parent), name(std::move(name)) {}
 
 InflightAction Inflight_lookup::process_inode() {
   fdb_bool_t present = 0;
@@ -73,7 +66,7 @@ InflightAction Inflight_lookup::process_inode() {
   int vallen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(inode_fetch.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
 
@@ -90,7 +83,7 @@ InflightAction Inflight_lookup::process_inode() {
 
   auto e = std::make_unique<struct fuse_entry_param>();
   bzero(e.get(), sizeof(struct fuse_entry_param));
-  e->ino = target;
+  e->ino = a().target;
   // TODO technically we need to be smarter about generations
   e->generation = 1;
   pack_inode_record_into_stat(inode, e->attr);
@@ -106,7 +99,7 @@ InflightAction Inflight_lookup::lookup_inode() {
   int vallen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(dirent_fetch.get(), &present, &val, &vallen);
+  err = fdb_future_get_value(a().dirent_fetch.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
 
@@ -118,15 +111,15 @@ InflightAction Inflight_lookup::lookup_inode() {
       if (!dirent.has_inode()) {
         return InflightAction::Abort(EIO, "directory entry missing inode");
       }
-      target = dirent.inode();
+      a().target = dirent.inode();
     }
 
-    const auto key = pack_inode_key(target);
+    const auto key = pack_inode_key(a().target);
 
     // and request just that inode
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 1),
-        inode_fetch);
+        a().inode_fetch);
     return InflightAction::BeginWait(
         std::bind(&Inflight_lookup::process_inode, this));
   } else {
@@ -139,7 +132,7 @@ InflightCallback Inflight_lookup::issue() {
 
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 1),
-      dirent_fetch);
+      a().dirent_fetch);
   return std::bind(&Inflight_lookup::lookup_inode, this);
 }
 
