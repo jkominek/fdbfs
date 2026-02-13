@@ -28,8 +28,10 @@
 
 #include <expected>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -133,11 +135,11 @@ extern void update_directory_times(FDBTransaction *, INodeRecord &);
 
 extern void erase_inode(FDBTransaction *, fuse_ino_t);
 
-[[nodiscard]] extern bool set_block(FDBTransaction *,
-                                    const std::vector<uint8_t>, const uint8_t *,
-                                    uint64_t, bool = true);
-[[nodiscard]] extern int decode_block(const FDBKeyValue *, int, uint8_t *, int,
-                                      int);
+[[nodiscard]] extern std::expected<void, int>
+set_block(FDBTransaction *, const std::vector<uint8_t> &,
+          std::span<const uint8_t>, bool = true);
+[[nodiscard]] extern std::expected<size_t, int>
+decode_block(const FDBKeyValue *, int, std::span<uint8_t>, size_t);
 
 #ifndef DEBUG
 #define DEBUG 0

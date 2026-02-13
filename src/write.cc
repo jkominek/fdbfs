@@ -148,22 +148,21 @@ InflightAction Inflight_write::check() {
     // we don't know whats in the existing block, so we've got to plan on
     // it being full.
     const uint64_t total_buffer_size = BLOCKSIZE;
-    uint8_t output_buffer[total_buffer_size];
-    bzero(output_buffer, total_buffer_size);
+    std::vector<uint8_t> output_buffer(total_buffer_size, 0);
     if (kvcount > 0) {
-      int ret = decode_block(&kvs[0], 0, output_buffer, total_buffer_size,
-                             total_buffer_size);
-      if (ret < 0) {
-        // error condition
+      const auto dret = decode_block(
+          &kvs[0], 0, std::span<uint8_t>(output_buffer), total_buffer_size);
+      if (!dret) {
         return InflightAction::Abort(EIO);
       }
     }
-    bcopy(buffer.data(), output_buffer + copy_start_off, copy_start_size);
+    bcopy(buffer.data(), output_buffer.data() + copy_start_off,
+          copy_start_size);
     auto key = pack_fileblock_key(ino, off / BLOCKSIZE);
-    if (set_block(transaction.get(), key, output_buffer, total_buffer_size,
-                  false)) {
-      fdb_transaction_clear(transaction.get(), key.data(), key.size());
-    }
+    const auto sret = set_block(transaction.get(), key,
+                                std::span<const uint8_t>(output_buffer), false);
+    if (!sret)
+      return InflightAction::Abort(EIO);
   }
 
   if (stop_block_fetch) {
@@ -180,17 +179,15 @@ InflightAction Inflight_write::check() {
     const uint64_t copysize = ((off + buffer.size()) % BLOCKSIZE);
     const uint64_t bufcopystart = buffer.size() - copysize;
     const uint64_t total_buffer_size = BLOCKSIZE;
-    uint8_t output_buffer[total_buffer_size];
-    bzero(output_buffer, total_buffer_size);
+    std::vector<uint8_t> output_buffer(total_buffer_size, 0);
     if (kvcount > 0) {
-      int ret = decode_block(&kvs[0], 0, output_buffer, total_buffer_size,
-                             total_buffer_size);
-      if (ret < 0) {
-        // error condition
+      const auto dret = decode_block(
+          &kvs[0], 0, std::span<uint8_t>(output_buffer), total_buffer_size);
+      if (!dret) {
         return InflightAction::Abort(EIO);
       }
     }
-    bcopy(buffer.data() + bufcopystart, output_buffer, copysize);
+    bcopy(buffer.data() + bufcopystart, output_buffer.data(), copysize);
     auto key = pack_fileblock_key(ino, (off + buffer.size()) / BLOCKSIZE);
     // we don't need to preserve whatever is in the output_buffer
     // past the end of the file.
@@ -201,10 +198,10 @@ InflightAction Inflight_write::check() {
     // instead of actual_block_size. storing extra stuff in the block is
     // probably okay, but what was wrong with the old calculation?
     // it seems reasonable enough.
-    if (set_block(transaction.get(), key, output_buffer, total_buffer_size,
-                  false)) {
-      fdb_transaction_clear(transaction.get(), key.data(), key.size());
-    }
+    const auto sret = set_block(transaction.get(), key,
+                                std::span<const uint8_t>(output_buffer), false);
+    if (!sret)
+      return InflightAction::Abort(EIO);
   }
 
   return commit([&]() { return InflightAction::Write(buffer.size()); });
@@ -306,9 +303,14 @@ InflightCallback Inflight_write::issue() {
     uint8_t *block;
     block = buffer.data() + (off % BLOCKSIZE) +
             (mid_block - iter_start) * BLOCKSIZE;
-    // safe to discard the return value here, since we cleared the whole
-    // range beforehand.
-    (void)set_block(transaction.get(), key, block, BLOCKSIZE, false);
+    const auto sret =
+        set_block(transaction.get(), key,
+                  std::span<const uint8_t>(block, BLOCKSIZE), false);
+    // safe to discard the result here for normal operation, since we
+    // cleared the whole range beforehand.
+    if (!sret) {
+      return []() { return InflightAction::Abort(EIO); };
+    }
   }
 
   return std::bind(&Inflight_write::check, this);

@@ -101,19 +101,21 @@ InflightAction Inflight_setattr::partial_block_fixup() {
 
   if (kvcount > 0) {
     // there's a block there, decode it, and rewrite a truncated version
-    uint8_t output_buffer[BLOCKSIZE];
-    bzero(output_buffer, BLOCKSIZE);
-    int ret = decode_block(&kvs[0], 0, output_buffer, BLOCKSIZE, BLOCKSIZE);
-    if (ret < 0) {
+    std::vector<uint8_t> output_buffer(BLOCKSIZE, 0);
+    const auto dret =
+        decode_block(&kvs[0], 0, std::span<uint8_t>(output_buffer), BLOCKSIZE);
+    if (!dret) {
       // block can't be decoded. big problem.
       return InflightAction::Abort(EIO);
     }
     auto key = pack_fileblock_key(ino, partial_block_idx);
     // if (ret <= attr.st_size % BLOCKSIZE) then there's nothing to do.
-    if (set_block(transaction.get(), key, output_buffer,
-                  attr.st_size % BLOCKSIZE)) {
-      fdb_transaction_clear(transaction.get(), key.data(), key.size());
-    }
+    const auto write_size = static_cast<size_t>(attr.st_size % BLOCKSIZE);
+    const auto sret =
+        set_block(transaction.get(), key,
+                  std::span<const uint8_t>(output_buffer).first(write_size));
+    if (!sret)
+      return InflightAction::Abort(EIO);
   }
 
   return commit(std::bind(&Inflight_setattr::commit_cb, this));

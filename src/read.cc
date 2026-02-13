@@ -143,18 +143,18 @@ InflightAction Inflight_read::callback() {
       // we need an offset into the received block, since it
       // starts before (or at) the requested read area
       const uint64_t block_off = off - block * BLOCKSIZE;
-      const int d =
-          decode_block(&kv, block_off, buffer.data(), size, buffer.size());
-      if (d < 0) {
+      const auto dret =
+          decode_block(&kv, block_off, std::span<uint8_t>(buffer), size);
+      if (!dret) {
         return InflightAction::Abort(EIO);
       }
     } else {
       // we need an offset into the target buffer, as our block
       // starts after the requested read area.
       const size_t bufferoff = block * BLOCKSIZE - off;
-      const int d = decode_block(&kv, 0, buffer.data() + bufferoff,
-                                 size - bufferoff, buffer.size() - bufferoff);
-      if (d < 0) {
+      auto out = std::span<uint8_t>(buffer).subspan(bufferoff);
+      const auto dret = decode_block(&kv, 0, out, size - bufferoff);
+      if (!dret) {
         return InflightAction::Abort(EIO);
       }
     }
