@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 #include <sys/time.h>
 #include <sys/utsname.h>
 #include <time.h>
@@ -132,10 +133,20 @@ bool start_liveness(struct fuse_session *se) {
 
   pid.clear();
 
-  // this probably isn't the best way to produce 128 bits in
-  // a std::vector, but, whatever.
-  for (int i = 0; i < 16; i++) {
-    pid.push_back(random() & 0xFF);
+  // fill a 128-bit pid from the kernel RNG.
+  pid.resize(16);
+  size_t bytes_read = 0;
+  while (bytes_read < pid.size()) {
+    const ssize_t n = getrandom(pid.data() + bytes_read, pid.size() - bytes_read,
+                                0);
+    if (n < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      pid.clear();
+      return true;
+    }
+    bytes_read += static_cast<size_t>(n);
   }
 
   // we make main pass this in so it isn't floating around
