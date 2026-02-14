@@ -5,3 +5,5 @@
 4 maybe be more resilient in the face of failures to insert use records
 5 permissions checking
 6 locks
+- ensure start_liveness has inserted our PID entry before we start taking
+  FUSE operations
