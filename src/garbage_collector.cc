@@ -29,130 +29,156 @@
  */
 
 pthread_t gc_thread;
-bool gc_stop = false;
+std::atomic<bool> gc_stop = false;
+
+constexpr int gc_scan_batch_limit = 64;
+
+static void process_gc_candidate(const std::vector<uint8_t> &garbage_key) {
+  // check for malformed keys in garbage key space
+  if (garbage_key.size() != static_cast<size_t>(inode_key_length)) {
+    // yeah length is wrong so it can't be a garbage key
+    unique_transaction t = make_transaction();
+    fdb_transaction_clear(t.get(), garbage_key.data(), garbage_key.size());
+    auto f = wrap_future(fdb_transaction_commit(t.get()));
+    const fdb_error_t wait_err = fdb_future_block_until_ready(f.get());
+    (void)wait_err;
+    return;
+  }
+
+  // fetch the inode from the garbage key.
+  fuse_ino_t ino;
+  bcopy(garbage_key.data() + key_prefix.size() + 1, &ino, sizeof(fuse_ino_t));
+  ino = be64toh(ino);
+  if (lookup_count_nonzero(ino)) {
+    // we're still using the inode, don't bother checking the use records.
+    return;
+  }
+
+  unique_transaction t = make_transaction();
+
+#if DEBUG
+  printf("found garbage inode %lx\n", ino);
+#endif
+
+  auto start = pack_inode_key(ino);
+  start.push_back(INODE_USE_PREFIX);
+  auto stop = pack_inode_key(ino);
+  stop.push_back(INODE_USE_PREFIX + 1);
+
+  // scan the use range of the inode
+  // TODO we actually need to pull all use records, and compare
+  // them against the known live processes
+  const FDBKeyValue *kvs;
+  int kvcount;
+  fdb_bool_t more;
+  {
+    // NOTE the below is a little uncertain because the liveness checker
+    //      isn't quite finalized.
+    // TODO scan ALL of the use records using small batches, looping if
+    //      more==true, because we _expect_ that the record is still in use
+    //      and that there won't be anything to do.
+    // - if we encounter one which corresponds to a known live host,
+    //   then the GC record is valid and we can return early.
+    // - if we encounter ones which correspond to known DEAD hosts,
+    //   then we can delete them and save ourselves effort in the future.
+    // - at the end, if there are no use records (either because it started
+    //   like that, or because we deleted them all), then we can process
+    //   the record as though it isn't in use (because it isn't)
+    // - if we're left with use records where we're not sure if the host
+    //   is alive or dead, then we should pester the liveness checker to
+    //   figure that out.
+    auto f = wrap_future(fdb_transaction_get_range(
+        t.get(), start.data(), start.size(), 0, 1, stop.data(), stop.size(), 0,
+        1, 1, 0, FDB_STREAMING_MODE_SMALL, 0, 0, 0));
+    if (fdb_future_block_until_ready(f.get()) ||
+        fdb_future_get_keyvalue_array(f.get(), &kvs, &kvcount, &more) ||
+        kvcount > 0) {
+      // use records present (or error), nothing to do.
+#if DEBUG
+      printf("nothing to do on the garbage inode\n");
+#endif
+      return;
+    }
+  }
+
+  // it shouldn't be possible for this to be true, but if it is, that's
+  // a problem.
+  if (lookup_count_nonzero(ino)) {
+    // we've started using the inode
+    // TODO we're in a very weird situation, we've somehow recently
+    // started locally using an inode for which there are no use records
+    // despite the fact that it's been waiting for garbage collection.
+    return;
+  }
+
+  // no usage, erase it.
+#if DEBUG
+  printf("cleaning garbage inode\n");
+#endif
+  fdb_transaction_clear(t.get(), garbage_key.data(), garbage_key.size());
+  // NOTE we could be paranoid and fetch the inode and doublecheck that
+  // nlinks==0 and there are no dirents
+  erase_inode(t.get(), ino);
+
+  auto f = wrap_future(fdb_transaction_commit(t.get()));
+  // on failure, we can only proceed and try again in a future scan.
+  const fdb_error_t wait_err = fdb_future_block_until_ready(f.get());
+  (void)wait_err;
+}
 
 void *garbage_scanner(void *ignore) {
-  uint8_t scan_spot = random() & 0xF;
   struct timespec ts;
-  ts.tv_sec = 1;
-  ts.tv_nsec = 0;
+  auto gc_start_key = key_prefix;
+  gc_start_key.push_back(GARBAGE_PREFIX);
+  auto gc_stop_key = key_prefix;
+  gc_stop_key.push_back(GARBAGE_PREFIX + 1);
+  std::vector<uint8_t> last_key = gc_start_key;
 #if DEBUG
   printf("gc starting\n");
 #endif
-  while (!gc_stop) {
+  while (!gc_stop.load(std::memory_order_relaxed)) {
     // TODO vary this or do something to slow things down.
     ts.tv_sec = 1;
+    ts.tv_nsec = 0;
     nanosleep(&ts, NULL);
 
-    unique_transaction t = make_transaction();
-
-    // we'll pick a random spot in the garbage space, and
-    // then we'll scan a bit past that.
-    auto start = key_prefix;
-    start.push_back('g');
-    auto stop = start;
-    uint8_t b = (scan_spot & 0xF) << 4;
-    start.push_back(b);
-    stop.push_back(b | 0x0F);
-    // printf("starting gc at %02x\n", b);
-    scan_spot = (scan_spot + 1) % 16;
-
+    unique_transaction scan_t = make_transaction();
     unique_future f = wrap_future(fdb_transaction_get_range(
-        t.get(), start.data(), start.size(), 0, 1, stop.data(), stop.size(), 0,
-        1, 1, 0, FDB_STREAMING_MODE_SMALL, 0, 0,
-        // flip between forwards and backwards
-        // scanning of our randomly chosen range
-        random() & 0x1));
+        scan_t.get(),
+        FDB_KEYSEL_FIRST_GREATER_THAN(last_key.data(), last_key.size()),
+        FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(gc_stop_key.data(),
+                                          gc_stop_key.size()),
+        gc_scan_batch_limit, 0, FDB_STREAMING_MODE_LARGE, 0, 0, 0));
     const FDBKeyValue *kvs;
     int kvcount;
     fdb_bool_t more;
     if (fdb_future_block_until_ready(f.get()) ||
-        fdb_future_get_keyvalue_array(f.get(), &kvs, &kvcount, &more) ||
-        (kvcount <= 0)) {
-      // errors, or nothing to do. take a longer break.
-      // sleep extra, though.
+        fdb_future_get_keyvalue_array(f.get(), &kvs, &kvcount, &more)) {
+      // error, take a longer break.
       ts.tv_sec = 3;
       nanosleep(&ts, NULL);
       continue;
     }
 
-    if (kvs[0].key_length != inode_key_length) {
-      // we found malformed junk in the garbage space. ironic.
-      fdb_transaction_clear(t.get(), kvs[0].key, kvs[0].key_length);
-      auto g = wrap_future(fdb_transaction_commit(t.get()));
-      // if it fails, it fails, we'll try again the next time we
-      // stumble across it.
-      if (fdb_future_block_until_ready(g.get())) {
-        /* nothing to do */;
-      }
-      continue;
-    }
-
-    // ok we found a garbage-collectible inode.
-    // fetch the in-use records for it.
-    fuse_ino_t ino;
-    bcopy(kvs[0].key + key_prefix.size() + 1, &ino, sizeof(fuse_ino_t));
-    ino = be64toh(ino);
-    if (lookup_count_nonzero(ino)) {
-      // we're still using it, don't bother checking the use records
-      continue;
-    }
-    // at this point we shouldn't have a use record in the database, we'd
-    // only be finding other hosts' use records for the inode.
-
+    if (kvcount == 0) {
+      if (more) {
 #if DEBUG
-    printf("found garbage inode %lx\n", ino);
-#endif
-    start = pack_inode_key(ino);
-    start.push_back(0x01);
-    stop = pack_inode_key(ino);
-    stop.push_back(0x02);
-
-    // scan the use range of the inode
-    // TODO we actually need to pull all use records, and compare
-    // them against the known live processes
-    {
-      auto g = wrap_future(fdb_transaction_get_range(
-          t.get(), start.data(), start.size(), 0, 1, stop.data(), stop.size(),
-          0, 1, 1, 0, FDB_STREAMING_MODE_SMALL, 0, 0, 0));
-      if (fdb_future_block_until_ready(g.get()) ||
-          fdb_future_get_keyvalue_array(g.get(), &kvs, &kvcount, &more) ||
-          kvcount > 0) {
-        // welp. nothing to do.
-#if DEBUG
-        printf("nothing to do on the garbage inode\n");
+        printf("gc got kvcount==0 with more==true\n");
 #endif
         continue;
       }
-    }
-
-    // it shouldn't be possible for this to be true, but if it is, that's
-    // a problem.
-    if (lookup_count_nonzero(ino)) {
-      // we've started using it
-      // TODO  we're in a very weird situation, we've somehow recently
-      // started locally using an inode for which there are no use records
-      // despite the fact that it's been waiting for garbage collection.
-      // we should at least log this, and possibly attempt to repair the
-      // situation (restore a use record?) because another host running
-      // the GC will not know about our lookup count, and will delete the
-      // inode soon.
+      // reached the end of garbage subspace. wrap around.
+      last_key = gc_start_key;
       continue;
     }
-    // wooo no usage, we get to erase it.
-#if DEBUG
-    printf("cleaning garbage inode\n");
-#endif
-    auto garbagekey = pack_garbage_key(ino);
-    fdb_transaction_clear(t.get(), garbagekey.data(), garbagekey.size());
 
-    erase_inode(t.get(), ino);
-    {
-      auto g = wrap_future(fdb_transaction_commit(t.get()));
-      // if the commit fails, it doesn't matter. we'll try again later.
-      if (fdb_future_block_until_ready(g.get())) {
-        printf("error when commiting a garbage collection transaction\n");
-      }
+    for (int i = 0; i < kvcount; i++) {
+      const FDBKeyValue &kv = kvs[i];
+      std::vector<uint8_t> key(kv.key, kv.key + kv.key_length);
+      process_gc_candidate(key);
+      // advance cursor after processing so we don't spin forever on
+      // a malformed record that repeatedly fails to clear.
+      last_key = std::move(key);
     }
   }
 #if DEBUG
@@ -162,7 +188,9 @@ void *garbage_scanner(void *ignore) {
 }
 
 bool start_gc() {
-  gc_stop = false; // just in case we restart the gc for some reason
+  // just in case we restart the gc for some reason
+  gc_stop.store(false, std::memory_order_relaxed);
+
   if (pthread_create(&gc_thread, NULL, garbage_scanner, NULL)) {
     return true;
   }
@@ -170,6 +198,6 @@ bool start_gc() {
 }
 
 void terminate_gc() {
-  gc_stop = true;
+  gc_stop.store(true, std::memory_order_relaxed);
   pthread_join(gc_thread, NULL);
 }
