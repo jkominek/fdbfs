@@ -59,11 +59,16 @@ extern int fileblock_prefix_length;
 extern int fileblock_key_length;
 extern int inode_key_length;
 extern int dirent_prefix_length;
-extern std::unordered_map<fuse_ino_t, uint64_t> lookup_counts;
+struct LookupState {
+  uint64_t count;
+  uint64_t generation;
+};
+extern std::unordered_map<fuse_ino_t, LookupState> lookup_counts;
 extern std::mutex lookup_counts_mutex;
 
-[[nodiscard]] extern bool increment_lookup_count(fuse_ino_t);
-[[nodiscard]] extern bool decrement_lookup_count(fuse_ino_t, uint64_t);
+[[nodiscard]] extern std::optional<uint64_t> increment_lookup_count(fuse_ino_t);
+[[nodiscard]] extern std::optional<uint64_t> decrement_lookup_count(fuse_ino_t,
+                                                                    uint64_t);
 [[nodiscard]] extern bool lookup_count_nonzero(fuse_ino_t);
 
 struct fdbfs_filehandle {

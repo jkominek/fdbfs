@@ -45,47 +45,56 @@ struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *fi) {
 // TODO if the FDB networking became multithreaded, or
 // we could otherwise process responses in a multithreaded
 // fashion, we'd need locking.
-std::unordered_map<fuse_ino_t, uint64_t> lookup_counts;
+std::unordered_map<fuse_ino_t, LookupState> lookup_counts;
 std::mutex lookup_counts_mutex;
+uint64_t next_lookup_generation = 1;
 
-// if this returns true, the caller is obligated to
-// insert a record adjacent to the inode to keep it alive
-bool increment_lookup_count(fuse_ino_t ino) {
+// if this returns a value, the caller is obligated to
+// publish a use record with the generation.
+std::optional<uint64_t> increment_lookup_count(fuse_ino_t ino) {
   std::lock_guard<std::mutex> guard(lookup_counts_mutex);
   auto it = lookup_counts.find(ino);
   if (it != lookup_counts.end()) {
     // present
-    it->second += 1;
-    return false;
+    it->second.count += 1;
+    return std::nullopt;
   } else {
     // not present
-    lookup_counts[ino] = 1;
-    return true;
+    if (next_lookup_generation == 0) {
+      // wrapped around and reserved value reached. continuing would
+      // permit generation reuse and stale clears.
+      std::terminate();
+    }
+    const uint64_t generation = next_lookup_generation;
+    next_lookup_generation += 1;
+    lookup_counts[ino] = LookupState{1, generation};
+    return generation;
   }
 }
 
-// if this returns true, the caller is obligated to
-// remove the inode adjacent record that keeps it alive
-bool decrement_lookup_count(fuse_ino_t ino, uint64_t count) {
+// if this returns a value, the caller is obligated to
+// clear the inode-adjacent record iff generation matches.
+std::optional<uint64_t> decrement_lookup_count(fuse_ino_t ino, uint64_t count) {
   std::lock_guard<std::mutex> guard(lookup_counts_mutex);
   auto it = lookup_counts.find(ino);
   if (it == lookup_counts.end()) {
     // well. oops. kernel knew about something that isn't there.
-    return false;
+    return std::nullopt;
   } else {
-    if (count >= it->second) {
+    if (count >= it->second.count) {
       // TODO this should be logged, as it suggests that our
       // counts fell out of sync somehow
-      it->second = 0;
+      it->second.count = 0;
     } else
-      it->second -= count;
-    if (it->second > 0) {
+      it->second.count -= count;
+    if (it->second.count > 0) {
       // still cached, nothing to do.
-      return false;
+      return std::nullopt;
     } else {
+      const uint64_t generation = it->second.generation;
       // we're forgetting about this inode, drop it
       lookup_counts.erase(ino);
-      return true;
+      return generation;
     }
   }
 }
@@ -97,8 +106,8 @@ bool lookup_count_nonzero(fuse_ino_t ino) {
     // record isn't present, so it's zero
     return false;
   } else {
-    // record is present, so it's nonzero
-    return true;
+    // record is present, so count should be nonzero
+    return it->second.count > 0;
   }
 }
 

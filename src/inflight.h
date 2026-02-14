@@ -120,11 +120,12 @@ struct AttemptState_markused : public AttemptState {};
 
 class Inflight_markused : public InflightWithAttempt<AttemptState_markused> {
 public:
-  Inflight_markused(fuse_req_t, fuse_ino_t, unique_transaction);
+  Inflight_markused(fuse_req_t, fuse_ino_t, uint64_t, unique_transaction);
   InflightCallback issue();
 
 private:
   const fuse_ino_t ino;
+  const uint64_t generation;
 };
 
 // TODO consider how we might pull the FUSE bits out of these,
@@ -180,7 +181,8 @@ public:
   static InflightAction Entry(std::shared_ptr<struct fuse_entry_param> e) {
     return InflightAction(true, false, false, [e](Inflight *i) {
       fuse_reply_entry(i->req, e.get());
-      if (increment_lookup_count(e->ino)) {
+      auto generation = increment_lookup_count(e->ino);
+      if (generation.has_value()) {
         // sigh. launch another background transaction to insert the
         // use record.
 
@@ -191,7 +193,9 @@ public:
         // it would require slightly(?!) exotic circumstances to break
         // correctness; transactionally this can't fail, as it is
         // a single set.
-        (new Inflight_markused(i->req, e->ino, make_transaction()))->start();
+        (new Inflight_markused(i->req, e->ino, *generation,
+                               make_transaction()))
+            ->start();
       }
     });
   }

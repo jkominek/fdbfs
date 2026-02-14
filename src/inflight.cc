@@ -121,7 +121,8 @@ void Inflight::start() {
 }
 
 InflightAction Inflight::commit(InflightCallback cb) {
-  wait_on_future(fdb_transaction_commit(transaction.get()), attempt_state().commit);
+  wait_on_future(fdb_transaction_commit(transaction.get()),
+                 attempt_state().commit);
   return InflightAction::BeginWait(cb);
 }
 
@@ -196,8 +197,8 @@ void Inflight::begin_wait() {
     fail_inflight(this, EIO, "tried to start waiting on empty future queue");
     return;
   }
-  if (fdb_future_set_callback(attempt_state().future_queue.front(), fdbfs_error_checker,
-                              static_cast<void *>(this))) {
+  if (fdb_future_set_callback(attempt_state().future_queue.front(),
+                              fdbfs_error_checker, static_cast<void *>(this))) {
     // we don't have a way to deal with this, so destroy the
     // transaction so that nothing leaks. ideally we'd notify
     // fuse at this point that the operation is dead.
@@ -283,9 +284,10 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p) {
 // Inflight_markused
 
 Inflight_markused::Inflight_markused(fuse_req_t req, fuse_ino_t ino,
+                                     uint64_t generation,
                                      unique_transaction transaction)
     : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
-      ino(ino) {
+      ino(ino), generation(generation) {
   // we're taking place after fuse has already received the
   // real response. it doesn't care what we have to say, now.
   suppress_errors = true;
@@ -293,18 +295,16 @@ Inflight_markused::Inflight_markused(fuse_req_t req, fuse_ino_t ino,
 
 InflightCallback Inflight_markused::issue() {
   auto key = pack_inode_use_key(ino);
-  uint8_t b = 0;
-  if (!lookup_count_nonzero(ino)) {
-    // do we need to do anything else here?
-    return InflightAction::Ignore;
-  }
+  const uint64_t generation_le = htole64(generation);
   // TODO we should check to make sure the inode still exists
   // as part of this transaction. if it doesn't exist, we should
   // call fuse_lowlevel_notify_inval_inode. *** that function can
   // block until other operations complete!!! *** so if we call it
   // from within an fdb callback handler, we're deadlocked. don't do
   // that.
-  fdb_transaction_set(transaction.get(), key.data(), key.size(), &b, 1);
+  fdb_transaction_atomic_op(transaction.get(), key.data(), key.size(),
+                            reinterpret_cast<const uint8_t *>(&generation_le),
+                            sizeof(generation_le), FDB_MUTATION_TYPE_MAX);
   wait_on_future(fdb_transaction_commit(transaction.get()), a().commit);
   return InflightAction::Ignore;
 }

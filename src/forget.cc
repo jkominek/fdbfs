@@ -20,31 +20,39 @@
  *************************************************************
  */
 struct AttemptState_forget : public AttemptState {};
+struct ForgetEntry {
+  fuse_ino_t ino;
+  uint64_t generation;
+};
 
 class Inflight_forget : public InflightWithAttempt<AttemptState_forget> {
 public:
-  Inflight_forget(fuse_req_t, std::vector<fuse_ino_t>, unique_transaction);
+  Inflight_forget(fuse_req_t, std::vector<ForgetEntry>, unique_transaction);
   InflightCallback issue();
 
 private:
-  const std::vector<fuse_ino_t> inos;
+  const std::vector<ForgetEntry> entries;
 };
 
-Inflight_forget::Inflight_forget(fuse_req_t req, std::vector<fuse_ino_t> inos,
+Inflight_forget::Inflight_forget(fuse_req_t req,
+                                 std::vector<ForgetEntry> entries,
                                  unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
-      inos(std::move(inos)) {}
+    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+      entries(std::move(entries)) {}
 
 InflightCallback Inflight_forget::issue() {
-  for (auto it = inos.cbegin(); it != inos.cend(); it++) {
-    auto key = pack_inode_use_key(*it);
-
-    // TODO this has a problem if fuse tells us to forget this
-    // inode, and then while this clear transaction is inflight,
-    // fuse looks up the inode again. that lookup will attempt to
-    // reinsert the use record. whether this clear or that insert
-    // happens first can't be determined by anything we've yet done.
-    fdb_transaction_clear(transaction.get(), key.data(), key.size());
+  for (const auto &entry : entries) {
+    const auto key = pack_inode_use_key(entry.ino);
+    const uint64_t generation_le = htole64(entry.generation);
+    // NOTE this is still a sort of optimized version. really we want
+    // to remove any use record OLDER than the generation we've been told
+    // to remove. but that requires a round trip. so we'll leave this
+    // as the compare and clear for now, on the theory that we might just
+    // develop a better way of dealing with this in the future.
+    fdb_transaction_atomic_op(transaction.get(), key.data(), key.size(),
+                              reinterpret_cast<const uint8_t *>(&generation_le),
+                              sizeof(generation_le),
+                              FDB_MUTATION_TYPE_COMPARE_AND_CLEAR);
   }
 
   wait_on_future(fdb_transaction_commit(transaction.get()), a().commit);
@@ -53,11 +61,12 @@ InflightCallback Inflight_forget::issue() {
 
 extern "C" void fdbfs_forget(fuse_req_t req, fuse_ino_t ino, uint64_t ncount) {
   // we've only got to issue an fdb transaction if decrement says so
-  if (decrement_lookup_count(ino, ncount)) {
-    std::vector<fuse_ino_t> inos(1);
-    inos[0] = ino;
+  auto generation = decrement_lookup_count(ino, ncount);
+  if (generation.has_value()) {
+    std::vector<ForgetEntry> entries(1);
+    entries[0] = ForgetEntry{ino, *generation};
     Inflight_forget *inflight =
-        new Inflight_forget(req, inos, make_transaction());
+        new Inflight_forget(req, std::move(entries), make_transaction());
     inflight->start();
   } else {
     fuse_reply_none(req);
@@ -66,17 +75,19 @@ extern "C" void fdbfs_forget(fuse_req_t req, fuse_ino_t ino, uint64_t ncount) {
 
 extern "C" void fdbfs_forget_multi(fuse_req_t req, size_t count,
                                    struct fuse_forget_data *forgets) {
-  std::vector<fuse_ino_t> inos;
-  inos.reserve(count);
+  std::vector<ForgetEntry> entries;
+  entries.reserve(count);
   for (size_t i = 0; i < count; i++) {
-    if (decrement_lookup_count(forgets[i].ino, forgets[i].nlookup)) {
-      inos.push_back(forgets[i].ino);
+    auto generation =
+        decrement_lookup_count(forgets[i].ino, forgets[i].nlookup);
+    if (generation.has_value()) {
+      entries.push_back(ForgetEntry{forgets[i].ino, *generation});
     }
   }
-  if (inos.size() > 0) {
+  if (entries.size() > 0) {
     // we've got to issue forgets
     Inflight_forget *inflight =
-        new Inflight_forget(req, inos, make_transaction());
+        new Inflight_forget(req, std::move(entries), make_transaction());
     inflight->start();
   } else {
     fuse_reply_none(req);
