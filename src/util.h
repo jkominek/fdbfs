@@ -49,6 +49,8 @@
 
 #define MAXFILENAMELEN 255
 
+#define PID_LENGTH 16
+
 // will be filled out before operation begins
 extern FDBDatabase *database;
 // must NOT be modified after it is set.
