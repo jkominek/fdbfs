@@ -1,5 +1,9 @@
 Overall key scheme:
 
+\xff space is banned everywhere, so that we can always increment the final
+byte to produce the end of a subspace range, without having to worry about
+rollover.
+
 === inodes ===
 prefix 'i' inode              -> contains basic attrs and symlink info
 
@@ -26,6 +30,10 @@ prefix 'p' pid -> ProcessTableEntry
 The \x00 space for locks is adjacent to the inodes, because in a mandatory
 locking system, you'd need to read them along with the inode. So we'll
 store them for a single range read.
+
+\x01 space is for the use records. The value is an integer counter ('generation')
+shared across the process. Currently it's set with FDB_MUTATION_TYPE_MAX, and
+removed with FDB_MUTATION_TYPE_COMPARE_AND_CLEAR.
 
 The \xfe space is to register common partial updates to an inode. For
 instance, when reading blocks with noatime, the only thing you need to

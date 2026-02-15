@@ -103,7 +103,7 @@ InflightAction Inflight_listxattr::process() {
   }
 
   const FDBKeyValue *lastkv = kvs + (kvcount - 1);
-  const auto stop = pack_xattr_key(ino, "\xFF");
+  const auto stop = pack_xattr_node_subspace_range(ino).second;
 
   // apparently, there is more, and we've got space
   wait_on_future(fdb_transaction_get_range(
@@ -117,8 +117,7 @@ InflightAction Inflight_listxattr::process() {
 }
 
 InflightCallback Inflight_listxattr::issue() {
-  const auto start = pack_xattr_key(ino, "");
-  const auto stop = pack_xattr_key(ino, "\xFF");
+  const auto [start, stop] = pack_xattr_node_subspace_range(ino);
   a().buf.clear();
   a().buf.reserve(maxsize);
 
@@ -180,7 +179,7 @@ InflightAction Inflight_listxattr_count::process() {
   // we'd effectively be reissuing the initial fdb_transaction_get_range)
   if (more && (kvcount > 0)) {
     const FDBKeyValue *lastkv = kvs + (kvcount - 1);
-    const auto stop = pack_xattr_key(ino, "\xFF");
+    const auto stop = pack_xattr_node_subspace_range(ino).second;
     wait_on_future(fdb_transaction_get_range(
                        transaction.get(), lastkv->key, lastkv->key_length, 0, 1,
                        stop.data(), stop.size(), 0, 1, 0, 0,
@@ -194,8 +193,7 @@ InflightAction Inflight_listxattr_count::process() {
 }
 
 InflightCallback Inflight_listxattr_count::issue() {
-  const auto start = pack_xattr_key(ino, "");
-  const auto stop = pack_xattr_key(ino, "\xFF");
+  const auto [start, stop] = pack_xattr_node_subspace_range(ino);
   a().accumulated_size = 0;
 
   wait_on_future(
