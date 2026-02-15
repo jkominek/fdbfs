@@ -14,6 +14,7 @@
 #include <time.h>
 
 #include "inflight.h"
+#include "liveness.h"
 #include "util.h"
 
 /*************************************************************
@@ -65,59 +66,123 @@ static void process_gc_candidate(const std::vector<uint8_t> &garbage_key) {
   auto stop = pack_inode_key(ino);
   stop.push_back(INODE_USE_PREFIX + 1);
 
-  // scan the use range of the inode
-  // TODO we actually need to pull all use records, and compare
-  // them against the known live processes
-  const FDBKeyValue *kvs;
-  int kvcount;
-  fdb_bool_t more;
-  {
-    // NOTE the below is a little uncertain because the liveness checker
-    //      isn't quite finalized.
-    // TODO scan ALL of the use records using small batches, looping if
-    //      more==true, because we _expect_ that the record is still in use
-    //      and that there won't be anything to do.
-    // - if we encounter one which corresponds to a known live host,
-    //   then the GC record is valid and we can return early.
-    // - if we encounter ones which correspond to known DEAD hosts,
-    //   then we can delete them and save ourselves effort in the future.
-    // - at the end, if there are no use records (either because it started
-    //   like that, or because we deleted them all), then we can process
-    //   the record as though it isn't in use (because it isn't)
-    // - if we're left with use records where we're not sure if the host
-    //   is alive or dead, then we should pester the liveness checker to
-    //   figure that out.
-    auto f = wrap_future(fdb_transaction_get_range(
-        t.get(), start.data(), start.size(), 0, 1, stop.data(), stop.size(), 0,
-        1, 1, 0, FDB_STREAMING_MODE_SMALL, 0, 0, 0));
-    if (fdb_future_block_until_ready(f.get()) ||
-        fdb_future_get_keyvalue_array(f.get(), &kvs, &kvcount, &more) ||
-        kvcount > 0) {
-      // use records present (or error), nothing to do.
-#if DEBUG
-      printf("nothing to do on the garbage inode\n");
-#endif
-      return;
+  bool scan_complete = false;
+  bool scan_error = false;
+  bool inode_in_use = false;
+  std::vector<std::vector<uint8_t>> dead_use_keys;
+  std::vector<uint8_t> cursor = start;
+  bool cursor_exclusive = false;
+  while (true) {
+    const FDBKeyValue *kvs;
+    int kvcount;
+    fdb_bool_t more;
+
+    // despite having the code to do a loop, the expected situation
+    // is that there will be one or two use records, and they'll both
+    // be for live hosts. so instead of WANT_ALL we use SMALL. if the
+    // servers give us a partial result, that's fine, the first key
+    // will probably tell us what we need to know.
+    unique_future f;
+    if (cursor_exclusive) {
+      f = wrap_future(fdb_transaction_get_range(
+          t.get(), FDB_KEYSEL_FIRST_GREATER_THAN(cursor.data(), cursor.size()),
+          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop.data(), stop.size()), 64, 0,
+          FDB_STREAMING_MODE_SMALL, 0, 0, 0));
+    } else {
+      f = wrap_future(fdb_transaction_get_range(
+          t.get(),
+          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(cursor.data(), cursor.size()),
+          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop.data(), stop.size()), 64, 0,
+          FDB_STREAMING_MODE_SMALL, 0, 0, 0));
     }
+    if (fdb_future_block_until_ready(f.get()) ||
+        fdb_future_get_keyvalue_array(f.get(), &kvs, &kvcount, &more)) {
+      scan_error = true;
+      break;
+    }
+
+    for (int i = 0; i < kvcount; i++) {
+      const FDBKeyValue &kv = kvs[i];
+
+      if ((kv.key_length <= inode_key_length) ||
+          (kv.key[inode_key_length] != INODE_USE_PREFIX)) {
+        // malformed use record key in use range. be conservative.
+        inode_in_use = true;
+        continue;
+      }
+
+      const int pid_offset = inode_key_length + 1;
+      if (kv.key_length <= pid_offset) {
+        // missing pid suffix.
+        inode_in_use = true;
+        continue;
+      }
+
+      std::vector<uint8_t> key(kv.key, kv.key + kv.key_length);
+      std::vector<uint8_t> use_pid(kv.key + pid_offset, kv.key + kv.key_length);
+      switch (classify_pid(use_pid)) {
+      case PidLiveness::Dead:
+        dead_use_keys.push_back(std::move(key));
+        break;
+      case PidLiveness::Alive:
+      case PidLiveness::Unknown:
+      default:
+        inode_in_use = true;
+        break;
+      }
+    }
+
+    if (!more) {
+      scan_complete = true;
+      break;
+    }
+
+    if (kvcount > 0) {
+      const FDBKeyValue &kv = kvs[kvcount - 1];
+      cursor.assign(kv.key, kv.key + kv.key_length);
+      cursor_exclusive = true;
+    } else {
+      // partial scan with no keys returned; don't treat as complete.
+      scan_complete = false;
+      break;
+    }
+  }
+
+  if (scan_error) {
+    // don't risk erasing anything if there has been an error
+    return;
+  }
+
+  for (const auto &key : dead_use_keys) {
+    fdb_transaction_clear(t.get(), key.data(), key.size());
   }
 
   // it shouldn't be possible for this to be true, but if it is, that's
   // a problem.
   if (lookup_count_nonzero(ino)) {
-    // we've started using the inode
-    // TODO we're in a very weird situation, we've somehow recently
-    // started locally using an inode for which there are no use records
-    // despite the fact that it's been waiting for garbage collection.
+    // we've started using the inode; do not erase it.
+    inode_in_use = true;
+  }
+
+  if (!scan_complete || inode_in_use) {
+    // still in use (or uncertain), but clear any dead-host use records.
+    if (dead_use_keys.empty()) {
+      return;
+    }
+    auto f = wrap_future(fdb_transaction_commit(t.get()));
+    const fdb_error_t wait_err = fdb_future_block_until_ready(f.get());
+    (void)wait_err;
     return;
   }
 
-  // no usage, erase it.
+  // no usage and scan is complete, erase it.
 #if DEBUG
   printf("cleaning garbage inode\n");
 #endif
   fdb_transaction_clear(t.get(), garbage_key.data(), garbage_key.size());
   // NOTE we could be paranoid and fetch the inode and doublecheck that
-  // nlinks==0 and there are no dirents
+  // nlinks==0. but what if nlinks>0 where's the dirent? almost need to
+  // add it to /lost+found or something
   erase_inode(t.get(), ino);
 
   auto f = wrap_future(fdb_transaction_commit(t.get()));

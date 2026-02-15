@@ -90,10 +90,18 @@ static PidScanResult scan_pid_table() {
     int kvcount;
     fdb_bool_t more;
 
-    auto f = wrap_future(fdb_transaction_get_range(
-        t.get(), cursor.data(), cursor.size(), cursor_exclusive ? 0 : 1,
-        cursor_exclusive ? 1 : 0, stop.data(), stop.size(), 1, 0, 0, 0,
-        FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0));
+    unique_future f;
+    if (cursor_exclusive) {
+      f = wrap_future(fdb_transaction_get_range(
+          t.get(), FDB_KEYSEL_FIRST_GREATER_THAN(cursor.data(), cursor.size()),
+          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop.data(), stop.size()), 0, 0,
+          FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0));
+    } else {
+      f = wrap_future(fdb_transaction_get_range(
+          t.get(), FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(cursor.data(), cursor.size()),
+          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop.data(), stop.size()), 0, 0,
+          FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0));
+    }
     fdb_error_t err = fdb_future_block_until_ready(f.get());
     if (err != 0) {
       return result;
