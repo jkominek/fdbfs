@@ -162,6 +162,7 @@ static void merge_pid_table_scan(const std::vector<RawPidRecord> &records,
                                  bool complete_scan,
                                  const struct timespec &scan_boottime) {
   const size_t pid_prefix_length = pack_pid_key({}).size();
+  const size_t pid_key_length = pid_prefix_length + PID_LENGTH;
 
   // this lock is (part of) why we separate this function from the scan
   // we don't want to hold it while we're doing an extended scan of the
@@ -171,8 +172,8 @@ static void merge_pid_table_scan(const std::vector<RawPidRecord> &records,
   const uint64_t scan_epoch = observed_pid_scan_epoch;
 
   for (const auto &record : records) {
-    if (record.key.size() < pid_prefix_length) {
-      // malformed key in pid space, ignore it.
+    if (record.key.size() != pid_key_length) {
+      // malformed or non-base key in pid space, ignore it.
       continue;
     }
     std::vector<uint8_t> observed_pid(record.key.begin() + pid_prefix_length,
@@ -502,8 +503,8 @@ bool start_liveness(struct fuse_session *se) {
 
   pid.clear();
 
-  // fill a 128-bit pid from the kernel RNG.
-  pid.resize(16);
+  // fill PID_LENGTH bytes from the kernel RNG.
+  pid.resize(PID_LENGTH);
   size_t bytes_read = 0;
   while (bytes_read < pid.size()) {
     const ssize_t n =
