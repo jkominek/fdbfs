@@ -154,14 +154,13 @@ InflightAction Inflight_mknod::postverification() {
     return InflightAction::Abort(EIO);
 
   return commit([&]() {
-    auto e = std::make_unique<struct fuse_entry_param>();
-    bzero(e.get(), sizeof(struct fuse_entry_param));
-    e->ino = a().ino;
-    e->generation = 1;
-    e->attr = a().attr;
-    e->attr_timeout = 0.01;
-    e->entry_timeout = 0.01;
-    return InflightAction::Entry(std::move(e));
+    struct fuse_entry_param e{};
+    e.ino = a().ino;
+    e.generation = 1;
+    e.attr = a().attr;
+    e.attr_timeout = 0.01;
+    e.entry_timeout = 0.01;
+    return InflightAction::Entry(e);
   });
 }
 

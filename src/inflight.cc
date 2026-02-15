@@ -283,28 +283,49 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p) {
 
 // Inflight_markused
 
-Inflight_markused::Inflight_markused(fuse_req_t req, fuse_ino_t ino,
-                                     uint64_t generation,
+Inflight_markused::Inflight_markused(fuse_req_t req, uint64_t generation,
+                                     struct fuse_entry_param entry,
                                      unique_transaction transaction)
     : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
-      ino(ino), generation(generation) {
-  // we're taking place after fuse has already received the
-  // real response. it doesn't care what we have to say, now.
-  suppress_errors = true;
-}
+      generation(generation), entry(entry) {}
 
 InflightCallback Inflight_markused::issue() {
-  auto key = pack_inode_use_key(ino);
+  auto inode_key = pack_inode_key(entry.ino);
+  wait_on_future(fdb_transaction_get(transaction.get(), inode_key.data(),
+                                     inode_key.size(), 0),
+                 a().inode_fetch);
+  return std::bind(&Inflight_markused::check_inode, this);
+}
+
+InflightAction Inflight_markused::check_inode() {
+  fdb_bool_t present = 0;
+  const uint8_t *val = nullptr;
+  int vallen = 0;
+  fdb_error_t err =
+      fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
+  if (err)
+    return InflightAction::FDBError(err);
+
+  if (!present) {
+    (void)decrement_lookup_count(entry.ino, 1);
+    return InflightAction::Abort(EIO);
+  }
+
+  auto use_key = pack_inode_use_key(entry.ino);
   const uint64_t generation_le = htole64(generation);
-  // TODO we should check to make sure the inode still exists
-  // as part of this transaction. if it doesn't exist, we should
-  // call fuse_lowlevel_notify_inval_inode. *** that function can
-  // block until other operations complete!!! *** so if we call it
-  // from within an fdb callback handler, we're deadlocked. don't do
-  // that.
-  fdb_transaction_atomic_op(transaction.get(), key.data(), key.size(),
+  fdb_transaction_atomic_op(transaction.get(), use_key.data(), use_key.size(),
                             reinterpret_cast<const uint8_t *>(&generation_le),
                             sizeof(generation_le), FDB_MUTATION_TYPE_MAX);
-  wait_on_future(fdb_transaction_commit(transaction.get()), a().commit);
-  return InflightAction::Ignore;
+  return commit(std::bind(&Inflight_markused::reply_entry, this));
+}
+
+InflightAction Inflight_markused::reply_entry() {
+  if (fuse_reply_entry(req, &entry) < 0) {
+    // if reply failed, kernel won't hold a reference for this lookup.
+    auto generation_to_clear = decrement_lookup_count(entry.ino, 1);
+    if (generation_to_clear.has_value()) {
+      best_effort_clear_inode_use_record(entry.ino, *generation_to_clear);
+    }
+  }
+  return InflightAction::Ignore();
 }

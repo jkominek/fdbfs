@@ -69,18 +69,9 @@ Inflight_setattr::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
 InflightAction Inflight_setattr::commit_cb() {
   auto open_reply = std::get_if<SuccessReplyOpen>(&success_reply);
   if (open_reply != nullptr) {
-    // NOTE this needs to be kept in sync with code in fdbfs_open
     // we copy fi because success_reply is const
     struct fuse_file_info fi = open_reply->fi;
-    struct fdbfs_filehandle *fh = new fdbfs_filehandle;
-    fh->atime_update_needed = false;
-#ifdef O_NOATIME
-    fh->atime = ((fi.flags & O_NOATIME) == 0);
-#else
-    fh->atime = true;
-#endif
-    *(extract_fdbfs_filehandle(&fi)) = fh;
-    return InflightAction::Open(fi);
+    return InflightAction::Open(ino, fi);
   }
   struct stat newattr{};
   pack_inode_record_into_stat(a().inode, newattr);

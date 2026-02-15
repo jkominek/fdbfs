@@ -1,6 +1,7 @@
 #include "util.h"
 #include "liveness.h" // manages pid
 
+#include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <strings.h>
@@ -38,6 +39,52 @@ struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *fi) {
   static_assert(sizeof(fi->fh) >= sizeof(struct fdbfs_filehandle *),
                 "FUSE File handle can't hold a pointer to our structure");
   return reinterpret_cast<struct fdbfs_filehandle **>(&(fi->fh));
+}
+
+int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
+                           struct fuse_file_info *fi) {
+  struct fdbfs_filehandle *fh = new fdbfs_filehandle;
+  fh->atime_update_needed = false;
+#ifdef O_NOATIME
+  fh->atime = ((fi->flags & O_NOATIME) == 0);
+#else
+  fh->atime = true;
+#endif
+  *(extract_fdbfs_filehandle(fi)) = fh;
+
+  auto generation = increment_lookup_count(ino);
+  // open should only arrive for an inode that was already looked up.
+  assert(!generation.has_value());
+
+  if (fuse_reply_open(req, fi) < 0) {
+    // release won't be called if open failed.
+    delete fh;
+
+    auto clear_generation = decrement_lookup_count(ino, 1);
+    // paired decrement should never drop to zero under the same invariant.
+    assert(!clear_generation.has_value());
+    return -1;
+  }
+  return 0;
+}
+
+void best_effort_clear_inode_use_record(fuse_ino_t ino, uint64_t generation) {
+  auto result = run_sync_transaction<int>([ino, generation](FDBTransaction *t) {
+    const auto key = pack_inode_use_key(ino);
+    const uint64_t generation_le = htole64(generation);
+    fdb_transaction_atomic_op(t, key.data(), key.size(),
+                              reinterpret_cast<const uint8_t *>(&generation_le),
+                              sizeof(generation_le),
+                              FDB_MUTATION_TYPE_COMPARE_AND_CLEAR);
+    return 0;
+  });
+  if (!result.has_value()) {
+    // NOTE this is a leaked record. we're going to need to implement
+    // some kind of online fsck that can scan all inodes for lingering
+    // junk.
+    debug_print("failed to clear inode use record for %li: %s\n", ino,
+                fdb_get_error(result.error()));
+  }
 }
 
 // tracks kernel cache of lookups, so we can avoid fdb

@@ -116,16 +116,22 @@ private:
   }
 };
 
-struct AttemptState_markused : public AttemptState {};
+struct AttemptState_markused : public AttemptState {
+  unique_future inode_fetch;
+};
 
 class Inflight_markused : public InflightWithAttempt<AttemptState_markused> {
 public:
-  Inflight_markused(fuse_req_t, fuse_ino_t, uint64_t, unique_transaction);
+  Inflight_markused(fuse_req_t, uint64_t, struct fuse_entry_param,
+                    unique_transaction);
   InflightCallback issue();
 
 private:
-  const fuse_ino_t ino;
+  InflightAction check_inode();
+  InflightAction reply_entry();
+
   const uint64_t generation;
+  const struct fuse_entry_param entry;
 };
 
 // TODO consider how we might pull the FUSE bits out of these,
@@ -178,24 +184,17 @@ public:
     return InflightAction(true, false, false,
                           [err](Inflight *i) { fuse_reply_err(i->req, err); });
   }
-  static InflightAction Entry(std::shared_ptr<struct fuse_entry_param> e) {
+  static InflightAction Entry(struct fuse_entry_param e) {
     return InflightAction(true, false, false, [e](Inflight *i) {
-      fuse_reply_entry(i->req, e.get());
-      auto generation = increment_lookup_count(e->ino);
+      auto generation = increment_lookup_count(e.ino);
       if (generation.has_value()) {
-        // sigh. launch another background transaction to insert the
-        // use record.
-
-        // TODO this is a potentially correctness-breaking
-        // optimization/simplification, in that this write could
-        // fail, despite us thinking that the inode will continue to
-        // exist as long as we want it.
-        // it would require slightly(?!) exotic circumstances to break
-        // correctness; transactionally this can't fail, as it is
-        // a single set.
-        (new Inflight_markused(i->req, e->ino, *generation,
-                               make_transaction()))
+        // first lookup for this inode in local kernel cache; publish
+        // a use record before replying to fuse.
+        (new Inflight_markused(i->req, *generation, e, make_transaction()))
             ->start();
+      } else {
+        // already known locally; no new use record needed.
+        fuse_reply_entry(i->req, &e);
       }
     });
   }
@@ -204,17 +203,9 @@ public:
       fuse_reply_attr(i->req, &attr, 0.0);
     });
   }
-  static InflightAction Open(struct fuse_file_info fi) {
-    return InflightAction(true, false, false, [fi](Inflight *i) mutable {
-      if (fuse_reply_open(i->req, &fi) < 0) {
-        // NOTE while simple, this should be kept in sync with
-        // the tail end of fdbfs_open
-
-        // release won't be called if open failed.
-        auto f = extract_fdbfs_filehandle(&fi);
-        if ((f != nullptr) && (*f != nullptr))
-          delete *f;
-      }
+  static InflightAction Open(fuse_ino_t ino, struct fuse_file_info fi) {
+    return InflightAction(true, false, false, [ino, fi](Inflight *i) mutable {
+      (void)reply_open_with_handle(i->req, ino, &fi);
     });
   }
   static InflightAction Buf(std::vector<uint8_t> buf, int actual_size = -1) {
