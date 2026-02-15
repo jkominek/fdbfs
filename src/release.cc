@@ -25,5 +25,10 @@ extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
                               struct fuse_file_info *fi) {
   delete *(extract_fdbfs_filehandle(fi));
 
+  auto generation = decrement_lookup_count(ino, 1);
+  if (generation.has_value()) {
+    best_effort_clear_inode_use_record(ino, *generation);
+  }
+
   fuse_reply_err(req, 0);
 }

@@ -131,14 +131,13 @@ InflightAction Inflight_link::check() {
     return InflightAction::Abort(EIO);
 
   return commit([&]() {
-    auto e = std::make_unique<struct fuse_entry_param>();
-    bzero(e.get(), sizeof(struct fuse_entry_param));
-    e->ino = ino;
-    e->generation = 1;
-    pack_inode_record_into_stat(a().inode, e->attr);
-    e->attr_timeout = 0.01;
-    e->entry_timeout = 0.01;
-    return InflightAction::Entry(std::move(e));
+    struct fuse_entry_param e{};
+    e.ino = ino;
+    e.generation = 1;
+    pack_inode_record_into_stat(a().inode, e.attr);
+    e.attr_timeout = 0.01;
+    e.entry_timeout = 0.01;
+    return InflightAction::Entry(e);
   });
 }
 

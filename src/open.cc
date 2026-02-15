@@ -19,7 +19,7 @@
  *
  * REAL PLAN?
  * set up our internal structure.
- * in-use records are handled by lookup & forget, not open & release.
+ * update local lookup/use tracking in open/release too.
  */
 
 extern "C" void fdbfs_open(fuse_req_t req, fuse_ino_t ino,
@@ -30,27 +30,9 @@ extern "C" void fdbfs_open(fuse_req_t req, fuse_ino_t ino,
     return;
   }
 
-  struct fdbfs_filehandle *fh = new fdbfs_filehandle;
-  fh->atime_update_needed = false;
-
-  *(extract_fdbfs_filehandle(fi)) = fh;
-
   // TODO any other flags we're passed that we could handle?
   if (fi->flags & O_APPEND) {
     // TODO need to test to see how this behaves with writes
   }
-#ifdef O_NOATIME
-  if (fi->flags & O_NOATIME) {
-    fh->atime = false;
-  } else {
-    fh->atime = true;
-  }
-#else
-  fh->atime = true;
-#endif
-  if (fuse_reply_open(req, fi) < 0) {
-    // had some sort of error, so release will never be called, we'll leak
-    // memory if we don't clean up right now.
-    delete fh;
-  }
+  (void)reply_open_with_handle(req, ino, fi);
 }

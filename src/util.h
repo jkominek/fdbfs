@@ -98,6 +98,10 @@ struct fdbfs_filehandle {
 };
 [[nodiscard]] extern struct fdbfs_filehandle **
 extract_fdbfs_filehandle(struct fuse_file_info *);
+extern int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
+                                  struct fuse_file_info *fi);
+extern void best_effort_clear_inode_use_record(fuse_ino_t ino,
+                                                uint64_t generation);
 
 [[nodiscard]] extern std::vector<uint8_t>
 pack_inode_key(fuse_ino_t, char = INODE_PREFIX,
