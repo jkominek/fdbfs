@@ -109,8 +109,7 @@ InflightAction Inflight_readdir::callback() {
 }
 
 InflightCallback Inflight_readdir::issue() {
-  const auto start = pack_dentry_key(ino, "");
-  const auto stop = pack_dentry_key(ino, "\xFF");
+  const auto [start, stop] = pack_dentry_subspace_range(ino);
 
   int offset = off;
   int limit = 10; // we should try to guess this better

@@ -61,10 +61,7 @@ static void process_gc_candidate(const std::vector<uint8_t> &garbage_key) {
   printf("found garbage inode %lx\n", ino);
 #endif
 
-  auto start = pack_inode_key(ino);
-  start.push_back(INODE_USE_PREFIX);
-  auto stop = pack_inode_key(ino);
-  stop.push_back(INODE_USE_PREFIX + 1);
+  auto [start, stop] = pack_inode_use_subspace_range(ino);
 
   bool scan_complete = false;
   bool scan_error = false;
@@ -193,10 +190,7 @@ static void process_gc_candidate(const std::vector<uint8_t> &garbage_key) {
 
 void *garbage_scanner(void *ignore) {
   struct timespec ts;
-  auto gc_start_key = key_prefix;
-  gc_start_key.push_back(GARBAGE_PREFIX);
-  auto gc_stop_key = key_prefix;
-  gc_stop_key.push_back(GARBAGE_PREFIX + 1);
+  auto [gc_start_key, gc_stop_key] = pack_garbage_subspace_range();
   std::vector<uint8_t> last_key = gc_start_key;
 #if DEBUG
   printf("gc starting\n");

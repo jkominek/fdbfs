@@ -153,10 +153,8 @@ InflightAction Inflight_setattr::callback() {
     if (static_cast<uint64_t>(attr.st_size) < a().inode.size()) {
       // they want to truncate the file. compute what blocks
       // need to be cleared.
-      auto start_block_key =
-          pack_fileblock_key(ino, (attr.st_size / BLOCKSIZE));
-      // we'll just clear to the last possible block
-      auto stop_block_key = pack_fileblock_key(ino, UINT64_MAX);
+      const auto [start_block_key, stop_block_key] = pack_fileblock_span_range(
+          ino, (attr.st_size / BLOCKSIZE), UINT64_MAX);
       fdb_transaction_clear_range(transaction.get(), start_block_key.data(),
                                   start_block_key.size(), stop_block_key.data(),
                                   stop_block_key.size());
@@ -165,9 +163,8 @@ InflightAction Inflight_setattr::callback() {
         // we should have a partially truncated block
         // we're responsible for reading it and writing a corrected version
         a().partial_block_idx = attr.st_size / BLOCKSIZE;
-        auto start_key = pack_fileblock_key(ino, a().partial_block_idx);
-        auto stop_key = start_key;
-        stop_key.push_back(0xff);
+        const auto [start_key, stop_key] =
+            pack_fileblock_single_range(ino, a().partial_block_idx);
         wait_on_future(
             fdb_transaction_get_range(
                 transaction.get(),

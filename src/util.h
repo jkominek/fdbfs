@@ -132,6 +132,22 @@ template <typename T> void print_bytes(const T *str, int strlength) {
   }
 }
 using range_keys = std::pair<std::vector<uint8_t>, std::vector<uint8_t>>;
+[[nodiscard]] extern std::vector<uint8_t>
+prefix_range_end(const std::vector<uint8_t> &);
+[[nodiscard]] extern range_keys pack_pid_subspace_range();
+[[nodiscard]] extern range_keys
+pack_pid_record_range(const std::vector<uint8_t> &);
+[[nodiscard]] extern range_keys pack_garbage_subspace_range();
+[[nodiscard]] extern range_keys pack_inode_subspace_range(fuse_ino_t);
+[[nodiscard]] extern range_keys pack_inode_use_subspace_range(fuse_ino_t);
+[[nodiscard]] extern range_keys pack_inode_metadata_and_use_range(fuse_ino_t);
+[[nodiscard]] extern range_keys pack_fileblock_single_range(fuse_ino_t,
+                                                            uint64_t);
+[[nodiscard]] extern range_keys pack_fileblock_span_range(fuse_ino_t, uint64_t,
+                                                          uint64_t);
+[[nodiscard]] extern range_keys pack_dentry_subspace_range(fuse_ino_t);
+[[nodiscard]] extern range_keys pack_xattr_node_subspace_range(fuse_ino_t);
+[[nodiscard]] extern range_keys pack_xattr_data_subspace_range(fuse_ino_t);
 [[nodiscard]] range_keys offset_size_to_range_keys(fuse_ino_t, size_t, size_t);
 
 [[nodiscard]] extern bool

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <strings.h>
 #include <time.h>
+#include <tuple>
 
 #ifdef LZ4_BLOCK_COMPRESSION
 #include <lz4.h>
@@ -246,6 +247,118 @@ std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino,
   return key;
 }
 
+std::vector<uint8_t> prefix_range_end(const std::vector<uint8_t> &prefix) {
+  auto stop = prefix;
+  for (size_t i = stop.size(); i > 0; --i) {
+    if (stop[i - 1] != 0xff) {
+      stop[i - 1] += 1;
+      stop.resize(i);
+      return stop;
+    }
+  }
+  // our keys always start with key_prefix, so this should be unreachable.
+  std::terminate();
+}
+
+range_keys pack_pid_subspace_range() {
+  auto start = key_prefix;
+  start.push_back(PID_PREFIX);
+  auto stop = key_prefix;
+  stop.push_back(PID_PREFIX + 1);
+  return {start, stop};
+}
+
+range_keys pack_pid_record_range(const std::vector<uint8_t> &record_pid) {
+  auto start = pack_pid_key(record_pid);
+  return {start, prefix_range_end(start)};
+}
+
+range_keys pack_garbage_subspace_range() {
+  auto start = key_prefix;
+  start.push_back(GARBAGE_PREFIX);
+  auto stop = key_prefix;
+  stop.push_back(GARBAGE_PREFIX + 1);
+  return {start, stop};
+}
+
+range_keys pack_inode_subspace_range(fuse_ino_t ino) {
+  auto start = pack_inode_key(ino);
+  std::vector<uint8_t> stop;
+  if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+    stop = pack_inode_key(ino + 1);
+  } else {
+    stop = key_prefix;
+    stop.push_back(INODE_PREFIX + 1);
+  }
+  return {start, stop};
+}
+
+range_keys pack_inode_use_subspace_range(fuse_ino_t ino) {
+  auto start = pack_inode_key(ino);
+  start.push_back(INODE_USE_PREFIX);
+  auto stop = pack_inode_key(ino);
+  stop.push_back(INODE_USE_PREFIX + 1);
+  return {start, stop};
+}
+
+range_keys pack_inode_metadata_and_use_range(fuse_ino_t ino) {
+  auto start = pack_inode_key(ino);
+  auto stop = start;
+  stop.push_back(0x02);
+  return {start, stop};
+}
+
+/* Even if we want to fetch a single block, we've got to use a range,
+ * because we encode information like (optional) compression algorithm
+ * or parity block info at the tail end of the key.
+ */
+range_keys pack_fileblock_single_range(fuse_ino_t ino, uint64_t block) {
+  auto start = pack_fileblock_key(ino, block);
+  std::vector<uint8_t> stop;
+  if (block != std::numeric_limits<uint64_t>::max()) {
+    stop = pack_fileblock_key(ino, block + 1);
+  } else if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+    stop = pack_fileblock_key(ino + 1, 0);
+  } else {
+    stop = key_prefix;
+    stop.push_back(DATA_PREFIX + 1);
+  }
+  return {start, stop};
+}
+
+range_keys pack_fileblock_span_range(fuse_ino_t ino, uint64_t start_block,
+                                     uint64_t stop_block) {
+  auto start = pack_fileblock_key(ino, start_block);
+  std::vector<uint8_t> stop;
+  if (stop_block != std::numeric_limits<uint64_t>::max()) {
+    stop = pack_fileblock_key(ino, stop_block + 1);
+  } else if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+    stop = pack_fileblock_key(ino + 1, 0);
+  } else {
+    stop = key_prefix;
+    stop.push_back(DATA_PREFIX + 1);
+  }
+  return {start, stop};
+}
+
+range_keys pack_dentry_subspace_range(fuse_ino_t ino) {
+  auto start = pack_dentry_key(ino, "");
+  auto stop = pack_inode_key(ino, DENTRY_PREFIX + 1);
+  return {start, stop};
+}
+
+range_keys pack_xattr_node_subspace_range(fuse_ino_t ino) {
+  auto start = pack_xattr_key(ino);
+  auto stop = pack_inode_key(ino, XATTR_NODE_PREFIX + 1);
+  return {start, stop};
+}
+
+range_keys pack_xattr_data_subspace_range(fuse_ino_t ino) {
+  auto start = pack_xattr_data_key(ino);
+  auto stop = pack_inode_key(ino, XATTR_DATA_PREFIX + 1);
+  return {start, stop};
+}
+
 void print_key(std::vector<uint8_t> v) {
   printf("%zu ", v.size());
   for (std::vector<uint8_t>::const_iterator i = v.begin(); i != v.end(); ++i)
@@ -308,10 +421,7 @@ void pack_inode_record_into_stat(const INodeRecord &inode, struct stat &attr) {
 range_keys offset_size_to_range_keys(fuse_ino_t ino, size_t off, size_t size) {
   uint64_t start_block = off >> BLOCKBITS;
   uint64_t stop_block = ((off + size - 1) >> BLOCKBITS);
-  auto start = pack_fileblock_key(ino, start_block);
-  auto stop = pack_fileblock_key(ino, stop_block);
-  stop.push_back(0xff);
-  return std::pair(start, stop);
+  return pack_fileblock_span_range(ino, start_block, stop_block);
 }
 
 bool filename_length_check(fuse_req_t req, const char *name, size_t maxlength) {
@@ -356,37 +466,38 @@ void update_directory_times(FDBTransaction *transaction, INodeRecord &inode) {
 
 void erase_inode(FDBTransaction *transaction, fuse_ino_t ino) {
   // inode data
-  auto key_start = pack_inode_key(ino);
-  auto key_stop = key_start;
-  key_stop.push_back('\xff');
-  fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
-                              key_stop.data(), key_stop.size());
+  {
+    auto [key_start, key_stop] = pack_inode_subspace_range(ino);
+    fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
+                                key_stop.data(), key_stop.size());
+  }
 
-  // TODO be clever and only isse these clears based on inode type
+  // TODO be clever and only issue these clears based on inode type
+
   // file data
-  key_start = pack_fileblock_key(ino, 0);
-  key_stop = pack_fileblock_key(ino, UINT64_MAX);
-  key_stop.push_back('\xff');
-  fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
-                              key_stop.data(), key_stop.size());
-
+  {
+    auto [key_start, key_stop] = pack_fileblock_span_range(ino, 0, UINT64_MAX);
+    fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
+                                key_stop.data(), key_stop.size());
+  }
   // directory listing
-  key_start = pack_dentry_key(ino, "");
-  key_stop = pack_dentry_key(ino, "\xff");
-  fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
-                              key_stop.data(), key_stop.size());
-
+  {
+    auto [key_start, key_stop] = pack_dentry_subspace_range(ino);
+    fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
+                                key_stop.data(), key_stop.size());
+  }
   // xattr nodes
-  key_start = pack_xattr_key(ino, "");
-  key_stop = pack_xattr_key(ino, "\xff");
-  fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
-                              key_stop.data(), key_stop.size());
-
+  {
+    auto [key_start, key_stop] = pack_xattr_node_subspace_range(ino);
+    fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
+                                key_stop.data(), key_stop.size());
+  }
   // xattr data
-  key_start = pack_xattr_data_key(ino, "");
-  key_stop = pack_xattr_data_key(ino, "\xff");
-  fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
-                              key_stop.data(), key_stop.size());
+  {
+    auto [key_start, key_stop] = pack_xattr_data_subspace_range(ino);
+    fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
+                                key_stop.data(), key_stop.size());
+  }
 }
 
 inline void sparsify(const uint8_t *block, size_t *write_size) {

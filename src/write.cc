@@ -218,11 +218,8 @@ InflightCallback Inflight_write::issue() {
         a().inode_fetch);
   }
 
-  const auto conflict_start_key = pack_fileblock_key(ino, off / BLOCKSIZE);
-  auto conflict_stop_key =
-      pack_fileblock_key(ino, (off + buffer.size()) / BLOCKSIZE);
-  // go past the end of the useful stop fileblock's subspace
-  conflict_stop_key.push_back('\xff');
+  const auto [conflict_start_key, conflict_stop_key] = pack_fileblock_span_range(
+      ino, off / BLOCKSIZE, (off + buffer.size()) / BLOCKSIZE);
   // we're generating just a single conflict range for all of
   // the fileblocks that we're writing to: less to send across
   // the network, and for the resolver to process.
@@ -240,9 +237,7 @@ InflightCallback Inflight_write::issue() {
   // now, are we doing block-partial writes?
   if ((off % BLOCKSIZE) != 0) {
     const int start_block = off / BLOCKSIZE;
-    const auto start_key = pack_fileblock_key(ino, start_block);
-    auto stop_key = start_key;
-    stop_key.push_back(0xff);
+    const auto [start_key, stop_key] = pack_fileblock_single_range(ino, start_block);
     wait_on_future(
         fdb_transaction_get_range(
             transaction.get(),
@@ -262,9 +257,8 @@ InflightCallback Inflight_write::issue() {
     // if the block is identical to the start block, there's no
     // sense fetching and processing it twice.
     if ((!doing_start_block) || (stop_block != (off / BLOCKSIZE))) {
-      const auto start_key = pack_fileblock_key(ino, stop_block);
-      auto stop_key = start_key;
-      stop_key.push_back(0xff);
+      const auto [start_key, stop_key] =
+          pack_fileblock_single_range(ino, stop_block);
       wait_on_future(
           fdb_transaction_get_range(
               transaction.get(),

@@ -42,7 +42,7 @@ std::vector<uint8_t> pid;
 ProcessTableEntry pt_entry;
 struct fuse_session *fuse_session;
 pthread_t liveness_thread;
-bool terminate = true;
+std::atomic<bool> terminate = true;
 bool liveness_started = false;
 
 struct ObservedPidState {
@@ -93,9 +93,7 @@ static uint64_t elapsed_seconds(const struct timespec &start,
 }
 
 static PidScanResult scan_pid_table() {
-  const auto start = pack_pid_key({});
-  auto stop = start;
-  stop.push_back('\xff');
+  const auto [start, stop] = pack_pid_subspace_range();
 
   PidScanResult result;
   std::vector<uint8_t> cursor = start;
@@ -428,7 +426,7 @@ void send_pt_entry(bool startup) {
 
       if (!present) {
         // our entry in the table was removed.
-        terminate = true;
+        terminate.store(true, std::memory_order_relaxed);
 
         // kill everything in-flight
         shut_it_down();
@@ -478,7 +476,7 @@ void *liveness_manager(void *ignore) {
   refresh_observed_pid_table();
   reap_stale_pid_entries();
 
-  while (!terminate) {
+  while (!terminate.load(std::memory_order_relaxed)) {
     struct timespec sleep;
     sleep.tv_sec = liveness_refresh_sec;
     sleep.tv_nsec = liveness_refresh_nsec;
@@ -523,10 +521,10 @@ bool start_liveness(struct fuse_session *se) {
   // in every namespace.
   fuse_session = se;
 
-  terminate = false;
+  terminate.store(false, std::memory_order_relaxed);
 
   if (pthread_create(&liveness_thread, NULL, liveness_manager, NULL)) {
-    terminate = true;
+    terminate.store(true, std::memory_order_relaxed);
     fuse_session = NULL;
     pid.clear();
     return true;
@@ -543,16 +541,14 @@ void terminate_liveness() {
   }
   liveness_started = false;
 
-  terminate = true;
+  terminate.store(true, std::memory_order_relaxed);
 
   // wait until the liveness_manager is done
   const std::unique_lock<std::mutex> lock(manager_running);
 
   // clear our PID record
   std::function<int(FDBTransaction *)> f = [](FDBTransaction *t) {
-    const auto start = pack_pid_key(pid);
-    auto stop = start;
-    stop.push_back('\xff');
+    const auto [start, stop] = pack_pid_record_range(pid);
     fdb_transaction_clear_range(t, start.data(), start.size(), stop.data(),
                                 stop.size());
     return 0;

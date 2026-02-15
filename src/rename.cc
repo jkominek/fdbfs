@@ -64,8 +64,8 @@ Inflight_rename::Inflight_rename(fuse_req_t req, fuse_ino_t oldparent,
                                  std::string newname, int flags,
                                  unique_transaction transaction)
     : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
-      oldparent(oldparent), oldname(std::move(oldname)),
-      newparent(newparent), newname(std::move(newname)), flags(flags) {}
+      oldparent(oldparent), oldname(std::move(oldname)), newparent(newparent),
+      newname(std::move(newname)), flags(flags) {}
 
 InflightAction Inflight_rename::complicated() {
   /**
@@ -182,8 +182,8 @@ InflightAction Inflight_rename::check() {
     int vallen;
     fdb_error_t err;
 
-    err = fdb_future_get_value(a().origin_lookup.get(), &present, &val,
-                               &vallen);
+    err =
+        fdb_future_get_value(a().origin_lookup.get(), &present, &val, &vallen);
     if (err)
       return InflightAction::FDBError(err);
     if (present)
@@ -252,7 +252,8 @@ InflightAction Inflight_rename::check() {
     }
   } else if (flags == RENAME_EXCHANGE) {
     // need to both exist
-    if ((!a().origin_dirent.has_inode()) || (!a().destination_dirent.has_inode())) {
+    if ((!a().origin_dirent.has_inode()) ||
+        (!a().destination_dirent.has_inode())) {
       return InflightAction::Abort(ENOENT);
     }
   }
@@ -291,7 +292,8 @@ InflightAction Inflight_rename::check() {
     // take the old directory entry contents, repack it.
     // and save it into the new directory entry
     if (!fdb_set_protobuf(transaction.get(),
-                          pack_dentry_key(newparent, newname), a().origin_dirent))
+                          pack_dentry_key(newparent, newname),
+                          a().origin_dirent))
       return InflightAction::Abort(EIO);
   }
 #ifdef RENAME_EXCHANGE
@@ -326,9 +328,8 @@ InflightAction Inflight_rename::check() {
        * The destination is a directory. We'll need to know
        * if it is empty before we can remove it.
        */
-      const auto key_start = pack_dentry_key(a().destination_dirent.inode(), "");
-      const auto key_stop =
-          pack_dentry_key(a().destination_dirent.inode(), "\xff");
+      const auto [key_start, key_stop] =
+          pack_dentry_subspace_range(a().destination_dirent.inode());
 
       wait_on_future(fdb_transaction_get_range(
                          transaction.get(), key_start.data(), key_start.size(),
@@ -341,10 +342,8 @@ InflightAction Inflight_rename::check() {
      * Regardless of what the destination is, we need to
      * fetch its inode and use records.
      */
-    const auto key_start = pack_inode_key(a().destination_dirent.inode());
-    auto key_stop = pack_inode_key(a().destination_dirent.inode());
-    // this ensures we cover the use records, located at \x01
-    key_stop.push_back('\x02');
+    const auto [key_start, key_stop] =
+        pack_inode_metadata_and_use_range(a().destination_dirent.inode());
 
     wait_on_future(fdb_transaction_get_range(
                        transaction.get(), key_start.data(), key_start.size(), 0,

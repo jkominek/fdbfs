@@ -236,11 +236,7 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
       // dirents in the directory.
 
       {
-        const auto start = pack_inode_key(a().ino);
-        auto stop = pack_inode_key(a().ino);
-        // based on our KV layout, this will fetch all of the metadata
-        // about the directory except the extended attributes.
-        stop.push_back('\x02');
+        const auto [start, stop] = pack_inode_metadata_and_use_range(a().ino);
 
         wait_on_future(fdb_transaction_get_range(
                            transaction.get(), start.data(), start.size(), 0, 1,
@@ -254,8 +250,7 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
       // possible directory entry, and one for after the last
       // possible, and then get the range, limit 1.
       {
-        const auto start = pack_dentry_key(a().ino, "");
-        const auto stop = pack_dentry_key(a().ino, "\xff");
+        const auto [start, stop] = pack_dentry_subspace_range(a().ino);
 
         wait_on_future(
             fdb_transaction_get_range(
@@ -279,11 +274,7 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
       fdb_transaction_clear(transaction.get(), dirent_key.data(),
                             dirent_key.size());
 
-      const auto start = pack_inode_key(a().ino);
-      auto stop = pack_inode_key(a().ino);
-      // based on our KV layout, this will fetch all of the metadata
-      // about the file except the extended attributes.
-      stop.push_back('\x02');
+      const auto [start, stop] = pack_inode_metadata_and_use_range(a().ino);
 
       // we'll use this to decrement st_nlink, check if it has reached zero
       // and if it has, and proceed with the plan.
