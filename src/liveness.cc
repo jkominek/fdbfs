@@ -60,6 +60,7 @@ std::map<std::vector<uint8_t>, struct timespec> bogon_pids;
 uint64_t observed_pid_scan_epoch = 0;
 std::optional<struct timespec> observed_pid_last_scan_complete_boottime;
 std::atomic<uint64_t> observed_pid_consecutive_scan_failures = 0;
+constexpr time_t stale_pid_reap_after_sec = 5 * 60;
 constexpr time_t bogon_dead_after_sec = 5 * 60;
 constexpr time_t complete_scan_fresh_sec = 10;
 
@@ -67,11 +68,29 @@ struct RawPidRecord {
   std::vector<uint8_t> key;
   std::vector<uint8_t> value;
 };
+struct StalePidCandidate {
+  std::vector<uint8_t> observed_pid;
+  uint64_t expected_counter;
+};
+
 struct PidScanResult {
   std::vector<RawPidRecord> records;
   bool complete = false;
   struct timespec scan_boottime = {};
 };
+
+static uint64_t elapsed_seconds(const struct timespec &start,
+                                const struct timespec &end) {
+  time_t sec = end.tv_sec - start.tv_sec;
+  long nsec = end.tv_nsec - start.tv_nsec;
+  if (nsec < 0) {
+    sec -= 1;
+  }
+  if (sec <= 0) {
+    return 0;
+  }
+  return static_cast<uint64_t>(sec);
+}
 
 static PidScanResult scan_pid_table() {
   const auto start = pack_pid_key({});
@@ -98,7 +117,8 @@ static PidScanResult scan_pid_table() {
           FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0));
     } else {
       f = wrap_future(fdb_transaction_get_range(
-          t.get(), FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(cursor.data(), cursor.size()),
+          t.get(),
+          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(cursor.data(), cursor.size()),
           FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop.data(), stop.size()), 0, 0,
           FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0));
     }
@@ -216,6 +236,104 @@ static void refresh_observed_pid_table() {
   }
 }
 
+static bool reap_pid_if_still_stale(const std::vector<uint8_t> &observed_pid,
+                                    uint64_t expected_counter) {
+  auto maybe = run_sync_transaction<bool>([&](FDBTransaction *t) -> bool {
+    const auto key = pack_pid_key(observed_pid);
+    unique_future f =
+        wrap_future(fdb_transaction_get(t, key.data(), key.size(), 0));
+    fdb_error_t err = fdb_future_block_until_ready(f.get());
+    if (err) {
+      throw err;
+    }
+
+    fdb_bool_t present;
+    const uint8_t *value;
+    int value_length;
+    err = fdb_future_get_value(f.get(), &present, &value, &value_length);
+    if (err) {
+      throw err;
+    }
+    if (!present) {
+      return false;
+    }
+
+    ProcessTableEntry entry;
+    if (!entry.ParsePartialFromArray(value, value_length) ||
+        !entry.IsInitialized() || (entry.pid().size() != observed_pid.size()) ||
+        (memcmp(entry.pid().data(), observed_pid.data(), observed_pid.size()) !=
+         0)) {
+      return false;
+    }
+
+    // liveness_counter() > expected_counter would probably be okay,
+    // but i'd rather be paranoid. if it is somehow going backwards,
+    // then we should at least give it a little more time to sort out
+    // its situation.
+    if (entry.liveness_counter() != expected_counter) {
+      return false;
+    }
+
+    fdb_transaction_clear(t, key.data(), key.size());
+    return true;
+  });
+
+  if (!maybe.has_value()) {
+    return false;
+  }
+  return *maybe;
+}
+
+static void reap_stale_pid_entries() {
+  struct timespec now = {};
+  clock_gettime(CLOCK_BOOTTIME, &now);
+
+  std::vector<StalePidCandidate> candidates;
+  {
+    std::lock_guard<std::mutex> guard(observed_pid_table_mutex);
+
+    const bool complete_scan_recent =
+        observed_pid_last_scan_complete_boottime.has_value() &&
+        (elapsed_seconds(*observed_pid_last_scan_complete_boottime, now) <=
+         static_cast<uint64_t>(complete_scan_fresh_sec));
+    const bool complete_scan_healthy =
+        complete_scan_recent && (observed_pid_consecutive_scan_failures.load(
+                                     std::memory_order_relaxed) == 0);
+    if (!complete_scan_healthy) {
+      return;
+    }
+
+    for (const auto &[observed_pid, state] : observed_pid_table) {
+      if (state.malformed_entry || !state.entry.has_value()) {
+        continue;
+      }
+      if (state.missing_since_boottime.has_value()) {
+        // already gone from the table
+        continue;
+      }
+      if (!state.max_counter_seen.has_value() ||
+          !state.max_counter_increase_boottime.has_value()) {
+        continue;
+      }
+
+      if (elapsed_seconds(*state.max_counter_increase_boottime, now) >=
+          static_cast<uint64_t>(stale_pid_reap_after_sec)) {
+        candidates.push_back(
+            StalePidCandidate{observed_pid, *state.max_counter_seen});
+      }
+    }
+  }
+
+  for (const auto &candidate : candidates) {
+    if (reap_pid_if_still_stale(candidate.observed_pid,
+                                candidate.expected_counter)) {
+      std::lock_guard<std::mutex> guard(observed_pid_table_mutex);
+      observed_pid_table.erase(candidate.observed_pid);
+      bogon_pids.erase(candidate.observed_pid);
+    }
+  }
+}
+
 PidLiveness classify_pid(const std::vector<uint8_t> &candidate_pid) {
   if (candidate_pid == pid) {
     return PidLiveness::Alive;
@@ -223,19 +341,6 @@ PidLiveness classify_pid(const std::vector<uint8_t> &candidate_pid) {
 
   struct timespec now = {};
   clock_gettime(CLOCK_BOOTTIME, &now);
-
-  auto elapsed_seconds = [](const struct timespec &start,
-                            const struct timespec &end) -> uint64_t {
-    time_t sec = end.tv_sec - start.tv_sec;
-    long nsec = end.tv_nsec - start.tv_nsec;
-    if (nsec < 0) {
-      sec -= 1;
-    }
-    if (sec <= 0) {
-      return 0;
-    }
-    return static_cast<uint64_t>(sec);
-  };
 
   std::optional<struct timespec> last_complete_scan;
   bool observed_found = false;
@@ -370,6 +475,7 @@ void *liveness_manager(void *ignore) {
 
   send_pt_entry(true);
   refresh_observed_pid_table();
+  reap_stale_pid_entries();
 
   while (!terminate) {
     struct timespec sleep;
@@ -382,6 +488,7 @@ void *liveness_manager(void *ignore) {
 
     send_pt_entry(false);
     refresh_observed_pid_table();
+    reap_stale_pid_entries();
   }
 
   return NULL;
