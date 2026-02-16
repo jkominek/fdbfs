@@ -161,22 +161,19 @@ bool Inflight::run_current_callback() {
 }
 
 void Inflight::future_ready(FDBFuture *f) {
-  if (!attempt_state().future_queue.empty()) {
-    // only the first future should call us
-    FDBFuture *next = attempt_state().future_queue.front();
-    attempt_state().future_queue.pop();
-    if (next != f) {
-      // TODO error? or something? what?
-      // somehow a future we hadn't set a callback
-      // on has called us.
-    }
-    // skip over any futures that are already ready
-    while ((!attempt_state().future_queue.empty()) &&
-           fdb_future_is_ready(attempt_state().future_queue.front()))
-      attempt_state().future_queue.pop();
-  } else {
-    // hmm. wtf? we were called by FDB, but we're not
-    // aware of having any futures we're waiting on.
+  assert(!attempt_state().future_queue.empty());
+  if (attempt_state().future_queue.empty()) {
+    fail_inflight(this, EIO, "future_ready called with empty queue");
+    return;
+  }
+
+  // only the first future should call us
+  FDBFuture *next = attempt_state().future_queue.front();
+  attempt_state().future_queue.pop();
+  assert(next == f);
+  if (next != f) {
+    fail_inflight(this, EIO, "future_ready called for unexpected future");
+    return;
   }
 
   if (attempt_state().future_queue.empty()) {
@@ -272,7 +269,7 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p) {
                                 static_cast<void *>(inflight))) {
       // hosed, we don't currently have a way to save this transaction.
       // TODO let fuse know the operation is dead.
-      fail_inflight(inflight, EIO, "failed to set an FDB callback");
+      fail_inflight(inflight, EIO, "fdb_future_set_callback returned an error");
     }
     return;
   }
