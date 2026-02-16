@@ -110,6 +110,7 @@ void *network_runner(void *ignore) {
 
 struct fdbfs_options {
   const char *key_prefix;
+  int buggify;
 };
 
 #define FDBFS_OPT(t, p) { t, offsetof(struct fdbfs_options, p), 1 }
@@ -117,6 +118,7 @@ struct fdbfs_options {
 static const struct fuse_opt fdbfs_option_spec[] = {
     FDBFS_OPT("--key-prefix=%s", key_prefix),
     FDBFS_OPT("-k %s", key_prefix),
+    FDBFS_OPT("--buggify", buggify),
     FUSE_OPT_END,
 };
 
@@ -128,7 +130,7 @@ int main(int argc, char *argv[]) {
   struct fuse_session *se;
   struct fuse_cmdline_opts opts;
   struct fuse_loop_config config;
-  struct fdbfs_options fdbfs_opts = {.key_prefix = NULL};
+  struct fdbfs_options fdbfs_opts = {.key_prefix = NULL, .buggify = 0};
   int err = -1;
   bool fdb_network_setup_done = false;
 
@@ -172,7 +174,9 @@ int main(int argc, char *argv[]) {
     printf("usage: %s [options] <mountpoint>\n\n", argv[0]);
     printf("fdbfs options:\n");
     printf("    --key-prefix=STR, -k STR   FoundationDB key prefix "
-           "(default: FS)\n\n");
+           "(default: FS)\n");
+    printf(
+        "    --buggify                  Enable FoundationDB client buggify\n\n");
     fuse_cmdline_help();
     fuse_lowlevel_help();
     err = 0;
@@ -214,6 +218,12 @@ int main(int argc, char *argv[]) {
   */
 
   if (fdb_select_api_version(FDB_API_VERSION)) {
+    err = 1;
+    goto unmount_session;
+  }
+
+  if (fdbfs_opts.buggify &&
+      fdb_network_set_option(FDB_NET_OPTION_CLIENT_BUGGIFY_ENABLE, NULL, 0)) {
     err = 1;
     goto unmount_session;
   }
