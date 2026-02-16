@@ -2,6 +2,14 @@
 
 echo user_allow_other | sudo tee -a /etc/fuse.conf
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+# reset fdbfs keyspace and recreate root inode/data fixture
+if ! (cd "$SCRIPT_DIR" && ./gen.py | fdbcli); then
+    echo failed to initialize FoundationDB contents via gen.py
+    exit 1
+fi
+
 rm -rf /tmp/fdb
 mkdir /tmp/fdb
 # we shouldn't see this after a mount

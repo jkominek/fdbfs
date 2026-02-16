@@ -10,7 +10,10 @@ import string
 #import lz4.block
 printable_bytes = b"""0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!"#$%&\'()*+,-./:;<=>?@[]^_`{|}~"""
 
+import sys
 prefix = b"FS"
+if len(sys.argv)>1:
+    prefix = sys.argv[1].encode('ascii')
 
 print("writemode on")
 print("begin")

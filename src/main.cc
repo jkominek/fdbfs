@@ -5,6 +5,7 @@
 #include <foundationdb/fdb_c.h>
 
 #include <assert.h>
+#include <stddef.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -107,6 +108,18 @@ void *network_runner(void *ignore) {
   return NULL;
 }
 
+struct fdbfs_options {
+  const char *key_prefix;
+};
+
+#define FDBFS_OPT(t, p) { t, offsetof(struct fdbfs_options, p), 1 }
+
+static const struct fuse_opt fdbfs_option_spec[] = {
+    FDBFS_OPT("--key-prefix=%s", key_prefix),
+    FDBFS_OPT("-k %s", key_prefix),
+    FUSE_OPT_END,
+};
+
 /* main is a mess.
  * TODO structure main more clearly, perhaps break things out
  */
@@ -115,16 +128,30 @@ int main(int argc, char *argv[]) {
   struct fuse_session *se;
   struct fuse_cmdline_opts opts;
   struct fuse_loop_config config;
+  struct fdbfs_options fdbfs_opts = {.key_prefix = NULL};
   int err = -1;
   bool fdb_network_setup_done = false;
 
   GOOGLE_PROTOBUF_VERIFY_VERSION;
 
-  // TODO key_prefix needs to be configurable, both
-  // to prevent key space conflicts, and to allow multiple
-  // filesystems in one database.
-  key_prefix.push_back('F');
-  key_prefix.push_back('S');
+  if (fuse_opt_parse(&args, &fdbfs_opts, fdbfs_option_spec, NULL) != 0) {
+    return 1;
+  }
+  const char *selected_key_prefix =
+      (fdbfs_opts.key_prefix == NULL) ? "FS" : fdbfs_opts.key_prefix;
+  if (selected_key_prefix[0] == '\0') {
+    fprintf(stderr, "fdbfs: --key-prefix must be non-empty\n");
+    err = 1;
+    goto shutdown_args;
+  }
+
+  key_prefix.clear();
+  key_prefix.insert(
+      key_prefix.end(),
+      reinterpret_cast<const uint8_t *>(selected_key_prefix),
+      reinterpret_cast<const uint8_t *>(selected_key_prefix) +
+          strlen(selected_key_prefix));
+
   inode_key_length = pack_inode_key(0).size();
   fileblock_prefix_length = inode_key_length;
   // careful, we might make this variable
@@ -143,6 +170,9 @@ int main(int argc, char *argv[]) {
 
   if (opts.show_help) {
     printf("usage: %s [options] <mountpoint>\n\n", argv[0]);
+    printf("fdbfs options:\n");
+    printf("    --key-prefix=STR, -k STR   FoundationDB key prefix "
+           "(default: FS)\n\n");
     fuse_cmdline_help();
     fuse_lowlevel_help();
     err = 0;
