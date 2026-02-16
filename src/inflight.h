@@ -86,6 +86,7 @@ private:
   std::unique_ptr<AttemptState> attempt;
   bool run_current_callback();
   void begin_wait();
+  bool retry_with_on_error(fdb_error_t err);
 
 #if DEBUG
   struct timespec clockstart;
@@ -150,8 +151,8 @@ public:
   }
   static InflightAction FDBError(fdb_error_t err) {
     if (fdb_error_predicate(FDB_ERROR_PREDICATE_RETRYABLE, err)) {
-      // can be retried, do the same thing as Restart
-      return InflightAction(false, false, true, [](Inflight *) {});
+      // retryable FDB errors must flow through fdb_transaction_on_error.
+      return InflightAction(false, false, false, [](Inflight *) {}, err);
     } else {
       // can't be retried, surface an error.
       return InflightAction(true, false, false, [](Inflight *i) {
@@ -241,14 +242,16 @@ public:
 
 protected:
   InflightAction(bool delete_this, bool begin_wait, bool restart,
-                 std::function<void(Inflight *)> perform)
+                 std::function<void(Inflight *)> perform,
+                 std::optional<fdb_error_t> retryable_err = std::nullopt)
       : delete_this(delete_this), begin_wait(begin_wait), restart(restart),
-        perform(std::move(perform)) {};
+        perform(std::move(perform)), retryable_err(retryable_err) {};
 
   bool delete_this = false;
   bool begin_wait = false;
   bool restart = false;
   std::function<void(Inflight *)> perform;
+  std::optional<fdb_error_t> retryable_err;
 
   friend class Inflight;
 };

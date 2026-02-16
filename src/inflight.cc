@@ -120,6 +120,31 @@ void Inflight::start() {
   begin_wait();
 }
 
+bool Inflight::retry_with_on_error(fdb_error_t err) {
+  // we're here because some Inflight subclass got an fdb_error_t
+  // from an FDB function and returned InflightAction::FDBError.
+  // then FDB said it was a retryable error, so now we've got to
+  // run on_error to either 1) wait (fdb controlled backoff) or
+  // 2) perhaps permanently fail
+  
+  FDBFuture *nextf = fdb_transaction_on_error(transaction.get(), err);
+  if (nextf == nullptr) {
+    fail_inflight(this, EIO, "fdb_transaction_on_error returned nullptr");
+    return false;
+  }
+
+  reset_attempt_state();
+  if (fdb_future_set_callback(nextf, fdbfs_error_processor,
+                              static_cast<void *>(this))) {
+    // Avoid leaking the on_error future when callback setup fails.
+    fdb_future_destroy(nextf);
+    fail_inflight(this, EIO, "fdb_future_set_callback returned an error");
+    return false;
+  }
+
+  return true;
+}
+
 InflightAction Inflight::commit(InflightCallback cb) {
   wait_on_future(fdb_transaction_commit(transaction.get()),
                  attempt_state().commit);
@@ -132,6 +157,13 @@ bool Inflight::run_current_callback() {
     attempt_state().cb = std::nullopt;
     InflightAction a = f();
     a.perform(this);
+
+    if (a.retryable_err.has_value()) {
+      if (!retry_with_on_error(*a.retryable_err)) {
+        return false;
+      }
+      return false;
+    }
 
     if (a.begin_wait) {
       begin_wait();
@@ -261,16 +293,7 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p) {
     // got an error during normal processing. foundationdb says
     // we should call _on_error on it, and maybe we'll get to
     // try again, and maybe we won't.
-    FDBFuture *nextf =
-        fdb_transaction_on_error(inflight->transaction.get(), err);
-
-    inflight->reset_attempt_state();
-    if (fdb_future_set_callback(nextf, fdbfs_error_processor,
-                                static_cast<void *>(inflight))) {
-      // hosed, we don't currently have a way to save this transaction.
-      // TODO let fuse know the operation is dead.
-      fail_inflight(inflight, EIO, "fdb_future_set_callback returned an error");
-    }
+    (void)inflight->retry_with_on_error(err);
     return;
   }
 
