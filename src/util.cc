@@ -281,6 +281,8 @@ range_keys pack_garbage_subspace_range() {
   return {start, stop};
 }
 
+// metadata keys for one inode (metadata, lock, use records).
+// [ pack_inode_key(ino), pack_inode_key(ino + 1) ) with max-ino fallback.
 range_keys pack_inode_subspace_range(fuse_ino_t ino) {
   auto start = pack_inode_key(ino);
   std::vector<uint8_t> stop;
@@ -341,21 +343,51 @@ range_keys pack_fileblock_span_range(fuse_ino_t ino, uint64_t start_block,
   return {start, stop};
 }
 
+// all directory-entry keys for one parent inode.
+// [ pack_inode_key(ino, DENTRY_PREFIX),
+//   pack_inode_key(ino + 1, DENTRY_PREFIX) ) with max-ino fallback.
 range_keys pack_dentry_subspace_range(fuse_ino_t ino) {
-  auto start = pack_dentry_key(ino, "");
-  auto stop = pack_inode_key(ino, DENTRY_PREFIX + 1);
+  auto start = pack_inode_key(ino, DENTRY_PREFIX);
+  std::vector<uint8_t> stop;
+  if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+    stop = pack_inode_key(ino + 1, DENTRY_PREFIX);
+  } else {
+    stop = key_prefix;
+    stop.push_back(DENTRY_PREFIX + 1);
+  }
+  assert(start < stop);
   return {start, stop};
 }
 
+// all xattr-node (name/value-pointer) keys for one inode.
+// [ pack_inode_key(ino, XATTR_NODE_PREFIX),
+//   pack_inode_key(ino + 1, XATTR_NODE_PREFIX) ) with max-ino fallback.
 range_keys pack_xattr_node_subspace_range(fuse_ino_t ino) {
-  auto start = pack_xattr_key(ino);
-  auto stop = pack_inode_key(ino, XATTR_NODE_PREFIX + 1);
+  auto start = pack_inode_key(ino, XATTR_NODE_PREFIX);
+  std::vector<uint8_t> stop;
+  if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+    stop = pack_inode_key(ino + 1, XATTR_NODE_PREFIX);
+  } else {
+    stop = key_prefix;
+    stop.push_back(XATTR_NODE_PREFIX + 1);
+  }
+  assert(start < stop);
   return {start, stop};
 }
 
+// all xattr-data payload keys for one inode.
+// [ pack_inode_key(ino, XATTR_DATA_PREFIX),
+//   pack_inode_key(ino + 1, XATTR_DATA_PREFIX) ) with max-ino fallback.
 range_keys pack_xattr_data_subspace_range(fuse_ino_t ino) {
-  auto start = pack_xattr_data_key(ino);
-  auto stop = pack_inode_key(ino, XATTR_DATA_PREFIX + 1);
+  auto start = pack_inode_key(ino, XATTR_DATA_PREFIX);
+  std::vector<uint8_t> stop;
+  if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+    stop = pack_inode_key(ino + 1, XATTR_DATA_PREFIX);
+  } else {
+    stop = key_prefix;
+    stop.push_back(XATTR_DATA_PREFIX + 1);
+  }
+  assert(start < stop);
   return {start, stop};
 }
 
