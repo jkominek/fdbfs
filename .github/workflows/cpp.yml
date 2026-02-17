@@ -18,9 +18,9 @@ jobs:
     - name: pip
       run: sudo env PATH=$PATH pip install zstd==1.5.7.3
     - name: fetch fdb
-      run: wget https://github.com/apple/foundationdb/releases/download/6.3.23/foundationdb-{clients,server}_6.3.23-1_amd64.deb
+      run: wget https://github.com/apple/foundationdb/releases/download/7.3.69/foundationdb-{clients,server}_7.3.69-1_amd64.deb
     - name: dpkg install
-      run: sudo dpkg -i foundationdb-*_6.*-1_amd64.deb
+      run: sudo dpkg -i foundationdb-*_7.*-1_amd64.deb
     - name: fdb setup
       run: sudo cp tests/foundationdb.conf /etc/foundationdb/ ; sudo systemctl restart foundationdb
     - name: meson

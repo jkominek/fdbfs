@@ -1,7 +1,7 @@
 
 #define FUSE_USE_VERSION 35
 #include <fuse_lowlevel.h>
-#define FDB_API_VERSION 630
+#define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
 #include <assert.h>
