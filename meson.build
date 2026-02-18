@@ -36,6 +36,26 @@ fs_exe = executable(
 
 catch2_dep = dependency('catch2-with-main', version : '>=3.4.0', required : true)
 
+pure_helpers_sources = files(
+  'tests/test_pure_helpers.cc',
+  'src/util.cc',
+)
+
+pure_helpers_exe = executable(
+  'fdbfs_pure_helpers_bin',
+  pure_helpers_sources,
+  generated,
+  dependencies : [catch2_dep] + deps,
+  include_directories : include_directories('src'),
+)
+
+test(
+  'fdbfs_pure_helpers',
+  pure_helpers_exe,
+  timeout : 60,
+  is_parallel : false,
+)
+
 test_sources = files(
   'tests/test_support.cc',
   'tests/test_file_io.cc',
@@ -80,6 +100,7 @@ test(
     'FDBFS_TEST_MATRIX=empty',
   ],
   timeout : 120,
+  is_parallel : false,
 )
 
 test(
@@ -91,6 +112,7 @@ test(
     'FDBFS_TEST_MATRIX=seeded',
   ],
   timeout : 300,
+  is_parallel : false,
 )
 
 # Optional: a quick “smoke” test label so you can run subset:

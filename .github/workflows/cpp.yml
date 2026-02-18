@@ -34,7 +34,7 @@ jobs:
     - name: meson integration tests
       id: meson_integration
       continue-on-error: true
-      run: meson test -C build --no-rebuild --print-errorlogs
+      run: meson test -C build --no-rebuild --print-errorlogs --maxfail 1
     - name: secfs.test
       id: secfs_test
       continue-on-error: true
