@@ -11,9 +11,6 @@ prefix 'i' inode \x00 pid1, anything -> info on a lock
 prefix 'i' inode \x00 pid2, anything -> info on a lock
 prefix 'i' inode \x01 pid1    -> per fuse-process use counter (64 bit LE)
 prefix 'i' inode \x01 pid2    -> per fuse-process use counter (64 bit LE)
-prefix 'i' inode \x02 xattr0  -> arbitrary number of extended attributes
-prefix 'i' inode \x02 xattr1
-prefix 'i' inode \x02 xattr2
 prefix 'i' inode \xfe inodeattr -> pseudo keys to indicate inode updates
 prefix 'd' inode filenameA-> dirents.
 prefix 'd' inode filenameB
@@ -24,8 +21,8 @@ prefix 'f' inode offset2 'z'\x01\x00 -> block compressed with whatever algorithm
 prefix 'f' inode offset3 'p'\x02\x00... -> key contains 512 bytes of parity for the block 
     there should be only one kv pair within a given offset(n) to offset(n+1)
     range.
-prefix 'p' pid -> ProcessTableEntry
-
+prefix 'x' inode xattrname -> XattrRecord (currently unused place for metadata)
+prefix 'X' inode xattrname -> exactly one block of raw data
 
 The \x00 space for locks is adjacent to the inodes, because in a mandatory
 locking system, you'd need to read them along with the inode. So we'll
@@ -51,8 +48,8 @@ prefix 'g' inode -> indicates that nlinks in the inode has gone to zero,
 		    cleared.
 
 === pid table ===
-prefix 'pl' pid1  -> status of a given fuse process
-prefix 'pl' pid2
+prefix 'p' pid1 -> ProcessTableEntry
+prefix 'p' pid2
 
 the status should include an incrementing counter as a heartbeat,
 and some host information. each process should update its heartbeat

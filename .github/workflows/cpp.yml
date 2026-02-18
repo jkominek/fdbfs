@@ -31,13 +31,14 @@ jobs:
       run: ./regen.sh
     - name: test.sh
       run: ./test.sh
+    - name: meson integration tests
+      id: meson_integration
+      continue-on-error: true
+      run: meson test -C build --no-rebuild --print-errorlogs
     - name: secfs.test
       id: secfs_test
       continue-on-error: true
       run: ./runsecfs.sh
-    - name: meson integration tests
-      id: meson_integration
-      run: meson test -C build fdbfs_integration --no-rebuild --print-errorlogs
     - name: upload integration artifacts
       if: ${{ always() }}
       uses: actions/upload-artifact@v4

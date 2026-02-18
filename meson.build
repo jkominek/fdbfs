@@ -46,6 +46,7 @@ test_sources = files(
   'tests/test_mkdir.cc',
   'tests/test_open.cc',
   'tests/test_readdir.cc',
+  'tests/test_rmdir.cc',
   'tests/test_readlink.cc',
   'tests/test_rename.cc',
   'tests/test_setattr.cc',
@@ -71,16 +72,25 @@ test_exe = executable(
 #
 # Pass it via an environment variable so your tests don't depend on CWD assumptions.
 test(
-  'fdbfs_integration',
+  'fdbfs_integration_empty',
   test_exe,
   env : [
     'FDBFS_FS_EXE=' + fs_exe.full_path(),
     'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+    'FDBFS_TEST_MATRIX=empty',
   ],
-  # Integration tests may be slower / occasionally need more time.
   timeout : 120,
-  # Optional: stop the test run after the first failing test case (Catch2 supports --abortx).
-  # args : ['--abortx', '1'],
+)
+
+test(
+  'fdbfs_integration_seeded',
+  test_exe,
+  env : [
+    'FDBFS_FS_EXE=' + fs_exe.full_path(),
+    'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+    'FDBFS_TEST_MATRIX=seeded',
+  ],
+  timeout : 300,
 )
 
 # Optional: a quick “smoke” test label so you can run subset:

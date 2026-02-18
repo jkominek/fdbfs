@@ -11,12 +11,17 @@
 #include <cstring>
 
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/statfs.h>
 #include <sys/wait.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -24,6 +29,16 @@
 namespace {
 
 constexpr long FUSE_SUPER_MAGIC = 0x65735546; // "eUsF"
+
+enum class DatasetProfile { Empty, Seeded };
+
+struct SeedConfig {
+  int depth = 2;
+  int entries_per_dir = 6;
+  int dirs_per_dir = 2;
+  size_t max_file_size = 5000;
+  uint64_t rng_seed = 0x6a09e667f3bcc909ULL;
+};
 
 std::string sanitize(std::string s) {
   for (char &c : s) {
@@ -84,7 +99,7 @@ void dump_tree(const fs::path &root, const fs::path &out) noexcept {
 }
 
 bool is_fuse_mounted(const fs::path &mnt) {
-  struct statfs s {};
+  struct statfs s{};
   if (::statfs(mnt.c_str(), &s) != 0) {
     return false;
   }
@@ -104,8 +119,7 @@ bool wait_for_mount(const fs::path &mnt, std::chrono::milliseconds timeout) {
 }
 
 int run_cmd_capture(const std::vector<std::string> &argv,
-                    const fs::path &stdout_path,
-                    const fs::path &stderr_path) {
+                    const fs::path &stdout_path, const fs::path &stderr_path) {
   pid_t pid = ::fork();
   if (pid < 0) {
     return -1;
@@ -136,6 +150,182 @@ int run_cmd_capture(const std::vector<std::string> &argv,
 
 bool exited_ok(int status) {
   return status >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+std::string profile_name(DatasetProfile p) {
+  switch (p) {
+  case DatasetProfile::Empty:
+    return "empty";
+  case DatasetProfile::Seeded:
+    return "seeded";
+  }
+  return "unknown";
+}
+
+std::vector<DatasetProfile> dataset_profiles_from_env() {
+  const char *raw = std::getenv("FDBFS_TEST_MATRIX");
+  if (!raw || raw[0] == '\0') {
+    return {DatasetProfile::Empty, DatasetProfile::Seeded};
+  }
+
+  std::vector<DatasetProfile> profiles;
+  std::stringstream ss(raw);
+  std::string token;
+  while (std::getline(ss, token, ',')) {
+    for (char &c : token) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (token == "empty") {
+      profiles.push_back(DatasetProfile::Empty);
+    } else if (token == "seeded") {
+      profiles.push_back(DatasetProfile::Seeded);
+    } else if (!token.empty()) {
+      throw std::runtime_error("unknown FDBFS_TEST_MATRIX token: " + token);
+    }
+  }
+  if (profiles.empty()) {
+    throw std::runtime_error("FDBFS_TEST_MATRIX selected no profiles");
+  }
+  return profiles;
+}
+
+void require_posix_success(int rc, const std::string &what) {
+  if (rc == 0) {
+    return;
+  }
+  throw std::runtime_error(what + " failed: " + std::strerror(errno));
+}
+
+void write_file_contents(const fs::path &path,
+                         const std::vector<uint8_t> &data) {
+  int fd = ::open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+  if (fd < 0) {
+    throw std::runtime_error("open(" + path.string() +
+                             ") failed: " + std::strerror(errno));
+  }
+
+  size_t off = 0;
+  while (off < data.size()) {
+    const ssize_t n = ::write(fd, data.data() + off, data.size() - off);
+    if (n < 0) {
+      const int saved = errno;
+      (void)::close(fd);
+      throw std::runtime_error("write(" + path.string() +
+                               ") failed: " + std::strerror(saved));
+    }
+    off += static_cast<size_t>(n);
+  }
+  require_posix_success(::close(fd), "close(" + path.string() + ")");
+}
+
+std::vector<uint8_t> generate_bytes(std::mt19937_64 &rng, size_t size) {
+  std::vector<uint8_t> data(size, 0);
+  std::uniform_int_distribution<int> mode_dist(0, 2);
+  const int mode = mode_dist(rng);
+
+  if (mode == 0) {
+    std::fill(data.begin(), data.end(), static_cast<uint8_t>('A'));
+  } else if (mode == 1) {
+    std::fill(data.begin(), data.end(), static_cast<uint8_t>(0));
+  } else {
+    std::uniform_int_distribution<int> byte_dist(0, 255);
+    for (auto &b : data) {
+      b = static_cast<uint8_t>(byte_dist(rng));
+    }
+  }
+
+  return data;
+}
+
+void maybe_set_random_xattrs(const fs::path &path, std::mt19937_64 &rng,
+                             uint64_t &name_counter) {
+  std::uniform_int_distribution<int> do_xattr(0, 1);
+  if (do_xattr(rng) == 0) {
+    return;
+  }
+
+  std::uniform_int_distribution<int> count_dist(1, 3);
+  std::uniform_int_distribution<int> len_dist(1, 64);
+  std::uniform_int_distribution<int> byte_dist(0, 255);
+  const int count = count_dist(rng);
+  for (int i = 0; i < count; i++) {
+    const std::string name =
+        "user.seed." + std::to_string(name_counter++) + "." + std::to_string(i);
+    const size_t value_len = static_cast<size_t>(len_dist(rng));
+    std::vector<uint8_t> value(value_len, 0);
+    for (auto &b : value) {
+      b = static_cast<uint8_t>(byte_dist(rng));
+    }
+    if (::setxattr(path.c_str(), name.c_str(), value.data(), value.size(), 0) !=
+        0) {
+      throw std::runtime_error("setxattr(" + path.string() + "," + name +
+                               ") failed: " + std::strerror(errno));
+    }
+  }
+}
+
+void populate_seeded_dataset(const fs::path &mnt, const SeedConfig &cfg) {
+  std::mt19937_64 rng(cfg.rng_seed);
+  uint64_t name_counter = 0;
+
+  const fs::path root = mnt / "__seed_data";
+  require_posix_success(::mkdir(root.c_str(), 0755),
+                        "mkdir(" + root.string() + ")");
+  maybe_set_random_xattrs(root, rng, name_counter);
+
+  std::vector<fs::path> current_level = {root};
+  std::uniform_int_distribution<int> kind_dist(0, 2); // file/symlink/fifo
+  std::uniform_int_distribution<size_t> file_size_dist(0, cfg.max_file_size);
+
+  for (int depth = 0; depth <= cfg.depth; depth++) {
+    std::vector<fs::path> next_level;
+    for (const auto &dir : current_level) {
+      std::vector<int> slots(cfg.entries_per_dir);
+      for (int i = 0; i < cfg.entries_per_dir; i++) {
+        slots[i] = i;
+      }
+      std::shuffle(slots.begin(), slots.end(), rng);
+
+      const int dir_slots =
+          (depth < cfg.depth) ? std::min(cfg.dirs_per_dir, cfg.entries_per_dir)
+                              : 0;
+
+      for (int idx = 0; idx < cfg.entries_per_dir; idx++) {
+        const int slot_id = slots[idx];
+        if (idx < dir_slots) {
+          const fs::path child = dir / ("d_" + std::to_string(depth) + "_" +
+                                        std::to_string(slot_id));
+          require_posix_success(::mkdir(child.c_str(), 0755),
+                                "mkdir(" + child.string() + ")");
+          maybe_set_random_xattrs(child, rng, name_counter);
+          next_level.push_back(child);
+          continue;
+        }
+
+        const int kind = kind_dist(rng);
+        if (kind == 0) {
+          const fs::path p = dir / ("f_" + std::to_string(depth) + "_" +
+                                    std::to_string(slot_id));
+          const size_t size = file_size_dist(rng);
+          write_file_contents(p, generate_bytes(rng, size));
+          maybe_set_random_xattrs(p, rng, name_counter);
+        } else if (kind == 1) {
+          const fs::path p = dir / ("l_" + std::to_string(depth) + "_" +
+                                    std::to_string(slot_id));
+          const std::string target =
+              "../missing-target-" + std::to_string(slot_id);
+          require_posix_success(::symlink(target.c_str(), p.c_str()),
+                                "symlink(" + p.string() + ")");
+        } else {
+          const fs::path p = dir / ("p_" + std::to_string(depth) + "_" +
+                                    std::to_string(slot_id));
+          require_posix_success(::mkfifo(p.c_str(), 0644),
+                                "mkfifo(" + p.string() + ")");
+        }
+      }
+    }
+    current_level = std::move(next_level);
+  }
 }
 
 std::string shell_quote(std::string_view s) {
@@ -300,23 +490,51 @@ void FdbfsEnv::capture_state(std::string_view why) noexcept {
 
 void scenario(const fs::path &fs_exe, const fs::path &source_dir,
               const std::function<void(FdbfsEnv &)> &fn) {
-  FdbfsEnv env("case");
-  static std::atomic<unsigned int> next_test_idx = 0;
-  const std::string key_prefix =
-      "t" + std::to_string(next_test_idx.fetch_add(1));
-  INFO("filesystem case dir: " << env.root.filename().string());
-  INFO("filesystem artifacts dir: " << env.artifacts.string());
-  INFO("filesystem key prefix: " << key_prefix);
-  env.append_op("using key_prefix=" + key_prefix);
-  reset_database_with_gen_py(source_dir, env.artifacts, key_prefix);
-  env.start_fdbfs(fs_exe, key_prefix);
+  static const std::vector<DatasetProfile> profiles =
+      dataset_profiles_from_env();
+  const SeedConfig seed_cfg{};
+  static std::atomic<unsigned int> next_empty_idx = 0;
+  static std::atomic<unsigned int> next_seeded_idx = 0;
 
-  try {
-    fn(env);
-    env.keep = false;
-  } catch (...) {
-    env.capture_state("assertion failure or exception");
-    throw;
+  for (const DatasetProfile profile : profiles) {
+    FdbfsEnv env("case-" + profile_name(profile));
+    const std::string key_prefix = [&]() {
+      if (profile == DatasetProfile::Empty) {
+        return std::string("empty") +
+               std::to_string(next_empty_idx.fetch_add(1));
+      }
+      return std::string("seeded") +
+             std::to_string(next_seeded_idx.fetch_add(1));
+    }();
+
+    INFO("filesystem dataset profile: " << profile_name(profile));
+    INFO("filesystem case dir: " << env.root.filename().string());
+    INFO("filesystem artifacts dir: " << env.artifacts.string());
+    INFO("filesystem key prefix: " << key_prefix);
+    env.append_op("dataset profile: " + profile_name(profile));
+    env.append_op("using key_prefix=" + key_prefix);
+    reset_database_with_gen_py(source_dir, env.artifacts, key_prefix);
+    env.start_fdbfs(fs_exe, key_prefix);
+
+    if (profile == DatasetProfile::Seeded) {
+      env.append_op("seed begin");
+      env.append_op(
+          "seed cfg: depth=" + std::to_string(seed_cfg.depth) +
+          " entries_per_dir=" + std::to_string(seed_cfg.entries_per_dir) +
+          " dirs_per_dir=" + std::to_string(seed_cfg.dirs_per_dir) +
+          " max_file_size=" + std::to_string(seed_cfg.max_file_size) +
+          " rng_seed=" + std::to_string(seed_cfg.rng_seed));
+      populate_seeded_dataset(env.mnt, seed_cfg);
+      env.append_op("seed end");
+    }
+
+    try {
+      fn(env);
+      env.keep = false;
+    } catch (...) {
+      env.capture_state("assertion failure or exception");
+      throw;
+    }
   }
 }
 
