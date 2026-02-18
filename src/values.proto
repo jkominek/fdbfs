@@ -146,10 +146,16 @@ message INodeRecord {
   optional string symlink = 1000;
 }
 
+enum XAttrEncoding {
+  xattr_raw = 0;
+  xattr_zstd = 1;
+}
+
 message XAttrRecord {
   // 0.. fundamentals
+  optional uint32 size = 1;
+  optional XAttrEncoding encoding = 2 [default = xattr_raw];
 
-  // why do we have a message to store nothing?
+  // why do we have a message to store very little?
   // we might want to add permissions, or per-xattr metadata,
-  // or keep the size in the node, etc
 }

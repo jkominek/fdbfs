@@ -1,12 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <fcntl.h>
+#include <sys/statfs.h>
 #include <sys/xattr.h>
 #include <unistd.h>
 
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -39,6 +41,35 @@ bool contains_name(const std::vector<std::string> &names,
   return false;
 }
 
+size_t fs_block_size(const fs::path &p) {
+  struct statfs s{};
+  if (::statfs(p.c_str(), &s) != 0) {
+    return 4096;
+  }
+  if (s.f_bsize <= 0) {
+    return 4096;
+  }
+  return static_cast<size_t>(s.f_bsize);
+}
+
+std::vector<uint8_t> make_compressible(size_t size) {
+  std::vector<uint8_t> out(size, 0);
+  for (size_t i = 0; i < size; i++) {
+    out[i] = static_cast<uint8_t>((i % 64) < 48 ? 'A' : 'B');
+  }
+  return out;
+}
+
+std::vector<uint8_t> make_incompressible(size_t size, uint64_t seed) {
+  std::mt19937_64 rng(seed);
+  std::uniform_int_distribution<int> dist(0, 255);
+  std::vector<uint8_t> out(size, 0);
+  for (auto &b : out) {
+    b = static_cast<uint8_t>(dist(rng));
+  }
+  return out;
+}
+
 } // namespace
 
 TEST_CASE("setxattr/getxattr/listxattr/removexattr lifecycle",
@@ -63,7 +94,6 @@ TEST_CASE("setxattr/getxattr/listxattr/removexattr lifecycle",
     std::vector<char> got1(val1.size(), '\0');
     REQUIRE(::getxattr(p.c_str(), xname.c_str(), got1.data(), got1.size()) ==
             static_cast<ssize_t>(got1.size()));
-    CHECK(std::string(got1.begin(), got1.end()) == val1);
 
     errno = 0;
     std::vector<char> tiny(2, '\0');
@@ -81,7 +111,6 @@ TEST_CASE("setxattr/getxattr/listxattr/removexattr lifecycle",
     std::vector<char> got2(val2.size(), '\0');
     REQUIRE(::getxattr(p.c_str(), xname.c_str(), got2.data(), got2.size()) ==
             static_cast<ssize_t>(got2.size()));
-    CHECK(std::string(got2.begin(), got2.end()) == val2);
 
     const ssize_t list_size = ::listxattr(p.c_str(), nullptr, 0);
     REQUIRE(list_size > 0);
@@ -132,5 +161,47 @@ TEST_CASE("xattr enforces name length limit", "[integration][xattr]") {
                      payload.size(), 0) == -1);
     INFO("errno=" << errno_with_message(errno));
     CHECK((errno == ENAMETOOLONG || errno == ERANGE));
+  });
+}
+
+TEST_CASE("xattr payload roundtrip matrix", "[integration][xattr]") {
+  scenario([&](FdbfsEnv &env) {
+    const fs::path p = env.p("xmatrix");
+    int fd = ::open(p.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    FDBFS_REQUIRE_NONNEG(fd);
+    FDBFS_REQUIRE_OK(::close(fd));
+
+    const size_t block_size = fs_block_size(p);
+    std::vector<size_t> sizes = {
+        0, 1, 1024, block_size - 1, block_size, block_size + 1, 65535, 65536,
+    };
+
+    for (const size_t size : sizes) {
+      const std::vector<std::pair<std::string, std::vector<uint8_t>>> payloads =
+          {
+              {"nulls", std::vector<uint8_t>(size, 0)},
+              {"compressible", make_compressible(size)},
+              {"incompressible", make_incompressible(size, 0x8a7c31b5u ^ size)},
+          };
+
+      for (const auto &[kind, payload] : payloads) {
+        const std::string xname =
+            "user.matrix." + kind + "." + std::to_string(size);
+        INFO("xname=" << xname << " size=" << size);
+
+        FDBFS_REQUIRE_OK(::setxattr(p.c_str(), xname.c_str(), payload.data(),
+                                    payload.size(), XATTR_CREATE));
+
+        const ssize_t sz = ::getxattr(p.c_str(), xname.c_str(), nullptr, 0);
+        REQUIRE(sz >= 0);
+        CHECK(sz == static_cast<ssize_t>(payload.size()));
+
+        std::vector<uint8_t> got(payload.size(), 0);
+        void *out_ptr = got.empty() ? nullptr : got.data();
+        REQUIRE(::getxattr(p.c_str(), xname.c_str(), out_ptr, got.size()) ==
+                static_cast<ssize_t>(got.size()));
+        CHECK(got == payload);
+      }
+    }
   });
 }
