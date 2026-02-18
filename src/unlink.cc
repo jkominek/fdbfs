@@ -85,7 +85,8 @@ bool Inflight_unlink_rmdir::write_success_oplog_result() {
   return write_oplog_result(result);
 }
 
-InflightAction Inflight_unlink_rmdir::oplog_recovery(const OpLogRecord &record) {
+InflightAction
+Inflight_unlink_rmdir::oplog_recovery(const OpLogRecord &record) {
   if (record.result_case() != OpLogRecord::kOk) {
     return InflightAction::Abort(EIO);
   }
@@ -94,31 +95,93 @@ InflightAction Inflight_unlink_rmdir::oplog_recovery(const OpLogRecord &record) 
 
 InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check() {
   // got the directory listing future back, we can check to see if we're done.
-  const FDBKeyValue *kvs;
-  int kvcount;
+  const FDBKeyValue *dir_kvs;
+  int dir_kvcount;
   fdb_bool_t more;
   fdb_error_t err;
 
-  err = fdb_future_get_keyvalue_array(a().directory_listing_fetch.get(), &kvs,
-                                      &kvcount, &more);
+  err = fdb_future_get_keyvalue_array(a().directory_listing_fetch.get(),
+                                      &dir_kvs, &dir_kvcount, &more);
   if (err)
     return InflightAction::FDBError(err);
-  if (kvcount > 0) {
+  if (dir_kvcount > 0) {
     // can't rmdir a directory with any amount of stuff in it.
     return InflightAction::Abort(ENOTEMPTY);
   }
 
   // TODO check the metadata for permission to erase
 
-  // we're a directory, so we can't have extra links, so this would
-  // just be a user permissions test. we won't implement that yet.
+  const FDBKeyValue *inode_kvs;
+  int inode_kvcount;
+  err = fdb_future_get_keyvalue_array(a().inode_metadata_fetch.get(),
+                                      &inode_kvs, &inode_kvcount, &more);
+  if (err)
+    return InflightAction::FDBError(err);
+  if (inode_kvcount <= 0) {
+    return InflightAction::Abort(EIO, "rmdir target inode missing");
+  }
+
+  const auto expected_inode_key = pack_inode_key(a().ino);
+  if ((inode_kvs[0].key_length !=
+       static_cast<int>(expected_inode_key.size())) ||
+      (memcmp(inode_kvs[0].key, expected_inode_key.data(),
+              expected_inode_key.size()) != 0)) {
+    return InflightAction::Abort(EIO, "rmdir target inode key mismatch");
+  }
+
+  INodeRecord inode;
+  inode.ParseFromArray(inode_kvs[0].value, inode_kvs[0].value_length);
+  if (!(inode.IsInitialized() && inode.has_nlinks())) {
+    return InflightAction::Abort(EIO, "rmdir target inode malformed");
+  }
+  if (inode.inode() != a().ino) {
+    return InflightAction::Abort(EIO, "rmdir target inode id mismatch");
+  }
+
+  a().inode_in_use = false;
+  for (int i = 1; i < inode_kvcount; i++) {
+    const FDBKeyValue &kv = inode_kvs[i];
+    if ((kv.key_length <= inode_key_length) ||
+        (kv.key[inode_key_length] != INODE_USE_PREFIX)) {
+      continue;
+    }
+    if (kv.key_length <
+        inode_key_length + 1 + static_cast<int>(sizeof(fuse_ino_t))) {
+      return InflightAction::Abort(EIO, "malformed use record key");
+    }
+
+    fuse_ino_t encoded_ino = 0;
+    bcopy(kv.key + key_prefix.size() + 1, &encoded_ino, sizeof(encoded_ino));
+    encoded_ino = be64toh(encoded_ino);
+    if (encoded_ino != a().ino) {
+      return InflightAction::Abort(EIO, "use record key inode mismatch");
+    }
+
+    a().inode_in_use = true;
+    break;
+  }
 
   // dirent deletion (has to wait until we're sure we can remove the
   // entire thing)
   fdb_transaction_clear(transaction.get(), dirent_key.data(),
                         dirent_key.size());
 
-  erase_inode(transaction.get(), a().ino);
+  // disconnected directories apparently linger at nlinks==0 until reclaimed
+  inode.set_nlinks(0);
+  struct timespec tv;
+  clock_gettime(CLOCK_REALTIME, &tv);
+  update_ctime(&inode, &tv);
+  if (!fdb_set_protobuf(transaction.get(), pack_inode_key(a().ino), inode)) {
+    return InflightAction::Abort(EIO);
+  }
+
+  if (a().inode_in_use) {
+    const auto key = pack_garbage_key(a().ino);
+    uint8_t b = 0x00;
+    fdb_transaction_set(transaction.get(), key.data(), key.size(), &b, 1);
+  } else {
+    erase_inode(transaction.get(), a().ino);
+  }
 
   if (!write_success_oplog_result()) {
     return InflightAction::Abort(EIO);
@@ -146,25 +209,46 @@ InflightAction Inflight_unlink_rmdir::inode_check() {
     return InflightAction::Abort(EIO, "dirent pointed to nonexistant inode");
   }
 
+  const auto expected_inode_key = pack_inode_key(a().ino);
   const FDBKeyValue inode_kv = kvs[0];
-  // TODO test the key to confirm this is actually the inode KV pair
-  // we're just going to pretend for now that we found the right record
+  if ((inode_kv.key_length != static_cast<int>(expected_inode_key.size())) ||
+      (memcmp(inode_kv.key, expected_inode_key.data(),
+              expected_inode_key.size()) != 0)) {
+    return InflightAction::Abort(EIO, "unlink target inode key mismatch");
+  }
+
   INodeRecord inode;
   inode.ParseFromArray(inode_kv.value, inode_kv.value_length);
   if (!(inode.IsInitialized() && inode.has_nlinks())) {
     return InflightAction::Abort(EIO);
   }
+  if (inode.inode() != a().ino) {
+    return InflightAction::Abort(EIO, "unlink target inode id mismatch");
+  }
 
-  // TODO check our own lookup_counts to see if _we're_ using the
-  // inode. if so, no sense cruising through all of the other records.
+  a().inode_in_use = false;
   for (int i = 1; i < kvcount; i++) {
     // inspect the other records we got back
     const FDBKeyValue kv = kvs[i];
-    if ((kv.key_length > inode_key_length) &&
-        (kv.key[inode_key_length] == 0x01)) {
-      // there's a use record in place, we can't erase the inode.
-      a().inode_in_use = true;
+    if ((kv.key_length <= inode_key_length) ||
+        (kv.key[inode_key_length] != INODE_USE_PREFIX)) {
+      continue;
     }
+    if (kv.key_length <
+        inode_key_length + 1 + static_cast<int>(sizeof(fuse_ino_t))) {
+      return InflightAction::Abort(EIO, "malformed use record key");
+    }
+
+    fuse_ino_t encoded_ino = 0;
+    bcopy(kv.key + key_prefix.size() + 1, &encoded_ino, sizeof(encoded_ino));
+    encoded_ino = be64toh(encoded_ino);
+    if (encoded_ino != a().ino) {
+      return InflightAction::Abort(EIO, "use record key inode mismatch");
+    }
+
+    // there's a use record in place, we can't erase the inode.
+    a().inode_in_use = true;
+    break;
   }
 
   // update the stat structure
@@ -173,11 +257,8 @@ InflightAction Inflight_unlink_rmdir::inode_check() {
   clock_gettime(CLOCK_REALTIME, &tv);
   update_ctime(&inode, &tv);
 
-  {
-    std::vector<uint8_t> key(inode_kv.key, inode_kv.key + inode_kv.key_length);
-    if (!fdb_set_protobuf(transaction.get(), key, inode))
-      return InflightAction::Abort(EIO);
-  }
+  if (!fdb_set_protobuf(transaction.get(), expected_inode_key, inode))
+    return InflightAction::Abort(EIO);
 
   if (inode.nlinks() == 0) {
     // nlinks == 0? it might be time to clean up the inode

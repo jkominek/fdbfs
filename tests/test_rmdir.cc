@@ -2,10 +2,12 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdint>
 #include <numeric>
 #include <random>
 #include <string>
@@ -108,6 +110,134 @@ TEST_CASE("rmdir mkdir and rmdir in shuffled order x32",
     for (const auto &name : remove_names) {
       const fs::path d = env.p(name);
       FDBFS_REQUIRE_OK(::rmdir(d.c_str()));
+    }
+  });
+}
+
+TEST_CASE("rmdir preserves usability for open/cwd holders while blocking creates",
+          "[integration][rmdir][mkdir][open]") {
+  scenario([&](FdbfsEnv &env) {
+    SECTION("directory held by open fd") {
+      const fs::path d = env.p("held-open");
+      FDBFS_REQUIRE_OK(::mkdir(d.c_str(), 0755));
+
+      const int dfd = ::open(d.c_str(), O_RDONLY | O_DIRECTORY);
+      FDBFS_REQUIRE_NONNEG(dfd);
+
+      FDBFS_REQUIRE_OK(::rmdir(d.c_str()));
+      ::usleep(500 * 1000);
+
+      struct stat st {};
+      FDBFS_REQUIRE_OK(::fstat(dfd, &st));
+      CHECK(S_ISDIR(st.st_mode));
+      CHECK(st.st_nlink <= 1);
+
+      errno = 0;
+      const int created = ::openat(dfd, "new-child", O_CREAT | O_WRONLY, 0644);
+      CHECK(created == -1);
+      FDBFS_CHECK_ERRNO(ENOENT);
+      if (created >= 0) {
+        FDBFS_REQUIRE_OK(::close(created));
+      }
+
+      FDBFS_REQUIRE_OK(::close(dfd));
+      CHECK(!fs::exists(d));
+    }
+
+    SECTION("directory held as another process cwd") {
+      const fs::path d = env.p("held-cwd");
+      FDBFS_REQUIRE_OK(::mkdir(d.c_str(), 0755));
+
+      int ready_pipe[2] = {-1, -1};
+      int go_pipe[2] = {-1, -1};
+      int result_pipe[2] = {-1, -1};
+      FDBFS_REQUIRE_OK(::pipe(ready_pipe));
+      FDBFS_REQUIRE_OK(::pipe(go_pipe));
+      FDBFS_REQUIRE_OK(::pipe(result_pipe));
+
+      struct ChildResult {
+        int stat_rc;
+        int stat_errno;
+        int create_rc;
+        int create_errno;
+      };
+
+      const pid_t child = ::fork();
+      FDBFS_REQUIRE_NONNEG(child);
+      if (child == 0) {
+        (void)::close(ready_pipe[0]);
+        (void)::close(go_pipe[1]);
+        (void)::close(result_pipe[0]);
+
+        ChildResult result{};
+
+        if (::chdir(d.c_str()) != 0) {
+          result.stat_rc = -1;
+          result.stat_errno = errno;
+          result.create_rc = -1;
+          result.create_errno = errno;
+          (void)::write(result_pipe[1], &result, sizeof(result));
+          _exit(2);
+        }
+
+        uint8_t ready = 1;
+        (void)::write(ready_pipe[1], &ready, sizeof(ready));
+
+        uint8_t go = 0;
+        const ssize_t got = ::read(go_pipe[0], &go, sizeof(go));
+        if (got != static_cast<ssize_t>(sizeof(go))) {
+          _exit(3);
+        }
+
+        struct stat st {};
+        errno = 0;
+        result.stat_rc = ::stat(".", &st);
+        result.stat_errno = errno;
+
+        errno = 0;
+        result.create_rc = ::open("new-child", O_CREAT | O_WRONLY, 0644);
+        result.create_errno = errno;
+        if (result.create_rc >= 0) {
+          (void)::close(result.create_rc);
+        }
+
+        (void)::write(result_pipe[1], &result, sizeof(result));
+        _exit(0);
+      }
+
+      (void)::close(ready_pipe[1]);
+      (void)::close(go_pipe[0]);
+      (void)::close(result_pipe[1]);
+
+      uint8_t ready = 0;
+      const ssize_t ready_n = ::read(ready_pipe[0], &ready, sizeof(ready));
+      REQUIRE(ready_n == static_cast<ssize_t>(sizeof(ready)));
+
+      FDBFS_REQUIRE_OK(::rmdir(d.c_str()));
+      ::usleep(500 * 1000);
+
+      uint8_t go = 1;
+      REQUIRE(::write(go_pipe[1], &go, sizeof(go)) ==
+              static_cast<ssize_t>(sizeof(go)));
+
+      ChildResult result{};
+      const ssize_t result_n = ::read(result_pipe[0], &result, sizeof(result));
+      REQUIRE(result_n == static_cast<ssize_t>(sizeof(result)));
+
+      CHECK(result.stat_rc == 0);
+      CHECK(result.create_rc == -1);
+      CHECK(result.create_errno == ENOENT);
+
+      int status = 0;
+      FDBFS_REQUIRE_NONNEG(::waitpid(child, &status, 0));
+      CHECK(WIFEXITED(status));
+      CHECK(WEXITSTATUS(status) == 0);
+
+      FDBFS_REQUIRE_OK(::close(ready_pipe[0]));
+      FDBFS_REQUIRE_OK(::close(go_pipe[1]));
+      FDBFS_REQUIRE_OK(::close(result_pipe[0]));
+
+      CHECK(!fs::exists(d));
     }
   });
 }

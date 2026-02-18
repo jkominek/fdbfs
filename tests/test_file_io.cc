@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -124,5 +125,65 @@ TEST_CASE("file IO mixed aligned/unaligned writes and reads",
     apply_expected_write(expected, 0, final_payload);
     FDBFS_REQUIRE_OK(::close(fd));
     verify_whole_file(p, expected);
+  });
+}
+
+TEST_CASE("file remains accessible through open fds after unlink",
+          "[integration][read][write][open][unlink]") {
+  scenario([&](FdbfsEnv &env) {
+    const fs::path p = env.p("unlink-open.bin");
+
+    int fd1 = ::open(p.c_str(), O_CREAT | O_RDWR | O_TRUNC, 0644);
+    FDBFS_REQUIRE_NONNEG(fd1);
+
+    const std::vector<uint8_t> first = {'a', 'l', 'p', 'h', 'a', '\0', '1'};
+    pwrite_all_fd(fd1, first.data(), first.size(), 0);
+    FDBFS_REQUIRE_OK(::fsync(fd1));
+    ::usleep(500 * 1000);
+
+    int fd2 = ::open(p.c_str(), O_RDONLY);
+    FDBFS_REQUIRE_NONNEG(fd2);
+
+    auto got_first = pread_exact_fd(fd2, first.size(), 0);
+    REQUIRE(got_first.size() == first.size());
+    CHECK(got_first == first);
+
+    FDBFS_REQUIRE_OK(::unlink(p.c_str()));
+    ::usleep(500 * 1000);
+
+    errno = 0;
+    const int fd3 = ::open(p.c_str(), O_RDONLY);
+    CHECK(fd3 < 0);
+    FDBFS_CHECK_ERRNO(ENOENT);
+    if (fd3 >= 0) {
+      FDBFS_REQUIRE_OK(::close(fd3));
+    }
+
+    errno = 0;
+    CHECK(::access(p.c_str(), F_OK) != 0);
+    FDBFS_CHECK_ERRNO(ENOENT);
+
+    const std::vector<uint8_t> second = {'b', 'e', 't', 'a', '\0', '2'};
+    pwrite_all_fd(fd1, second.data(), second.size(),
+                  static_cast<off_t>(first.size()));
+    FDBFS_REQUIRE_OK(::fsync(fd1));
+    ::usleep(500 * 1000);
+
+    std::vector<uint8_t> expected = first;
+    expected.insert(expected.end(), second.begin(), second.end());
+    auto got_after_unlink = pread_exact_fd(fd2, expected.size(), 0);
+    REQUIRE(got_after_unlink.size() == expected.size());
+    CHECK(got_after_unlink == expected);
+
+    struct stat st {};
+    FDBFS_REQUIRE_OK(::fstat(fd1, &st));
+    CHECK(st.st_nlink == 0);
+
+    FDBFS_REQUIRE_OK(::close(fd2));
+    FDBFS_REQUIRE_OK(::close(fd1));
+
+    errno = 0;
+    CHECK(::access(p.c_str(), F_OK) != 0);
+    FDBFS_CHECK_ERRNO(ENOENT);
   });
 }
