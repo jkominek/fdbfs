@@ -274,6 +274,8 @@ static bool reap_pid_if_still_stale(const std::vector<uint8_t> &observed_pid,
     }
 
     fdb_transaction_clear(t, key.data(), key.size());
+    // we can't easily find left behind use records, but we clean up their oplog
+    fdbfs_transaction_clear_range(t, pack_oplog_subspace_range(observed_pid));
     return true;
   });
 
@@ -548,9 +550,8 @@ void terminate_liveness() {
 
   // clear our PID record
   std::function<int(FDBTransaction *)> f = [](FDBTransaction *t) {
-    const auto [start, stop] = pack_pid_record_range(pid);
-    fdb_transaction_clear_range(t, start.data(), start.size(), stop.data(),
-                                stop.size());
+    fdbfs_transaction_clear_range(t, pack_pid_record_range(pid));
+    fdbfs_transaction_clear_range(t, pack_oplog_subspace_range(pid));
     return 0;
   };
   run_sync_transaction(f);

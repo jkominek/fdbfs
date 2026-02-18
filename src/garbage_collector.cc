@@ -201,6 +201,14 @@ void *garbage_scanner(void *ignore) {
     ts.tv_nsec = 0;
     nanosleep(&ts, NULL);
 
+    if (auto span = claim_local_oplog_cleanup_span(); span.has_value()) {
+      const auto range = pack_local_oplog_span_range(span->first, span->second);
+      run_sync_transaction<int>([&](FDBTransaction *t) {
+        fdbfs_transaction_clear_range(t, range);
+        return 0;
+      });
+    }
+
     unique_transaction scan_t = make_transaction();
     unique_future f = wrap_future(fdb_transaction_get_range(
         scan_t.get(),
