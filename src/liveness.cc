@@ -407,8 +407,8 @@ PidLiveness classify_pid(const std::vector<uint8_t> &candidate_pid) {
   return PidLiveness::Unknown;
 }
 
-void send_pt_entry(bool startup) {
-  std::function<int(FDBTransaction *)> f = [startup](FDBTransaction *t) {
+bool send_pt_entry(bool startup) {
+  std::function<bool(FDBTransaction *)> f = [startup](FDBTransaction *t) {
     const auto key = pack_pid_key(pid);
     fdb_error_t err;
     if (!startup) {
@@ -427,7 +427,10 @@ void send_pt_entry(bool startup) {
       }
 
       if (!present) {
-        // our entry in the table was removed.
+        // our entry in the table was removed. we can assume
+        // all our state is missing from the database now as
+        // well, our use records have been removed, etc. we can't
+        // continue.
         terminate.store(true, std::memory_order_relaxed);
 
         // kill everything in-flight
@@ -438,7 +441,7 @@ void send_pt_entry(bool startup) {
         // filesystem operation comes in. sigh.
         fuse_session_exit(fuse_session);
 
-        return 0;
+        return false;
       }
     }
 
@@ -447,9 +450,11 @@ void send_pt_entry(bool startup) {
       std::terminate();
     }
 
-    return 0;
+    // TODO set a watch on our key, so we can detect any changes
+
+    return true;
   };
-  run_sync_transaction(f);
+  return run_sync_transaction(f).value_or(false);
 }
 
 const int liveness_refresh_sec = 0;
@@ -467,18 +472,11 @@ std::mutex manager_running;
 void *liveness_manager(void *ignore) {
   const std::unique_lock<std::mutex> lock(manager_running);
 
-  pt_entry.set_pid(pid.data(), pid.size());
-  pt_entry.set_liveness_counter(0);
-  update_pt_entry_time();
-  struct utsname buf;
-  uname(&buf);
-  pt_entry.set_hostname(buf.nodename);
-
-  send_pt_entry(true);
-  refresh_observed_pid_table();
-  reap_stale_pid_entries();
-
   while (!terminate.load(std::memory_order_relaxed)) {
+    // TODO fetch fdb_database_get_client_status
+    // then inspect the "Healthy" flag. if we're not
+    // healthy, start blocking FUSE operations until
+    // we are
     struct timespec sleep;
     sleep.tv_sec = liveness_refresh_sec;
     sleep.tv_nsec = liveness_refresh_nsec;
@@ -487,7 +485,11 @@ void *liveness_manager(void *ignore) {
     update_pt_entry_time();
     pt_entry.set_liveness_counter(pt_entry.liveness_counter() + 1);
 
-    send_pt_entry(false);
+    // TODO track time since last successly pt entry
+    // if we exceed even 50% of whatever we're configured
+    // as for the reaping time, start blocking FUSE ops
+    // until we can restore our pt entry successfully
+    (void)send_pt_entry(false);
     refresh_observed_pid_table();
     reap_stale_pid_entries();
   }
@@ -522,6 +524,22 @@ bool start_liveness(struct fuse_session *se) {
   // we make main pass this in so it isn't floating around
   // in every namespace.
   fuse_session = se;
+
+  pt_entry.set_pid(pid.data(), pid.size());
+  pt_entry.set_liveness_counter(0);
+  update_pt_entry_time();
+  struct utsname buf;
+  uname(&buf);
+  pt_entry.set_hostname(buf.nodename);
+
+  if (!send_pt_entry(true)) {
+    pt_entry.Clear();
+    fuse_session = NULL;
+    pid.clear();
+    return true;
+  }
+  refresh_observed_pid_table();
+  reap_stale_pid_entries();
 
   terminate.store(false, std::memory_order_relaxed);
 
