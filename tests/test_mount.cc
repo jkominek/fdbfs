@@ -14,12 +14,9 @@ constexpr long FUSE_SUPER_MAGIC = 0x65735546; // "eUsF"
 } // namespace
 
 TEST_CASE("mount root inode baseline", "[integration][mount][stat]") {
-  const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-
-  scenario(fs_exe, source_dir, [&](FdbfsEnv &env) {
+  scenario([&](FdbfsEnv &env) {
     struct stat st{};
-    REQUIRE(::stat(env.mnt.c_str(), &st) == 0);
+    FDBFS_REQUIRE_OK(::stat(env.mnt.c_str(), &st));
     CHECK(S_ISDIR(st.st_mode));
     CHECK(st.st_ino == 1);
     CHECK((st.st_mode & 0555) == 0555);
@@ -28,12 +25,9 @@ TEST_CASE("mount root inode baseline", "[integration][mount][stat]") {
 }
 
 TEST_CASE("mount statfs sanity", "[integration][mount][statfs]") {
-  const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-
-  scenario(fs_exe, source_dir, [&](FdbfsEnv &env) {
+  scenario([&](FdbfsEnv &env) {
     struct statfs s{};
-    REQUIRE(::statfs(env.mnt.c_str(), &s) == 0);
+    FDBFS_REQUIRE_OK(::statfs(env.mnt.c_str(), &s));
     CHECK(s.f_type == FUSE_SUPER_MAGIC);
     CHECK(s.f_bsize > 1);
     CHECK(s.f_blocks > s.f_bfree);

@@ -67,7 +67,6 @@ InflightAction Inflight_readdir::callback() {
 
     if (kv.key_length <= dirent_prefix_length) {
       // serious internal error. we somehow got back a key that was too short?
-      printf("eio!\n");
       return InflightAction::Abort(EIO);
     }
     int keylen = kv.key_length - dirent_prefix_length;
@@ -85,7 +84,6 @@ InflightAction Inflight_readdir::callback() {
       dirent.ParseFromArray(kv.value, kv.value_length);
 
       if (!dirent.IsInitialized()) {
-        printf("eio!\n");
         return InflightAction::Abort(EIO);
       }
       attr.st_ino = dirent.inode();

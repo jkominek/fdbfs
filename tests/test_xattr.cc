@@ -43,21 +43,18 @@ bool contains_name(const std::vector<std::string> &names,
 
 TEST_CASE("setxattr/getxattr/listxattr/removexattr lifecycle",
           "[integration][setxattr][getxattr][listxattr][removexattr]") {
-  const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-
-  scenario(fs_exe, source_dir, [&](FdbfsEnv &env) {
+  scenario([&](FdbfsEnv &env) {
     const fs::path p = env.p("xfile");
     const std::string xname = "user.integration";
     const std::string val1 = "value-one";
     const std::string val2 = "value-two-extended";
 
     int fd = ::open(p.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    REQUIRE(fd >= 0);
-    REQUIRE(::close(fd) == 0);
+    FDBFS_REQUIRE_NONNEG(fd);
+    FDBFS_REQUIRE_OK(::close(fd));
 
-    REQUIRE(::setxattr(p.c_str(), xname.c_str(), val1.data(), val1.size(),
-                       XATTR_CREATE) == 0);
+    FDBFS_REQUIRE_OK(::setxattr(p.c_str(), xname.c_str(), val1.data(),
+                                val1.size(), XATTR_CREATE));
 
     const ssize_t size_only = ::getxattr(p.c_str(), xname.c_str(), nullptr, 0);
     REQUIRE(size_only >= 0);
@@ -71,15 +68,15 @@ TEST_CASE("setxattr/getxattr/listxattr/removexattr lifecycle",
     errno = 0;
     std::vector<char> tiny(2, '\0');
     CHECK(::getxattr(p.c_str(), xname.c_str(), tiny.data(), tiny.size()) == -1);
-    CHECK(errno == ERANGE);
+    FDBFS_CHECK_ERRNO(ERANGE);
 
     errno = 0;
     CHECK(::setxattr(p.c_str(), xname.c_str(), val2.data(), val2.size(),
                      XATTR_CREATE) == -1);
-    CHECK(errno == EEXIST);
+    FDBFS_CHECK_ERRNO(EEXIST);
 
-    REQUIRE(::setxattr(p.c_str(), xname.c_str(), val2.data(), val2.size(),
-                       XATTR_REPLACE) == 0);
+    FDBFS_REQUIRE_OK(::setxattr(p.c_str(), xname.c_str(), val2.data(),
+                                val2.size(), XATTR_REPLACE));
 
     std::vector<char> got2(val2.size(), '\0');
     REQUIRE(::getxattr(p.c_str(), xname.c_str(), got2.data(), got2.size()) ==
@@ -92,7 +89,7 @@ TEST_CASE("setxattr/getxattr/listxattr/removexattr lifecycle",
     errno = 0;
     std::vector<char> tiny_list(static_cast<size_t>(list_size) - 1, '\0');
     CHECK(::listxattr(p.c_str(), tiny_list.data(), tiny_list.size()) == -1);
-    CHECK(errno == ERANGE);
+    FDBFS_CHECK_ERRNO(ERANGE);
 
     std::vector<char> names_buf(static_cast<size_t>(list_size), '\0');
     REQUIRE(::listxattr(p.c_str(), names_buf.data(), names_buf.size()) ==
@@ -103,39 +100,37 @@ TEST_CASE("setxattr/getxattr/listxattr/removexattr lifecycle",
     errno = 0;
     CHECK(::setxattr(p.c_str(), "user.missing", val1.data(), val1.size(),
                      XATTR_REPLACE) == -1);
-    CHECK(errno == ENODATA);
+    FDBFS_CHECK_ERRNO(ENODATA);
 
-    REQUIRE(::removexattr(p.c_str(), xname.c_str()) == 0);
+    FDBFS_REQUIRE_OK(::removexattr(p.c_str(), xname.c_str()));
     errno = 0;
     CHECK(::getxattr(p.c_str(), xname.c_str(), got2.data(), got2.size()) == -1);
-    CHECK(errno == ENODATA);
+    FDBFS_CHECK_ERRNO(ENODATA);
 
     errno = 0;
     CHECK(::removexattr(p.c_str(), xname.c_str()) == -1);
-    CHECK(errno == ENODATA);
+    FDBFS_CHECK_ERRNO(ENODATA);
   });
 }
 
 TEST_CASE("xattr enforces name length limit", "[integration][xattr]") {
-  const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-
-  scenario(fs_exe, source_dir, [&](FdbfsEnv &env) {
+  scenario([&](FdbfsEnv &env) {
     const fs::path p = env.p("xlong");
     int fd = ::open(p.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    REQUIRE(fd >= 0);
-    REQUIRE(::close(fd) == 0);
+    FDBFS_REQUIRE_NONNEG(fd);
+    FDBFS_REQUIRE_OK(::close(fd));
 
     const std::string max_name(255, 'n');
     const std::string too_long_name(256, 'n');
     const std::string payload = "v";
 
-    REQUIRE(::setxattr(p.c_str(), max_name.c_str(), payload.data(), payload.size(),
-                       0) == 0);
+    FDBFS_REQUIRE_OK(::setxattr(p.c_str(), max_name.c_str(), payload.data(),
+                                payload.size(), 0));
 
     errno = 0;
     CHECK(::setxattr(p.c_str(), too_long_name.c_str(), payload.data(),
                      payload.size(), 0) == -1);
+    INFO("errno=" << errno_with_message(errno));
     CHECK((errno == ENAMETOOLONG || errno == ERANGE));
   });
 }

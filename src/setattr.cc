@@ -53,9 +53,12 @@ private:
   const int to_set;
   const SuccessReply success_reply;
 
+  fdb_error_t configure_transaction() override;
   InflightAction callback();
   InflightAction partial_block_fixup();
   InflightAction commit_cb();
+  InflightAction oplog_recovery(const OpLogRecord &) override;
+  bool write_success_oplog_result();
 };
 
 Inflight_setattr::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
@@ -65,6 +68,12 @@ Inflight_setattr::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
     : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
       ino(ino), attr(attr), to_set(to_set),
       success_reply(std::move(success_reply)) {}
+
+fdb_error_t Inflight_setattr::configure_transaction() {
+  return fdb_transaction_set_option(transaction.get(),
+                                    FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE,
+                                    nullptr, 0);
+}
 
 InflightAction Inflight_setattr::commit_cb() {
   auto open_reply = std::get_if<SuccessReplyOpen>(&success_reply);
@@ -76,6 +85,48 @@ InflightAction Inflight_setattr::commit_cb() {
   struct stat newattr{};
   pack_inode_record_into_stat(a().inode, newattr);
   return InflightAction::Attr(newattr);
+}
+
+bool Inflight_setattr::write_success_oplog_result() {
+  auto open_reply = std::get_if<SuccessReplyOpen>(&success_reply);
+  if (open_reply != nullptr) {
+    OpLogResultOpen result;
+    result.set_ino(ino);
+    result.set_flags(open_reply->fi.flags);
+    result.set_direct_io(open_reply->fi.direct_io);
+    result.set_keep_cache(open_reply->fi.keep_cache);
+    result.set_nonseekable(open_reply->fi.nonseekable);
+    return write_oplog_result(result);
+  }
+
+  struct stat newattr{};
+  pack_inode_record_into_stat(a().inode, newattr);
+  OpLogResultAttr result;
+  *result.mutable_attr() = pack_stat_into_stat_record(newattr);
+  return write_oplog_result(result);
+}
+
+InflightAction Inflight_setattr::oplog_recovery(const OpLogRecord &record) {
+  switch (record.result_case()) {
+  case OpLogRecord::kAttr: {
+    if (!record.attr().has_attr()) {
+      return InflightAction::Abort(EIO);
+    }
+    struct stat attr{};
+    unpack_stat_record_into_stat(record.attr().attr(), attr);
+    return InflightAction::Attr(attr);
+  }
+  case OpLogRecord::kOpen: {
+    struct fuse_file_info fi{};
+    fi.flags = record.open().flags();
+    fi.direct_io = record.open().direct_io();
+    fi.keep_cache = record.open().keep_cache();
+    fi.nonseekable = record.open().nonseekable();
+    return InflightAction::Open(record.open().ino(), fi);
+  }
+  default:
+    return InflightAction::Abort(EIO);
+  }
 }
 
 InflightAction Inflight_setattr::partial_block_fixup() {
@@ -105,6 +156,10 @@ InflightAction Inflight_setattr::partial_block_fixup() {
                   std::span<const uint8_t>(output_buffer).first(write_size));
     if (!sret)
       return InflightAction::Abort(EIO);
+  }
+
+  if (!write_success_oplog_result()) {
+    return InflightAction::Abort(EIO);
   }
 
   return commit(std::bind(&Inflight_setattr::commit_cb, this));
@@ -228,6 +283,9 @@ InflightAction Inflight_setattr::callback() {
     return InflightAction::Abort(EIO);
 
   if (do_commit) {
+    if (!write_success_oplog_result()) {
+      return InflightAction::Abort(EIO);
+    }
     wait_on_future(fdb_transaction_commit(transaction.get()), a().commit);
   }
 
@@ -235,13 +293,6 @@ InflightAction Inflight_setattr::callback() {
 }
 
 InflightCallback Inflight_setattr::issue() {
-  // turn off RYW, so there's no uncertainty about what we'll get when
-  // we interleave our reads and writes.
-  if (fdb_transaction_set_option(
-          transaction.get(), FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, NULL, 0)) {
-    return []() { return InflightAction::Abort(EIO); };
-  }
-
   const auto key = pack_inode_key(ino);
 
   // and request just that inode

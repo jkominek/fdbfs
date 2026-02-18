@@ -16,7 +16,7 @@ mkdir /tmp/fdb
 touch /tmp/fdb/XXX
 
 # start fs
-valgrind --log-file=/tmp/valgrind.txt build/fs -o default_permissions,allow_other /tmp/fdb &
+FDBFS_TRACE_ERRORS=1 valgrind --log-file=/tmp/valgrind.txt build/fs --buggify -o default_permissions,allow_other /tmp/fdb &
 
 echo sleeping for a bit, because of slowness
 sleep 20

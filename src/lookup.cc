@@ -57,7 +57,7 @@ private:
 Inflight_lookup::Inflight_lookup(fuse_req_t req, fuse_ino_t parent,
                                  std::string name,
                                  unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
       parent(parent), name(std::move(name)) {}
 
 InflightAction Inflight_lookup::process_inode() {

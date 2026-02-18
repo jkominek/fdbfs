@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cerrno>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -34,3 +36,39 @@ fs::path required_env_path(const char *name);
 
 void scenario(const fs::path &fs_exe, const fs::path &source_dir,
               const std::function<void(FdbfsEnv &)> &fn);
+void scenario(const std::function<void(FdbfsEnv &)> &fn);
+
+inline std::string errno_with_message(int err) {
+  const char *msg = std::strerror(err);
+  std::string out = std::to_string(err);
+  out += " (";
+  out += (msg != nullptr) ? msg : "unknown";
+  out += ")";
+  return out;
+}
+
+#define FDBFS_REQUIRE_OK(expr)                                                 \
+  do {                                                                         \
+    const auto _fdbfs_rc = (expr);                                             \
+    const int _fdbfs_errno = errno;                                            \
+    INFO(#expr << " => rc=" << _fdbfs_rc                                       \
+               << ", errno=" << errno_with_message(_fdbfs_errno));             \
+    REQUIRE(_fdbfs_rc == 0);                                                   \
+  } while (0)
+
+#define FDBFS_REQUIRE_NONNEG(expr)                                             \
+  do {                                                                         \
+    const auto _fdbfs_rc = (expr);                                             \
+    const int _fdbfs_errno = errno;                                            \
+    INFO(#expr << " => rc=" << _fdbfs_rc                                       \
+               << ", errno=" << errno_with_message(_fdbfs_errno));             \
+    REQUIRE(_fdbfs_rc >= 0);                                                   \
+  } while (0)
+
+#define FDBFS_CHECK_ERRNO(expected)                                            \
+  do {                                                                         \
+    const int _fdbfs_errno = errno;                                            \
+    INFO("errno=" << errno_with_message(_fdbfs_errno)                          \
+                  << ", expected=" << errno_with_message(expected));           \
+    CHECK(_fdbfs_errno == (expected));                                         \
+  } while (0)

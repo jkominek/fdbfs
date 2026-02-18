@@ -13,12 +13,9 @@
 
 TEST_CASE("readdir returns created entries and handles seekdir/telldir",
           "[integration][readdir][mkdir][mknod]") {
-  const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-
-  scenario(fs_exe, source_dir, [&](FdbfsEnv &env) {
+  scenario([&](FdbfsEnv &env) {
     const fs::path dir = env.p("scan");
-    REQUIRE(::mkdir(dir.c_str(), 0755) == 0);
+    FDBFS_REQUIRE_OK(::mkdir(dir.c_str(), 0755));
 
     const std::string n1 = "alpha";
     const std::string n2(255, 'x');
@@ -26,13 +23,13 @@ TEST_CASE("readdir returns created entries and handles seekdir/telldir",
     const std::string n4 = "pipe";
 
     int fd = ::open((dir / n1).c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    REQUIRE(fd >= 0);
-    REQUIRE(::close(fd) == 0);
-    REQUIRE(::mkdir((dir / n3).c_str(), 0755) == 0);
-    REQUIRE(::mkfifo((dir / n4).c_str(), 0644) == 0);
+    FDBFS_REQUIRE_NONNEG(fd);
+    FDBFS_REQUIRE_OK(::close(fd));
+    FDBFS_REQUIRE_OK(::mkdir((dir / n3).c_str(), 0755));
+    FDBFS_REQUIRE_OK(::mkfifo((dir / n4).c_str(), 0644));
     fd = ::open((dir / n2).c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    REQUIRE(fd >= 0);
-    REQUIRE(::close(fd) == 0);
+    FDBFS_REQUIRE_NONNEG(fd);
+    FDBFS_REQUIRE_OK(::close(fd));
 
     DIR *d = ::opendir(dir.c_str());
     REQUIRE(d != nullptr);
@@ -67,41 +64,35 @@ TEST_CASE("readdir returns created entries and handles seekdir/telldir",
       REQUIRE(errno == 0);
     }
 
-    REQUIRE(::closedir(d) == 0);
+    FDBFS_REQUIRE_OK(::closedir(d));
   });
 }
 
 TEST_CASE("readdir on non-directory fails with ENOTDIR",
           "[integration][readdir]") {
-  const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-
-  scenario(fs_exe, source_dir, [&](FdbfsEnv &env) {
+  scenario([&](FdbfsEnv &env) {
     const fs::path file = env.p("not_a_dir");
     int fd = ::open(file.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    REQUIRE(fd >= 0);
-    REQUIRE(::close(fd) == 0);
+    FDBFS_REQUIRE_NONNEG(fd);
+    FDBFS_REQUIRE_OK(::close(fd));
 
     errno = 0;
     CHECK(::opendir(file.c_str()) == nullptr);
-    CHECK(errno == ENOTDIR);
+    FDBFS_CHECK_ERRNO(ENOTDIR);
   });
 }
 
 TEST_CASE("readdir handles directories with many entries",
           "[integration][readdir][open]") {
-  const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-
-  scenario(fs_exe, source_dir, [&](FdbfsEnv &env) {
+  scenario([&](FdbfsEnv &env) {
     const fs::path dir = env.p("bulk");
-    REQUIRE(::mkdir(dir.c_str(), 0755) == 0);
+    FDBFS_REQUIRE_OK(::mkdir(dir.c_str(), 0755));
 
     for (int i = 0; i < 48; i++) {
       const fs::path p = dir / ("entry_" + std::to_string(i));
       int fd = ::open(p.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
-      REQUIRE(fd >= 0);
-      REQUIRE(::close(fd) == 0);
+      FDBFS_REQUIRE_NONNEG(fd);
+      FDBFS_REQUIRE_OK(::close(fd));
     }
 
     const auto names = readdir_names(dir);

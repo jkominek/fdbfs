@@ -52,6 +52,7 @@ private:
   const std::string symlink_target;
 
   InflightAction postverification();
+  InflightAction oplog_recovery(const OpLogRecord &) override;
 };
 
 Inflight_mknod::Inflight_mknod(
@@ -153,6 +154,16 @@ InflightAction Inflight_mknod::postverification() {
                         dirent))
     return InflightAction::Abort(EIO);
 
+  OpLogResultEntry result_entry;
+  result_entry.set_ino(a().ino);
+  result_entry.set_generation(1);
+  *result_entry.mutable_attr() = pack_stat_into_stat_record(a().attr);
+  result_entry.set_attr_timeout(0.01);
+  result_entry.set_entry_timeout(0.01);
+  if (!write_oplog_result(result_entry)) {
+    return InflightAction::Abort(EIO);
+  }
+
   return commit([&]() {
     struct fuse_entry_param e{};
     e.ino = a().ino;
@@ -162,6 +173,23 @@ InflightAction Inflight_mknod::postverification() {
     e.entry_timeout = 0.01;
     return InflightAction::Entry(e);
   });
+}
+
+InflightAction Inflight_mknod::oplog_recovery(const OpLogRecord &record) {
+  if (record.result_case() != OpLogRecord::kEntry) {
+    return InflightAction::Abort(EIO);
+  }
+  if (!record.entry().has_attr()) {
+    return InflightAction::Abort(EIO);
+  }
+
+  struct fuse_entry_param e{};
+  e.ino = record.entry().ino();
+  e.generation = record.entry().generation();
+  unpack_stat_record_into_stat(record.entry().attr(), e.attr);
+  e.attr_timeout = record.entry().attr_timeout();
+  e.entry_timeout = record.entry().entry_timeout();
+  return InflightAction::Entry(e);
 }
 
 InflightCallback Inflight_mknod::issue() {

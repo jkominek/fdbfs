@@ -1,5 +1,7 @@
 #include "test_support.h"
 
+#include <catch2/catch_test_macros.hpp>
+
 #include <atomic>
 #include <cctype>
 #include <cerrno>
@@ -212,8 +214,8 @@ void FdbfsEnv::append_op(const std::string &s) noexcept {
 
 void FdbfsEnv::start_fdbfs(const fs::path &fs_exe,
                            const std::string &key_prefix) {
-  append_op("start_fdbfs: " + fs_exe.string() + " -k " + key_prefix + " " +
-            mnt.string());
+  append_op("start_fdbfs: FDBFS_TRACE_ERRORS=1 " + fs_exe.string() +
+            " --buggify -k " + key_prefix + " " + mnt.string());
 
   pid_t pid = ::fork();
   if (pid < 0) {
@@ -224,6 +226,7 @@ void FdbfsEnv::start_fdbfs(const fs::path &fs_exe,
   if (pid == 0) {
     // New process group so we can kill everything if needed.
     (void)::setpgid(0, 0);
+    (void)::setenv("FDBFS_TRACE_ERRORS", "1", 1);
 
     int out = ::open(fdbfs_stdout.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
     int err = ::open(fdbfs_stderr.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
@@ -234,8 +237,8 @@ void FdbfsEnv::start_fdbfs(const fs::path &fs_exe,
       ::dup2(err, STDERR_FILENO);
     }
 
-    ::execl(fs_exe.c_str(), fs_exe.c_str(), "-k", key_prefix.c_str(),
-            mnt.c_str(), (char *)nullptr);
+    ::execl(fs_exe.c_str(), fs_exe.c_str(), "--buggify", "-k",
+            key_prefix.c_str(), mnt.c_str(), (char *)nullptr);
     _exit(127);
   }
 
@@ -301,6 +304,9 @@ void scenario(const fs::path &fs_exe, const fs::path &source_dir,
   static std::atomic<unsigned int> next_test_idx = 0;
   const std::string key_prefix =
       "t" + std::to_string(next_test_idx.fetch_add(1));
+  INFO("filesystem case dir: " << env.root.filename().string());
+  INFO("filesystem artifacts dir: " << env.artifacts.string());
+  INFO("filesystem key prefix: " << key_prefix);
   env.append_op("using key_prefix=" + key_prefix);
   reset_database_with_gen_py(source_dir, env.artifacts, key_prefix);
   env.start_fdbfs(fs_exe, key_prefix);
@@ -312,4 +318,10 @@ void scenario(const fs::path &fs_exe, const fs::path &source_dir,
     env.capture_state("assertion failure or exception");
     throw;
   }
+}
+
+void scenario(const std::function<void(FdbfsEnv &)> &fn) {
+  static const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
+  static const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
+  scenario(fs_exe, source_dir, fn);
 }

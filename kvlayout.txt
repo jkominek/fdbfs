@@ -65,6 +65,26 @@ all pids it encounters when cleaning up inodes.
 similarly processes should watch for updates on their pid entry.
 if it is updated or erased, they should react immediately.
 
+=== op log ===
+prefix 'o' pid opid -> OpLogRecord
+
+Where:
+* pid is the same 128-bit process id used in inode-use records.
+* opid is a per-process monotonically increasing 64-bit integer (BE in key).
+* value is a protobuf OpLogRecord carrying a oneof result payload
+  (entry/attr/open/write/etc) to reconstruct and replay a successful
+  FUSE reply after uncertain commit.
+
+Subspaces:
+* all oplog records for pid P: [ 'o'+P, successor('o'+P) )
+* one oplog record:            'o'+P+opid
+
+Runtime tracking (in-memory):
+* keep ordered sets of local opids: live, dead.
+* when dead has a range strictly below live, clear that whole key range.
+* when a pid is classified dead, liveness cleanup can clear its entire
+  oplog subspace in a single range clear.
+
 === meta ===
 prefix 'M' -> metadata block. filesystem version and blocksize?
 

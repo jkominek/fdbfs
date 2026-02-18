@@ -60,6 +60,8 @@ private:
   InflightAction postlookup();
   InflightAction inode_check();
   InflightAction rmdir_inode_dirlist_check();
+  InflightAction oplog_recovery(const OpLogRecord &) override;
+  bool write_success_oplog_result();
 
   // parent directory
   const fuse_ino_t parent;
@@ -77,6 +79,18 @@ Inflight_unlink_rmdir::Inflight_unlink_rmdir(fuse_req_t req, fuse_ino_t parent,
     : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
       parent(parent), name(std::move(name)),
       dirent_key(pack_dentry_key(parent, this->name)), op(op) {}
+
+bool Inflight_unlink_rmdir::write_success_oplog_result() {
+  OpLogResultOK result;
+  return write_oplog_result(result);
+}
+
+InflightAction Inflight_unlink_rmdir::oplog_recovery(const OpLogRecord &record) {
+  if (record.result_case() != OpLogRecord::kOk) {
+    return InflightAction::Abort(EIO);
+  }
+  return InflightAction::OK();
+}
 
 InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check() {
   // got the directory listing future back, we can check to see if we're done.
@@ -105,6 +119,10 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check() {
                         dirent_key.size());
 
   erase_inode(transaction.get(), a().ino);
+
+  if (!write_success_oplog_result()) {
+    return InflightAction::Abort(EIO);
+  }
 
   return commit(InflightAction::OK);
 }
@@ -177,6 +195,10 @@ InflightAction Inflight_unlink_rmdir::inode_check() {
       // insert a record for the garbage collector
       fdb_transaction_set(transaction.get(), key.data(), key.size(), &b, 1);
     }
+  }
+
+  if (!write_success_oplog_result()) {
+    return InflightAction::Abort(EIO);
   }
 
   return commit(InflightAction::OK);

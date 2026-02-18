@@ -31,6 +31,91 @@ message ProcessTableEntry {
   optional string hostname = 4;
 }
 
+message StatRecord {
+  required fixed64 ino = 1;
+  required fixed64 dev = 2;
+  required uint32 mode = 3;
+  required uint64 nlink = 4;
+  required uint32 uid = 5;
+  required uint32 gid = 6;
+  required int64 size = 7;
+  required Timespec atime = 8;
+  required Timespec mtime = 9;
+  required Timespec ctime = 10;
+  required uint32 blksize = 11;
+  required uint64 blocks = 12;
+}
+
+message OpLogResultOK {}
+
+message OpLogResultEntry {
+  required fixed64 ino = 1;
+  required uint64 generation = 2;
+  required StatRecord attr = 3;
+  required double attr_timeout = 4;
+  required double entry_timeout = 5;
+}
+
+message OpLogResultAttr {
+  required StatRecord attr = 1;
+}
+
+message OpLogResultOpen {
+  required fixed64 ino = 1;
+  required uint32 flags = 2;
+  required bool direct_io = 3;
+  required bool keep_cache = 4;
+  required bool nonseekable = 5;
+}
+
+message OpLogResultBuf {
+  required bytes data = 1;
+  optional uint64 actual_size = 2;
+}
+
+message OpLogResultReadlink {
+  required bytes target = 1;
+}
+
+message OpLogResultWrite {
+  required uint64 size = 1;
+}
+
+message OpLogResultStatfs {
+  required uint64 bsize = 1;
+  required uint64 frsize = 2;
+  required uint64 blocks = 3;
+  required uint64 bfree = 4;
+  required uint64 bavail = 5;
+  required uint64 files = 6;
+  required uint64 ffree = 7;
+  required uint64 favail = 8;
+  required uint64 fsid = 9;
+  required uint64 flag = 10;
+  required uint64 namemax = 11;
+}
+
+message OpLogResultXattrSize {
+  required int64 size = 1;
+}
+
+message OpLogRecord {
+  // Monotonic per-process operation id.
+  required uint64 op_id = 1;
+  // Structured operation result payload for replay.
+  oneof result {
+    OpLogResultOK ok = 10;
+    OpLogResultEntry entry = 11;
+    OpLogResultAttr attr = 12;
+    OpLogResultOpen open = 13;
+    OpLogResultBuf buf = 14;
+    OpLogResultReadlink readlink = 15;
+    OpLogResultWrite write = 16;
+    OpLogResultStatfs statfs = 17;
+    OpLogResultXattrSize xattr_size = 18;
+  }
+}
+
 message DirectoryEntry {
   // We can plunk anything in here from the
   // INodeRecord that's immutable

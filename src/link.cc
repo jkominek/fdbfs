@@ -45,6 +45,8 @@ private:
   const std::string newname;
 
   InflightAction check();
+  InflightAction oplog_recovery(const OpLogRecord &) override;
+  bool write_success_oplog_result();
 };
 
 Inflight_link::Inflight_link(fuse_req_t req, fuse_ino_t ino,
@@ -52,6 +54,36 @@ Inflight_link::Inflight_link(fuse_req_t req, fuse_ino_t ino,
                              unique_transaction transaction)
     : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
       ino(ino), newparent(newparent), newname(std::move(newname)) {}
+
+bool Inflight_link::write_success_oplog_result() {
+  struct stat attr{};
+  pack_inode_record_into_stat(a().inode, attr);
+
+  OpLogResultEntry result;
+  result.set_ino(ino);
+  result.set_generation(1);
+  *result.mutable_attr() = pack_stat_into_stat_record(attr);
+  result.set_attr_timeout(0.01);
+  result.set_entry_timeout(0.01);
+  return write_oplog_result(result);
+}
+
+InflightAction Inflight_link::oplog_recovery(const OpLogRecord &record) {
+  if (record.result_case() != OpLogRecord::kEntry) {
+    return InflightAction::Abort(EIO);
+  }
+  if (!record.entry().has_attr()) {
+    return InflightAction::Abort(EIO);
+  }
+
+  struct fuse_entry_param e{};
+  e.ino = record.entry().ino();
+  e.generation = record.entry().generation();
+  unpack_stat_record_into_stat(record.entry().attr(), e.attr);
+  e.attr_timeout = record.entry().attr_timeout();
+  e.entry_timeout = record.entry().entry_timeout();
+  return InflightAction::Entry(e);
+}
 
 InflightAction Inflight_link::check() {
   fdb_bool_t present = 0;
@@ -129,6 +161,10 @@ InflightAction Inflight_link::check() {
   if (!fdb_set_protobuf(transaction.get(), pack_dentry_key(newparent, newname),
                         dirent))
     return InflightAction::Abort(EIO);
+
+  if (!write_success_oplog_result()) {
+    return InflightAction::Abort(EIO);
+  }
 
   return commit([&]() {
     struct fuse_entry_param e{};

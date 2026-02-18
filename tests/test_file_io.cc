@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <source_location>
 #include <string>
 #include <vector>
 
@@ -29,9 +30,26 @@ void apply_expected_write(std::vector<uint8_t> &expected, off_t off,
   std::copy(payload.begin(), payload.end(), expected.begin() + start);
 }
 
-void verify_whole_file(const fs::path &p, const std::vector<uint8_t> &expected) {
+void verify_whole_file(
+    const fs::path &p, const std::vector<uint8_t> &expected,
+    std::source_location loc = std::source_location::current()) {
+  INFO("verify_whole_file caller=" << loc.file_name() << ":" << loc.line());
+  INFO("path=" << p);
   const auto got = read_file_all(p);
+  INFO("expected_size=" << expected.size() << " got_size=" << got.size());
   REQUIRE(got.size() == expected.size());
+  if (got != expected) {
+    size_t mismatch = 0;
+    while (mismatch < got.size() && got[mismatch] == expected[mismatch]) {
+      mismatch++;
+    }
+    INFO("first_mismatch_index=" << mismatch);
+    if (mismatch < got.size()) {
+      INFO("expected_byte=" << static_cast<unsigned>(expected[mismatch])
+                            << " got_byte="
+                            << static_cast<unsigned>(got[mismatch]));
+    }
+  }
   CHECK(got == expected);
 }
 
@@ -39,16 +57,13 @@ void verify_whole_file(const fs::path &p, const std::vector<uint8_t> &expected) 
 
 TEST_CASE("file IO mixed aligned/unaligned writes and reads",
           "[integration][read][write][open][setattr]") {
-  const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-
-  scenario(fs_exe, source_dir, [&](FdbfsEnv &env) {
+  scenario([&](FdbfsEnv &env) {
     const fs::path p = env.p("io.bin");
     int fd = ::open(p.c_str(), O_CREAT | O_RDWR | O_TRUNC, 0644);
-    REQUIRE(fd >= 0);
+    FDBFS_REQUIRE_NONNEG(fd);
 
     struct stat st {};
-    REQUIRE(::fstat(fd, &st) == 0);
+    FDBFS_REQUIRE_OK(::fstat(fd, &st));
     REQUIRE(st.st_blksize > 0);
     const size_t bs = static_cast<size_t>(st.st_blksize);
 
@@ -93,21 +108,21 @@ TEST_CASE("file IO mixed aligned/unaligned writes and reads",
     CHECK(eof_read.empty());
 
     const off_t trunc_to = static_cast<off_t>(bs * 2 + 5);
-    REQUIRE(::ftruncate(fd, trunc_to) == 0);
+    FDBFS_REQUIRE_OK(::ftruncate(fd, trunc_to));
     expected.resize(static_cast<size_t>(trunc_to));
     verify_whole_file(p, expected);
 
-    REQUIRE(::close(fd) == 0);
+    FDBFS_REQUIRE_OK(::close(fd));
 
     fd = ::open(p.c_str(), O_RDWR | O_TRUNC);
-    REQUIRE(fd >= 0);
+    FDBFS_REQUIRE_NONNEG(fd);
     expected.clear();
     verify_whole_file(p, expected);
 
     const auto final_payload = make_pattern(bs + 13, 0x9999ull);
     write_all_fd(fd, final_payload.data(), final_payload.size());
     apply_expected_write(expected, 0, final_payload);
-    REQUIRE(::close(fd) == 0);
+    FDBFS_REQUIRE_OK(::close(fd));
     verify_whole_file(p, expected);
   });
 }

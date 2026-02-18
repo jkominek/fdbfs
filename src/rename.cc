@@ -57,6 +57,8 @@ private:
 
   InflightAction check();
   InflightAction complicated();
+  InflightAction oplog_recovery(const OpLogRecord &) override;
+  bool write_success_oplog_result();
 };
 
 Inflight_rename::Inflight_rename(fuse_req_t req, fuse_ino_t oldparent,
@@ -66,6 +68,18 @@ Inflight_rename::Inflight_rename(fuse_req_t req, fuse_ino_t oldparent,
     : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
       oldparent(oldparent), oldname(std::move(oldname)), newparent(newparent),
       newname(std::move(newname)), flags(flags) {}
+
+bool Inflight_rename::write_success_oplog_result() {
+  OpLogResultOK result;
+  return write_oplog_result(result);
+}
+
+InflightAction Inflight_rename::oplog_recovery(const OpLogRecord &record) {
+  if (record.result_case() != OpLogRecord::kOk) {
+    return InflightAction::Abort(EIO);
+  }
+  return InflightAction::OK();
+}
 
 InflightAction Inflight_rename::complicated() {
   /**
@@ -167,6 +181,10 @@ InflightAction Inflight_rename::complicated() {
   if (!fdb_set_protobuf(transaction.get(), pack_dentry_key(newparent, newname),
                         a().origin_dirent))
     return InflightAction::Abort(EIO);
+
+  if (!write_success_oplog_result()) {
+    return InflightAction::Abort(EIO);
+  }
 
   return commit(InflightAction::OK);
 }
@@ -365,6 +383,9 @@ InflightAction Inflight_rename::check() {
    * we're all done except for the commit. So schedule that,
    * and head off to the commit callback when it finishes.
    */
+  if (!write_success_oplog_result()) {
+    return InflightAction::Abort(EIO);
+  }
   return commit(InflightAction::OK);
 }
 

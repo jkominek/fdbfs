@@ -37,7 +37,8 @@ private:
 Inflight_forget::Inflight_forget(fuse_req_t req,
                                  std::vector<ForgetEntry> entries,
                                  unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+    : InflightWithAttempt(req, ReadWrite::IdempotentWrite,
+                          std::move(transaction)),
       entries(std::move(entries)) {}
 
 InflightCallback Inflight_forget::issue() {

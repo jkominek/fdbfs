@@ -4,11 +4,19 @@
 #define FDB_API_VERSION 630
 #include <foundationdb/fdb_c.h>
 
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <queue>
+#include <set>
+#include <source_location>
+#include <utility>
+#include <variant>
 
 #if DEBUG
 #include <time.h>
@@ -24,7 +32,25 @@ extern thread_pool pool;
 // Halt all inflights and prevent new ones from starting.
 extern void shut_it_down();
 
-enum class ReadWrite { Yes, ReadOnly };
+// Yes: write op that needs oplog protection for maybe-committed retries.
+// IdempotentWrite: write op that can be safely retried without oplog check.
+// ReadOnly: no writes.
+enum class ReadWrite { Yes, IdempotentWrite, ReadOnly };
+
+using OpLogResultVariant =
+    std::variant<OpLogResultOK, OpLogResultEntry, OpLogResultAttr,
+                 OpLogResultOpen, OpLogResultBuf, OpLogResultReadlink,
+                 OpLogResultWrite, OpLogResultStatfs, OpLogResultXattrSize>;
+
+// op log helpers
+[[nodiscard]] extern std::vector<uint8_t>
+pack_oplog_key(const std::vector<uint8_t> &owner_pid, uint64_t op_id);
+[[nodiscard]] extern range_keys
+pack_oplog_subspace_range(const std::vector<uint8_t> &owner_pid);
+[[nodiscard]] extern range_keys
+pack_local_oplog_span_range(uint64_t start_op_id, uint64_t stop_op_id);
+[[nodiscard]] extern std::optional<std::pair<uint64_t, uint64_t>>
+claim_local_oplog_cleanup_span();
 
 class InflightAction;
 
@@ -36,6 +62,7 @@ extern "C" void fdbfs_error_checker(FDBFuture *, void *);
 struct AttemptState {
   std::optional<InflightCallback> cb;
   unique_future commit;
+  unique_future oplog_fetch;
   std::queue<FDBFuture *> future_queue;
   virtual ~AttemptState() = default;
 };
@@ -73,20 +100,32 @@ protected:
   // constructor
   Inflight(fuse_req_t, ReadWrite, unique_transaction);
 
+  // Per-attempt transaction configuration hook. Called from start() before any
+  // reads/writes (including oplog checks).
+  [[nodiscard]] virtual fdb_error_t configure_transaction() { return 0; }
+
   void wait_on_future(FDBFuture *, unique_future &);
   [[nodiscard]] virtual std::unique_ptr<AttemptState>
   create_attempt_state() = 0;
+  [[nodiscard]] virtual InflightAction oplog_recovery(const OpLogRecord &);
   AttemptState &attempt_state();
   const AttemptState &attempt_state() const;
   void reset_attempt_state();
+  [[nodiscard]] bool should_check_oplog() const;
+  [[nodiscard]] bool uses_oplog() const;
+  [[nodiscard]] bool write_oplog_record(OpLogRecord record);
+  [[nodiscard]] bool write_oplog_result(const OpLogResultVariant &);
 
 private:
   // whether we're intended as r/w or not.
   ReadWrite readwrite;
+  bool commit_unknown_seen = false;
+  std::optional<uint64_t> op_id;
   std::unique_ptr<AttemptState> attempt;
+  [[nodiscard]] InflightAction check_oplog_or_issue();
   bool run_current_callback();
   void begin_wait();
-  bool retry_with_on_error(fdb_error_t err);
+  bool retry_with_on_error(fdb_error_t err, const char *source);
 
 #if DEBUG
   struct timespec clockstart;
@@ -144,12 +183,39 @@ private:
 // can call methods off of that.
 class InflightAction {
 public:
+  static bool trace_errors_enabled() {
+    static const bool enabled = (getenv("FDBFS_TRACE_ERRORS") != nullptr);
+    return enabled;
+  }
+  static void trace_errno_error(const char *kind, int err, const char *why,
+                                const std::source_location &loc) {
+    if (!trace_errors_enabled())
+      return;
+    fprintf(stderr, "fdbfs %s: err=%d (%s) at %s:%u (%s)%s%s\n", kind, err,
+            strerror(err), loc.file_name(), loc.line(), loc.function_name(),
+            (why && why[0]) ? " why=" : "", (why && why[0]) ? why : "");
+  }
+  static void trace_fdb_error(const char *kind, fdb_error_t err,
+                              const char *why,
+                              const std::source_location &loc) {
+    if (!trace_errors_enabled())
+      return;
+    fprintf(stderr, "fdbfs %s: fdb_err=%d (%s) at %s:%u (%s)%s%s\n", kind, err,
+            fdb_get_error(err), loc.file_name(), loc.line(),
+            loc.function_name(), (why && why[0]) ? " why=" : "",
+            (why && why[0]) ? why : "");
+  }
   static InflightAction BeginWait(InflightCallback newcb) {
     return InflightAction(false, true, false, [newcb](Inflight *i) {
       i->attempt_state().cb.emplace(newcb);
     });
   }
-  static InflightAction FDBError(fdb_error_t err) {
+  // Error surfaced from fdb_transaction_* API calls where FoundationDB expects
+  // us to run fdb_transaction_on_error for retryable codes.
+  static InflightAction FDBTransactionError(
+      fdb_error_t err, const char *why = "",
+      std::source_location loc = std::source_location::current()) {
+    trace_fdb_error("FDBTransactionError", err, why, loc);
     if (fdb_error_predicate(FDB_ERROR_PREDICATE_RETRYABLE, err)) {
       // retryable FDB errors must flow through fdb_transaction_on_error.
       return InflightAction(false, false, false, [](Inflight *) {}, err);
@@ -162,6 +228,17 @@ public:
         fuse_reply_err(i->req, EIO);
       });
     }
+  }
+
+  // Error surfaced from fdb_future_get_* accessors (or other unexpected API
+  // surfaces). By the time we are decoding a ready future, transaction errors
+  // should already have been routed via fdb_future_get_error in the checker.
+  // Treat these as internal failures, not on_error retry points.
+  static InflightAction
+  FDBError(fdb_error_t err, const char *why = "",
+           std::source_location loc = std::source_location::current()) {
+    trace_fdb_error("FDBError", err, why, loc);
+    return InflightAction::Abort(EIO, why, loc);
   }
   static InflightAction Restart() {
     // TODO someday track how many restarts we've done, so that after
@@ -181,7 +258,10 @@ public:
     return InflightAction(true, false, false,
                           [](Inflight *i) { fuse_reply_err(i->req, 0); });
   };
-  static InflightAction Abort(int err, const char *why = "") {
+  static InflightAction
+  Abort(int err, const char *why = "",
+        std::source_location loc = std::source_location::current()) {
+    trace_errno_error("Abort", err, why, loc);
     return InflightAction(true, false, false,
                           [err](Inflight *i) { fuse_reply_err(i->req, err); });
   }

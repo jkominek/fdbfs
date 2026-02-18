@@ -49,6 +49,8 @@ private:
   const SetXattrBehavior behavior;
 
   InflightAction process();
+  InflightAction oplog_recovery(const OpLogRecord &) override;
+  bool write_success_oplog_result();
 };
 
 Inflight_setxattr::Inflight_setxattr(fuse_req_t req, fuse_ino_t ino,
@@ -59,6 +61,18 @@ Inflight_setxattr::Inflight_setxattr(fuse_req_t req, fuse_ino_t ino,
     : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
       ino(ino), name(std::move(name)), xattr_value(std::move(xattr_value)),
       behavior(behavior) {}
+
+bool Inflight_setxattr::write_success_oplog_result() {
+  OpLogResultOK result;
+  return write_oplog_result(result);
+}
+
+InflightAction Inflight_setxattr::oplog_recovery(const OpLogRecord &record) {
+  if (record.result_case() != OpLogRecord::kOk) {
+    return InflightAction::Abort(EIO);
+  }
+  return InflightAction::OK();
+}
 
 InflightAction Inflight_setxattr::process() {
   fdb_bool_t present = 0;
@@ -93,6 +107,10 @@ InflightAction Inflight_setxattr::process() {
   const auto data_key = pack_xattr_data_key(ino, name);
   fdb_transaction_set(transaction.get(), data_key.data(), data_key.size(),
                       xattr_value.data(), xattr_value.size());
+
+  if (!write_success_oplog_result()) {
+    return InflightAction::Abort(EIO);
+  }
 
   return commit(InflightAction::OK);
 }

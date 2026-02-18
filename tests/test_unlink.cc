@@ -12,69 +12,63 @@
 
 TEST_CASE("unlink removes regular files and preserves hard-linked targets",
           "[integration][unlink][link][stat]") {
-  const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-
-  scenario(fs_exe, source_dir, [&](FdbfsEnv &env) {
+  scenario([&](FdbfsEnv &env) {
     const fs::path a = env.p("a");
     const fs::path b = env.p("b");
 
     int fd = ::open(a.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    REQUIRE(fd >= 0);
-    REQUIRE(::close(fd) == 0);
-    REQUIRE(::link(a.c_str(), b.c_str()) == 0);
+    FDBFS_REQUIRE_NONNEG(fd);
+    FDBFS_REQUIRE_OK(::close(fd));
+    FDBFS_REQUIRE_OK(::link(a.c_str(), b.c_str()));
 
-    REQUIRE(::unlink(a.c_str()) == 0);
+    FDBFS_REQUIRE_OK(::unlink(a.c_str()));
     CHECK(!fs::exists(a));
     CHECK(fs::exists(b));
 
     struct stat st {};
-    REQUIRE(::stat(b.c_str(), &st) == 0);
+    FDBFS_REQUIRE_OK(::stat(b.c_str(), &st));
     CHECK(st.st_nlink == 1);
 
-    REQUIRE(::unlink(b.c_str()) == 0);
+    FDBFS_REQUIRE_OK(::unlink(b.c_str()));
     CHECK(!fs::exists(b));
   });
 }
 
 TEST_CASE("unlink and rmdir enforce directory/type constraints",
           "[integration][unlink][rmdir]") {
-  const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-
-  scenario(fs_exe, source_dir, [&](FdbfsEnv &env) {
+  scenario([&](FdbfsEnv &env) {
     const fs::path dir = env.p("dir");
     const fs::path file = env.p("file");
-    REQUIRE(::mkdir(dir.c_str(), 0755) == 0);
+    FDBFS_REQUIRE_OK(::mkdir(dir.c_str(), 0755));
 
     int fd = ::open(file.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    REQUIRE(fd >= 0);
-    REQUIRE(::close(fd) == 0);
+    FDBFS_REQUIRE_NONNEG(fd);
+    FDBFS_REQUIRE_OK(::close(fd));
 
     errno = 0;
     CHECK(::unlink(dir.c_str()) == -1);
-    CHECK(errno == EISDIR);
+    FDBFS_CHECK_ERRNO(EISDIR);
 
     errno = 0;
     CHECK(::rmdir(file.c_str()) == -1);
-    CHECK(errno == ENOTDIR);
+    FDBFS_CHECK_ERRNO(ENOTDIR);
 
     const fs::path nonempty = env.p("nonempty");
-    REQUIRE(::mkdir(nonempty.c_str(), 0755) == 0);
+    FDBFS_REQUIRE_OK(::mkdir(nonempty.c_str(), 0755));
     fd = ::open((nonempty / "child").c_str(), O_CREAT | O_WRONLY | O_TRUNC,
                 0644);
-    REQUIRE(fd >= 0);
-    REQUIRE(::close(fd) == 0);
+    FDBFS_REQUIRE_NONNEG(fd);
+    FDBFS_REQUIRE_OK(::close(fd));
 
     errno = 0;
     CHECK(::rmdir(nonempty.c_str()) == -1);
-    CHECK(errno == ENOTEMPTY);
+    FDBFS_CHECK_ERRNO(ENOTEMPTY);
 
-    REQUIRE(::unlink((nonempty / "child").c_str()) == 0);
-    REQUIRE(::rmdir(nonempty.c_str()) == 0);
+    FDBFS_REQUIRE_OK(::unlink((nonempty / "child").c_str()));
+    FDBFS_REQUIRE_OK(::rmdir(nonempty.c_str()));
 
     errno = 0;
     CHECK(::unlink(env.p("missing").c_str()) == -1);
-    CHECK(errno == ENOENT);
+    FDBFS_CHECK_ERRNO(ENOENT);
   });
 }

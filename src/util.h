@@ -122,6 +122,10 @@ pack_xattr_data_key(fuse_ino_t ino, const std::string &name = {});
 extern void print_key(std::vector<uint8_t>);
 extern void pack_inode_record_into_stat(const INodeRecord &inode,
                                         struct stat &attr);
+[[nodiscard]] extern StatRecord
+pack_stat_into_stat_record(const struct stat &attr);
+extern void unpack_stat_record_into_stat(const StatRecord &record,
+                                         struct stat &attr);
 template <typename T> void print_bytes(const T *str, int strlength) {
   for (int i = 0; i < strlength; i++) {
     if (isprint(str[i])) {
@@ -170,12 +174,6 @@ decode_block(const FDBKeyValue *, int, std::span<uint8_t>, size_t);
 #ifndef DEBUG
 #define DEBUG 0
 #endif // DEBUG
-
-#define debug_print(fmt, ...)                                                  \
-  do {                                                                         \
-    if (DEBUG)                                                                 \
-      fprintf(stderr, fmt, __VA_ARGS__);                                       \
-  } while (0)
 
 struct FDBTransactionDeleter {
   void operator()(FDBTransaction *t) { fdb_transaction_destroy(t); }

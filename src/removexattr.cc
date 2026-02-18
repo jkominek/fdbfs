@@ -39,7 +39,10 @@ private:
   const fuse_ino_t ino;
   const std::string name;
 
+  fdb_error_t configure_transaction() override;
   InflightAction process();
+  InflightAction oplog_recovery(const OpLogRecord &) override;
+  bool write_success_oplog_result();
 };
 
 Inflight_removexattr::Inflight_removexattr(fuse_req_t req, fuse_ino_t ino,
@@ -47,6 +50,24 @@ Inflight_removexattr::Inflight_removexattr(fuse_req_t req, fuse_ino_t ino,
                                            unique_transaction transaction)
     : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
       ino(ino), name(std::move(name)) {}
+
+fdb_error_t Inflight_removexattr::configure_transaction() {
+  return fdb_transaction_set_option(transaction.get(),
+                                    FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE,
+                                    nullptr, 0);
+}
+
+bool Inflight_removexattr::write_success_oplog_result() {
+  OpLogResultOK result;
+  return write_oplog_result(result);
+}
+
+InflightAction Inflight_removexattr::oplog_recovery(const OpLogRecord &record) {
+  if (record.result_case() != OpLogRecord::kOk) {
+    return InflightAction::Abort(EIO);
+  }
+  return InflightAction::OK();
+}
 
 InflightAction Inflight_removexattr::process() {
   fdb_bool_t present = 0;
@@ -60,6 +81,9 @@ InflightAction Inflight_removexattr::process() {
     return InflightAction::FDBError(err);
 
   if (present) {
+    if (!write_success_oplog_result()) {
+      return InflightAction::Abort(EIO);
+    }
     return commit(InflightAction::OK);
   } else {
     return InflightAction::Abort(ENODATA);
@@ -67,13 +91,6 @@ InflightAction Inflight_removexattr::process() {
 }
 
 InflightCallback Inflight_removexattr::issue() {
-  // turn off RYW, so there's no uncertainty about what we'll get when
-  // we interleave our reads and writes.
-  if (fdb_transaction_set_option(
-          transaction.get(), FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, NULL, 0)) {
-    return []() { return InflightAction::Abort(EIO); };
-  }
-
   {
     const auto key = pack_xattr_key(ino, name);
     wait_on_future(

@@ -14,6 +14,7 @@
 #include <sys/time.h>
 
 #include <algorithm>
+#include <limits>
 
 #include "fdbfs_ops.h"
 #include "inflight.h"
@@ -73,7 +74,10 @@ private:
   const std::vector<uint8_t> buffer;
   const off_t off;
 
+  fdb_error_t configure_transaction() override;
   InflightAction check();
+  InflightAction oplog_recovery(const OpLogRecord &) override;
+  bool write_success_oplog_result();
 };
 
 Inflight_write::Inflight_write(fuse_req_t req, fuse_ino_t ino,
@@ -81,6 +85,29 @@ Inflight_write::Inflight_write(fuse_req_t req, fuse_ino_t ino,
                                unique_transaction transaction)
     : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
       ino(ino), buffer(std::move(buffer)), off(off) {}
+
+fdb_error_t Inflight_write::configure_transaction() {
+  return fdb_transaction_set_option(transaction.get(),
+                                    FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE,
+                                    nullptr, 0);
+}
+
+bool Inflight_write::write_success_oplog_result() {
+  OpLogResultWrite result;
+  result.set_size(buffer.size());
+  return write_oplog_result(result);
+}
+
+InflightAction Inflight_write::oplog_recovery(const OpLogRecord &record) {
+  if (record.result_case() != OpLogRecord::kWrite) {
+    return InflightAction::Abort(EIO);
+  }
+  if (record.write().size() >
+      static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+    return InflightAction::Abort(EIO);
+  }
+  return InflightAction::Write(static_cast<size_t>(record.write().size()));
+}
 
 InflightAction Inflight_write::check() {
   fdb_bool_t present;
@@ -199,17 +226,14 @@ InflightAction Inflight_write::check() {
       return InflightAction::Abort(EIO);
   }
 
+  if (!write_success_oplog_result()) {
+    return InflightAction::Abort(EIO);
+  }
+
   return commit([&]() { return InflightAction::Write(buffer.size()); });
 }
 
 InflightCallback Inflight_write::issue() {
-  // turn off RYW, so there's no uncertainty about what we'll get when
-  // we interleave our reads and writes.
-  if (fdb_transaction_set_option(
-          transaction.get(), FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, NULL, 0)) {
-    return []() { return InflightAction::Abort(EIO); };
-  }
-
   // step 1 is easy, we'll need the inode record
   {
     const auto key = pack_inode_key(ino);
@@ -218,18 +242,19 @@ InflightCallback Inflight_write::issue() {
         a().inode_fetch);
   }
 
-  const auto [conflict_start_key, conflict_stop_key] = pack_fileblock_span_range(
-      ino, off / BLOCKSIZE, (off + buffer.size()) / BLOCKSIZE);
+  const auto [conflict_start_key, conflict_stop_key] =
+      pack_fileblock_span_range(ino, off / BLOCKSIZE,
+                                (off + buffer.size()) / BLOCKSIZE);
   // we're generating just a single conflict range for all of
   // the fileblocks that we're writing to: less to send across
   // the network, and for the resolver to process.
-  if (fdb_transaction_add_conflict_range(
+  if (const fdb_error_t err = fdb_transaction_add_conflict_range(
           transaction.get(), conflict_start_key.data(),
           conflict_start_key.size(), conflict_stop_key.data(),
           conflict_stop_key.size(), FDB_CONFLICT_RANGE_TYPE_WRITE)) {
-    // hm, if we can't add our conflict range, we can't guarantee correctness.
-    // guess we'll try again?
-    return InflightAction::Restart;
+    // conflict-range setup failed; retryable errors should flow through
+    // FoundationDB on_error handling.
+    return [err]() { return InflightAction::FDBTransactionError(err); };
   }
 
   int iter_start, iter_stop;
@@ -237,7 +262,8 @@ InflightCallback Inflight_write::issue() {
   // now, are we doing block-partial writes?
   if ((off % BLOCKSIZE) != 0) {
     const int start_block = off / BLOCKSIZE;
-    const auto [start_key, stop_key] = pack_fileblock_single_range(ino, start_block);
+    const auto [start_key, stop_key] =
+        pack_fileblock_single_range(ino, start_block);
     wait_on_future(
         fdb_transaction_get_range(
             transaction.get(),

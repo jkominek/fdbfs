@@ -6,8 +6,8 @@ fdbcli --exec status
 rm -rf test_a test_b
 mkdir -p test_a test_b
 MP=`stat -c %m .`
-build/fs test_a &
-build/fs test_b &
+FDBFS_TRACE_ERRORS=1 build/fs --buggify test_a &
+FDBFS_TRACE_ERRORS=1 build/fs --buggify test_b &
 
 sleep 5
 

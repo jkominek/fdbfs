@@ -3,7 +3,9 @@
 
 #include <assert.h>
 #include <ctype.h>
+#include <source_location>
 #include <stdio.h>
+#include <stdlib.h>
 #include <strings.h>
 #include <time.h>
 #include <tuple>
@@ -17,6 +19,28 @@
 #endif
 
 #include "values.pb.h"
+
+namespace {
+
+bool trace_errors_enabled() {
+  static const bool enabled = (getenv("FDBFS_TRACE_ERRORS") != nullptr);
+  return enabled;
+}
+
+template <typename T>
+std::expected<T, int>
+unexpected_errno(int err, const char *why = "",
+                 std::source_location loc = std::source_location::current()) {
+  if (trace_errors_enabled()) {
+    fprintf(stderr, "fdbfs UtilUnexpected: err=%d (%s) at %s:%u (%s)%s%s\n",
+            err, strerror(err), loc.file_name(), loc.line(),
+            loc.function_name(), (why && why[0]) ? " why=" : "",
+            (why && why[0]) ? why : "");
+  }
+  return std::unexpected(err);
+}
+
+} // namespace
 
 unique_transaction make_transaction() {
   unique_transaction ut;
@@ -83,8 +107,12 @@ void best_effort_clear_inode_use_record(fuse_ino_t ino, uint64_t generation) {
     // NOTE this is a leaked record. we're going to need to implement
     // some kind of online fsck that can scan all inodes for lingering
     // junk.
-    debug_print("failed to clear inode use record for %li: %s\n", ino,
-                fdb_get_error(result.error()));
+    if (trace_errors_enabled()) {
+      fprintf(stderr,
+              "fdbfs BestEffortClearUseRecord: ino=%llu fdb_err=%d (%s)\n",
+              static_cast<unsigned long long>(ino), result.error(),
+              fdb_get_error(result.error()));
+    }
   }
 }
 
@@ -260,24 +288,34 @@ std::vector<uint8_t> prefix_range_end(const std::vector<uint8_t> &prefix) {
   std::terminate();
 }
 
+// all process-table records for this filesystem prefix.
+// [ key_prefix + PID_PREFIX, key_prefix + (PID_PREFIX + 1) ).
 range_keys pack_pid_subspace_range() {
   auto start = key_prefix;
   start.push_back(PID_PREFIX);
   auto stop = key_prefix;
   stop.push_back(PID_PREFIX + 1);
+  assert(start < stop);
   return {start, stop};
 }
 
+// one process-table record namespace (base PID key plus any suffixes).
+// [ pack_pid_key(record_pid), prefix_range_end(pack_pid_key(record_pid)) ).
 range_keys pack_pid_record_range(const std::vector<uint8_t> &record_pid) {
   auto start = pack_pid_key(record_pid);
-  return {start, prefix_range_end(start)};
+  auto stop = prefix_range_end(start);
+  assert(start < stop);
+  return {start, stop};
 }
 
+// all garbage-collection marker records for this filesystem prefix.
+// [ key_prefix + GARBAGE_PREFIX, key_prefix + (GARBAGE_PREFIX + 1) ).
 range_keys pack_garbage_subspace_range() {
   auto start = key_prefix;
   start.push_back(GARBAGE_PREFIX);
   auto stop = key_prefix;
   stop.push_back(GARBAGE_PREFIX + 1);
+  assert(start < stop);
   return {start, stop};
 }
 
@@ -292,28 +330,36 @@ range_keys pack_inode_subspace_range(fuse_ino_t ino) {
     stop = key_prefix;
     stop.push_back(INODE_PREFIX + 1);
   }
+  assert(start < stop);
   return {start, stop};
 }
 
+// all inode-use records for one inode (across all hosts/pids).
+// [ pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX}),
+//   pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX + 1}) ).
 range_keys pack_inode_use_subspace_range(fuse_ino_t ino) {
-  auto start = pack_inode_key(ino);
-  start.push_back(INODE_USE_PREFIX);
-  auto stop = pack_inode_key(ino);
-  stop.push_back(INODE_USE_PREFIX + 1);
+  auto start = pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX});
+  auto stop = pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX + 1});
+  assert(start < stop);
   return {start, stop};
 }
 
+// inode metadata key and its adjacent use-record subspace.
+// [ pack_inode_key(ino), pack_inode_key(ino, INODE_PREFIX, {0x02}) ).
 range_keys pack_inode_metadata_and_use_range(fuse_ino_t ino) {
   auto start = pack_inode_key(ino);
-  auto stop = start;
-  stop.push_back(0x02);
+  auto stop = pack_inode_key(ino, INODE_PREFIX, {0x02});
+  assert(start < stop);
   return {start, stop};
 }
 
-/* Even if we want to fetch a single block, we've got to use a range,
- * because we encode information like (optional) compression algorithm
- * or parity block info at the tail end of the key.
- */
+// Even if we want to fetch a single block, we've got to use a range,
+// because we encode information like (optional) compression algorithm
+// or parity block info at the tail end of the key.
+//
+// all physical key variants for one logical file block.
+// [ pack_fileblock_key(ino, block), pack_fileblock_key(ino, block + 1) )
+// with max-block fallback into the next inode or next top-level subspace.
 range_keys pack_fileblock_single_range(fuse_ino_t ino, uint64_t block) {
   auto start = pack_fileblock_key(ino, block);
   std::vector<uint8_t> stop;
@@ -325,9 +371,13 @@ range_keys pack_fileblock_single_range(fuse_ino_t ino, uint64_t block) {
     stop = key_prefix;
     stop.push_back(DATA_PREFIX + 1);
   }
+  assert(start < stop);
   return {start, stop};
 }
 
+// all data blocks for one inode, from start_block through stop_block.
+// [ pack_fileblock_key(ino, start_block),
+//   pack_fileblock_key(ino, stop_block + 1) ) with max-block fallback.
 range_keys pack_fileblock_span_range(fuse_ino_t ino, uint64_t start_block,
                                      uint64_t stop_block) {
   auto start = pack_fileblock_key(ino, start_block);
@@ -340,6 +390,7 @@ range_keys pack_fileblock_span_range(fuse_ino_t ino, uint64_t start_block,
     stop = key_prefix;
     stop.push_back(DATA_PREFIX + 1);
   }
+  assert(start < stop);
   return {start, stop};
 }
 
@@ -448,6 +499,45 @@ void pack_inode_record_into_stat(const INodeRecord &inode, struct stat &attr) {
   printf("  uid: %i\n", attr.st_uid);
   printf("  gid: %i\n", attr.st_gid);
   */
+}
+
+StatRecord pack_stat_into_stat_record(const struct stat &attr) {
+  StatRecord record;
+  record.set_ino(attr.st_ino);
+  record.set_dev(attr.st_dev);
+  record.set_mode(attr.st_mode);
+  record.set_nlink(attr.st_nlink);
+  record.set_uid(attr.st_uid);
+  record.set_gid(attr.st_gid);
+  record.set_size(attr.st_size);
+  record.mutable_atime()->set_sec(attr.st_atim.tv_sec);
+  record.mutable_atime()->set_nsec(attr.st_atim.tv_nsec);
+  record.mutable_mtime()->set_sec(attr.st_mtim.tv_sec);
+  record.mutable_mtime()->set_nsec(attr.st_mtim.tv_nsec);
+  record.mutable_ctime()->set_sec(attr.st_ctim.tv_sec);
+  record.mutable_ctime()->set_nsec(attr.st_ctim.tv_nsec);
+  record.set_blksize(attr.st_blksize);
+  record.set_blocks(attr.st_blocks);
+  return record;
+}
+
+void unpack_stat_record_into_stat(const StatRecord &record, struct stat &attr) {
+  attr = {};
+  attr.st_ino = record.ino();
+  attr.st_dev = record.dev();
+  attr.st_mode = record.mode();
+  attr.st_nlink = record.nlink();
+  attr.st_uid = record.uid();
+  attr.st_gid = record.gid();
+  attr.st_size = record.size();
+  attr.st_atim.tv_sec = record.atime().sec();
+  attr.st_atim.tv_nsec = record.atime().nsec();
+  attr.st_mtim.tv_sec = record.mtime().sec();
+  attr.st_mtim.tv_nsec = record.mtime().nsec();
+  attr.st_ctim.tv_sec = record.ctime().sec();
+  attr.st_ctim.tv_nsec = record.ctime().nsec();
+  attr.st_blksize = record.blksize();
+  attr.st_blocks = record.blocks();
 }
 
 range_keys offset_size_to_range_keys(fuse_ino_t ino, size_t off, size_t size) {
@@ -661,7 +751,8 @@ std::expected<size_t, int> decode_block(const FDBKeyValue *kv, int block_offset,
     if (arglen <= 0) {
       // printf("    no arg\n");
       //  no argument, but we needed to know compression type
-      return std::unexpected(EIO);
+      return unexpected_errno<size_t>(
+          EIO, "compressed block missing compression argument");
     }
 
 #ifdef LZ4_BLOCK_COMPRESSION
@@ -674,7 +765,7 @@ std::expected<size_t, int> decode_block(const FDBKeyValue *kv, int block_offset,
       const int ret = LZ4_decompress_safe_partial(
           reinterpret_cast<const char *>(value), buffer.data(),
           kv->value_length, BLOCKSIZE, BLOCKSIZE);
-      printf("%i\n", ret);
+
       if (ret < 0) {
         return std::unexpected(ret);
       }
@@ -700,7 +791,7 @@ std::expected<size_t, int> decode_block(const FDBKeyValue *kv, int block_offset,
           ZSTD_decompress(buffer.data(), BLOCKSIZE, value, kv->value_length);
       if (ZSTD_isError(ret)) {
         // error
-        return std::unexpected(EIO);
+        return unexpected_errno<size_t>(EIO, "ZSTD decompression failed");
       }
 
       if (ret > static_cast<size_t>(block_offset)) {
@@ -715,14 +806,15 @@ std::expected<size_t, int> decode_block(const FDBKeyValue *kv, int block_offset,
     }
 #endif
     // unrecognized compression algorithm
-    return std::unexpected(EIO);
+    return unexpected_errno<size_t>(EIO,
+                                    "compressed block has unknown algorithm");
   }
 #endif
 
 #endif
 
   // unrecognized block type.
-  return std::unexpected(EIO);
+  return unexpected_errno<size_t>(EIO, "unknown block type");
 }
 
 std::expected<void, int>
@@ -737,7 +829,7 @@ fdb_set_protobuf(FDBTransaction *tx, const std::vector<uint8_t> &key,
 
   std::vector<uint8_t> buf(n);
   if (!msg.SerializeToArray(buf.data(), static_cast<int>(n)))
-    return std::unexpected(EIO);
+    return unexpected_errno<void>(EIO, "protobuf serialization failed");
 
   fdb_transaction_set(tx, key.data(), static_cast<int>(key.size()), buf.data(),
                       static_cast<int>(n));
