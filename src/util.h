@@ -138,6 +138,12 @@ template <typename T> void print_bytes(const T *str, int strlength) {
   }
 }
 using range_keys = std::pair<std::vector<uint8_t>, std::vector<uint8_t>>;
+inline void fdbfs_transaction_clear_range(FDBTransaction *transaction,
+                                          const range_keys &range) {
+  fdb_transaction_clear_range(transaction, range.first.data(),
+                              range.first.size(), range.second.data(),
+                              range.second.size());
+}
 [[nodiscard]] extern std::vector<uint8_t>
 prefix_range_end(const std::vector<uint8_t> &);
 [[nodiscard]] extern range_keys pack_pid_subspace_range();

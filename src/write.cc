@@ -87,9 +87,8 @@ Inflight_write::Inflight_write(fuse_req_t req, fuse_ino_t ino,
       ino(ino), buffer(std::move(buffer)), off(off) {}
 
 fdb_error_t Inflight_write::configure_transaction() {
-  return fdb_transaction_set_option(transaction.get(),
-                                    FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE,
-                                    nullptr, 0);
+  return fdb_transaction_set_option(
+      transaction.get(), FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, nullptr, 0);
 }
 
 bool Inflight_write::write_success_oplog_result() {
@@ -304,10 +303,8 @@ InflightCallback Inflight_write::issue() {
     // not sure if they're plain, compressed, or some other variant
     // We're doing this in the spot where it ought to be safe even
     // if RYW is turned on.
-    const range_keys r = offset_size_to_range_keys(ino, off, buffer.size());
-    fdb_transaction_clear_range(transaction.get(), r.first.data(),
-                                r.first.size(), r.second.data(),
-                                r.second.size());
+    const auto range = offset_size_to_range_keys(ino, off, buffer.size());
+    fdbfs_transaction_clear_range(transaction.get(), range);
   }
 
   // now while those block requests are coming back to us, we can

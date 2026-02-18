@@ -321,7 +321,8 @@ range_keys pack_pid_record_range(const std::vector<uint8_t> &record_pid) {
 }
 
 // all oplog records for a specific owner pid.
-// [ key_prefix + 'o' + owner_pid, prefix_range_end(key_prefix + 'o' + owner_pid) ).
+// [ key_prefix + 'o' + owner_pid,
+//   prefix_range_end(key_prefix + 'o' + owner_pid) ).
 range_keys pack_oplog_subspace_range(const std::vector<uint8_t> &owner_pid) {
   auto start = key_prefix;
   start.push_back('o');
@@ -622,38 +623,21 @@ void update_directory_times(FDBTransaction *transaction, INodeRecord &inode) {
 
 void erase_inode(FDBTransaction *transaction, fuse_ino_t ino) {
   // inode data
-  {
-    auto [key_start, key_stop] = pack_inode_subspace_range(ino);
-    fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
-                                key_stop.data(), key_stop.size());
-  }
+  fdbfs_transaction_clear_range(transaction, pack_inode_subspace_range(ino));
 
   // TODO be clever and only issue these clears based on inode type
 
   // file data
-  {
-    auto [key_start, key_stop] = pack_fileblock_span_range(ino, 0, UINT64_MAX);
-    fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
-                                key_stop.data(), key_stop.size());
-  }
+  fdbfs_transaction_clear_range(transaction,
+                                pack_fileblock_span_range(ino, 0, UINT64_MAX));
   // directory listing
-  {
-    auto [key_start, key_stop] = pack_dentry_subspace_range(ino);
-    fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
-                                key_stop.data(), key_stop.size());
-  }
+  fdbfs_transaction_clear_range(transaction, pack_dentry_subspace_range(ino));
   // xattr nodes
-  {
-    auto [key_start, key_stop] = pack_xattr_node_subspace_range(ino);
-    fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
-                                key_stop.data(), key_stop.size());
-  }
+  fdbfs_transaction_clear_range(transaction,
+                                pack_xattr_node_subspace_range(ino));
   // xattr data
-  {
-    auto [key_start, key_stop] = pack_xattr_data_subspace_range(ino);
-    fdb_transaction_clear_range(transaction, key_start.data(), key_start.size(),
-                                key_stop.data(), key_stop.size());
-  }
+  fdbfs_transaction_clear_range(transaction,
+                                pack_xattr_data_subspace_range(ino));
 }
 
 inline void sparsify(const uint8_t *block, size_t *write_size) {
