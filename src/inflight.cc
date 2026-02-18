@@ -51,8 +51,6 @@ fail_inflight(Inflight *i, int err, const char *why,
 
 namespace {
 
-constexpr uint8_t OPLOG_PREFIX = 'o';
-
 std::mutex oplog_tracking_mutex;
 std::set<uint64_t> oplog_live_ids;
 std::set<uint64_t> oplog_dead_ids;
@@ -79,13 +77,6 @@ void mark_oplog_dead(uint64_t op_id) {
   oplog_dead_ids.insert(op_id);
 }
 
-std::vector<uint8_t> pack_oplog_prefix(const std::vector<uint8_t> &owner_pid) {
-  std::vector<uint8_t> key = key_prefix;
-  key.push_back(OPLOG_PREFIX);
-  key.insert(key.end(), owner_pid.begin(), owner_pid.end());
-  return key;
-}
-
 // requires a scratch buffer from the caller
 const char *op_id_to_cstr(const std::optional<uint64_t> &op_id, char *buf,
                           size_t buflen) {
@@ -97,30 +88,6 @@ const char *op_id_to_cstr(const std::optional<uint64_t> &op_id, char *buf,
 }
 
 } // namespace
-
-std::vector<uint8_t> pack_oplog_key(const std::vector<uint8_t> &owner_pid,
-                                    uint64_t op_id) {
-  std::vector<uint8_t> key = pack_oplog_prefix(owner_pid);
-  const uint64_t op_id_be = htobe64(op_id);
-  const auto *tmp = reinterpret_cast<const uint8_t *>(&op_id_be);
-  key.insert(key.end(), tmp, tmp + sizeof(op_id_be));
-  return key;
-}
-
-range_keys pack_oplog_subspace_range(const std::vector<uint8_t> &owner_pid) {
-  auto start = pack_oplog_prefix(owner_pid);
-  auto stop = prefix_range_end(start);
-  return {start, stop};
-}
-
-range_keys pack_local_oplog_span_range(uint64_t start_op_id,
-                                       uint64_t stop_op_id) {
-  assert(start_op_id < stop_op_id);
-  auto start = pack_oplog_key(pid, start_op_id);
-  auto stop = pack_oplog_key(pid, stop_op_id);
-  assert(start < stop);
-  return {start, stop};
-}
 
 // cleans up our in-memory oplog records, and returns the
 // oplog key range that can be cleared. if the records aren't

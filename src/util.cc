@@ -218,6 +218,18 @@ std::vector<uint8_t> pack_pid_key(std::vector<uint8_t> p,
   return key;
 }
 
+std::vector<uint8_t> pack_oplog_key(const std::vector<uint8_t> &owner_pid,
+                                    uint64_t op_id) {
+  auto key = key_prefix;
+  key.push_back('o');
+  key.insert(key.end(), owner_pid.begin(), owner_pid.end());
+
+  const uint64_t op_id_be = htobe64(op_id);
+  const auto *tmp = reinterpret_cast<const uint8_t *>(&op_id_be);
+  key.insert(key.end(), tmp, tmp + sizeof(op_id_be));
+  return key;
+}
+
 std::vector<uint8_t> pack_inode_use_key(fuse_ino_t ino) {
   auto key = pack_inode_key(ino);
   key.push_back(INODE_USE_PREFIX);
@@ -304,6 +316,28 @@ range_keys pack_pid_subspace_range() {
 range_keys pack_pid_record_range(const std::vector<uint8_t> &record_pid) {
   auto start = pack_pid_key(record_pid);
   auto stop = prefix_range_end(start);
+  assert(start < stop);
+  return {start, stop};
+}
+
+// all oplog records for a specific owner pid.
+// [ key_prefix + 'o' + owner_pid, prefix_range_end(key_prefix + 'o' + owner_pid) ).
+range_keys pack_oplog_subspace_range(const std::vector<uint8_t> &owner_pid) {
+  auto start = key_prefix;
+  start.push_back('o');
+  start.insert(start.end(), owner_pid.begin(), owner_pid.end());
+  auto stop = prefix_range_end(start);
+  assert(start < stop);
+  return {start, stop};
+}
+
+// local process oplog span.
+// [ pack_oplog_key(pid, start_op_id), pack_oplog_key(pid, stop_op_id) ).
+range_keys pack_local_oplog_span_range(uint64_t start_op_id,
+                                       uint64_t stop_op_id) {
+  assert(start_op_id < stop_op_id);
+  auto start = pack_oplog_key(pid, start_op_id);
+  auto stop = pack_oplog_key(pid, stop_op_id);
   assert(start < stop);
   return {start, stop};
 }

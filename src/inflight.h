@@ -42,13 +42,6 @@ using OpLogResultVariant =
                  OpLogResultOpen, OpLogResultBuf, OpLogResultReadlink,
                  OpLogResultWrite, OpLogResultStatfs, OpLogResultXattrSize>;
 
-// op log helpers
-[[nodiscard]] extern std::vector<uint8_t>
-pack_oplog_key(const std::vector<uint8_t> &owner_pid, uint64_t op_id);
-[[nodiscard]] extern range_keys
-pack_oplog_subspace_range(const std::vector<uint8_t> &owner_pid);
-[[nodiscard]] extern range_keys
-pack_local_oplog_span_range(uint64_t start_op_id, uint64_t stop_op_id);
 [[nodiscard]] extern std::optional<std::pair<uint64_t, uint64_t>>
 claim_local_oplog_cleanup_span();
 

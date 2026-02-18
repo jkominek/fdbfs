@@ -109,6 +109,8 @@ pack_inode_key(fuse_ino_t, char = INODE_PREFIX,
 [[nodiscard]] extern std::vector<uint8_t> pack_garbage_key(fuse_ino_t);
 [[nodiscard]] extern std::vector<uint8_t>
 pack_pid_key(std::vector<uint8_t>, const std::vector<uint8_t> &suffix = {});
+[[nodiscard]] extern std::vector<uint8_t>
+pack_oplog_key(const std::vector<uint8_t> &owner_pid, uint64_t op_id);
 [[nodiscard]] extern std::vector<uint8_t> pack_inode_use_key(fuse_ino_t);
 [[nodiscard]] extern std::vector<uint8_t>
 pack_fileblock_key(fuse_ino_t, uint64_t,
@@ -141,6 +143,10 @@ prefix_range_end(const std::vector<uint8_t> &);
 [[nodiscard]] extern range_keys pack_pid_subspace_range();
 [[nodiscard]] extern range_keys
 pack_pid_record_range(const std::vector<uint8_t> &);
+[[nodiscard]] extern range_keys
+pack_oplog_subspace_range(const std::vector<uint8_t> &owner_pid);
+[[nodiscard]] extern range_keys
+pack_local_oplog_span_range(uint64_t start_op_id, uint64_t stop_op_id);
 [[nodiscard]] extern range_keys pack_garbage_subspace_range();
 [[nodiscard]] extern range_keys pack_inode_subspace_range(fuse_ino_t);
 [[nodiscard]] extern range_keys pack_inode_use_subspace_range(fuse_ino_t);
