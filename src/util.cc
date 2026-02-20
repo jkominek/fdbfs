@@ -507,6 +507,11 @@ void pack_inode_record_into_stat(const INodeRecord &inode, struct stat &attr) {
   else
     attr.st_size = 0;
 
+  if (inode.has_rdev())
+    attr.st_rdev = inode.rdev();
+  else
+    attr.st_rdev = 0;
+
   if (inode.has_atime()) {
     attr.st_atim.tv_sec = inode.atime().sec();
     attr.st_atim.tv_nsec = inode.atime().nsec();

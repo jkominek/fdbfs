@@ -128,10 +128,10 @@ message INodeRecord {
   // 0.. fundamentals
   required fixed64 inode = 1; // IMMUTABLE
   required filetype type = 2; // IMMUTABLE
-  required uint32 nlinks = 3;
+  required uint64 nlinks = 3;
   optional uint32 mode = 4;
   optional uint64 size = 5;
-  optional uint32 rdev = 6;
+  optional uint64 rdev = 6;
 
   // 100... ownership block
   optional uint32 uid = 100;
