@@ -12,6 +12,8 @@
 #include <string.h>
 #include <sys/xattr.h>
 
+#include <limits>
+
 #include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
@@ -99,16 +101,28 @@ InflightAction Inflight_setxattr::process() {
     }
   }
 
-  xattr.set_size(xattr_value.size());
-  xattr.set_encoding(XAttrEncoding::xattr_raw);
+  auto encoded = encode_logical_payload(std::span<const uint8_t>(xattr_value));
+  if (!encoded)
+    return InflightAction::Abort(encoded.error());
+  if (encoded->true_block_size >
+      static_cast<size_t>(std::numeric_limits<uint32_t>::max())) {
+    return InflightAction::Abort(EOVERFLOW);
+  }
+
+  xattr.set_size(static_cast<uint32_t>(encoded->true_block_size));
+  xattr.set_encoding(encoded->encoding);
   // update xattr node metadata
   if (!fdb_set_protobuf(transaction.get(), pack_xattr_key(ino, name), xattr))
     return InflightAction::Abort(EIO);
 
-  // set the xattr data
+  // set/clear xattr data payload
   const auto data_key = pack_xattr_data_key(ino, name);
-  fdb_transaction_set(transaction.get(), data_key.data(), data_key.size(),
-                      xattr_value.data(), xattr_value.size());
+  if (encoded->bytes.empty()) {
+    fdb_transaction_clear(transaction.get(), data_key.data(), data_key.size());
+  } else {
+    fdb_transaction_set(transaction.get(), data_key.data(), data_key.size(),
+                        encoded->bytes.data(), encoded->bytes.size());
+  }
 
   if (!write_success_oplog_result()) {
     return InflightAction::Abort(EIO);

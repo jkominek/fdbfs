@@ -52,7 +52,7 @@ Inflight_getxattr::Inflight_getxattr(fuse_req_t req, fuse_ino_t ino,
 
 InflightAction Inflight_getxattr::process() {
   fdb_bool_t present = 0;
-  const uint8_t *val;
+  const uint8_t *val = nullptr;
   int vallen;
   fdb_error_t err;
 
@@ -62,40 +62,50 @@ InflightAction Inflight_getxattr::process() {
     return InflightAction::FDBError(err);
 
   if (present) {
-    // decode the xattr node to follow it to the id
+    // decode xattr node metadata to drive payload decoding
     XAttrRecord xattr;
-    xattr.ParseFromArray(val, vallen);
-    if (!xattr.IsInitialized()) {
+    if (!xattr.ParseFromArray(val, vallen)) {
+      return InflightAction::Abort(EIO);
+    }
+    if (!xattr.IsInitialized() || !xattr.has_size()) {
       return InflightAction::Abort(EIO);
     }
 
-    err =
-        fdb_future_get_value(a().xattr_data_fetch.get(), &present, &val, &vallen);
+    const XAttrEncoding encoding = xattr.encoding();
+
+    err = fdb_future_get_value(a().xattr_data_fetch.get(), &present, &val,
+                               &vallen);
     if (err)
       return InflightAction::FDBError(err);
 
-    if (present) {
-      // decode
-      if (maxsize == 0) {
-        // just want the decoded size
-        return InflightAction::XattrSize(vallen);
-      } else {
-        if (static_cast<uint64_t>(vallen) > static_cast<uint64_t>(maxsize)) {
-          return InflightAction::Abort(ERANGE);
-        } else {
-          std::vector<uint8_t> buffer;
-          buffer.assign(val, val + vallen);
-          return InflightAction::Buf(buffer);
-        }
-      }
-    } else {
-      if (maxsize == 0) {
-        return InflightAction::XattrSize(0);
-      } else {
-        std::vector<uint8_t> buffer;
-        return InflightAction::Buf(buffer);
-      }
+    const size_t true_size = static_cast<size_t>(xattr.size());
+
+    if (maxsize == 0) {
+      return InflightAction::XattrSize(true_size);
     }
+
+    if (true_size > maxsize) {
+      return InflightAction::Abort(ERANGE);
+    }
+
+    std::span<const uint8_t> stored_payload;
+    if (present) {
+      stored_payload =
+          std::span<const uint8_t>(val, static_cast<size_t>(vallen));
+    } else {
+      stored_payload = std::span<const uint8_t>();
+    }
+
+    std::vector<uint8_t> buffer(true_size, 0);
+    auto decode_ret = decode_logical_payload_slice(
+        encoding, stored_payload, true_size, 0, std::span<uint8_t>(buffer));
+    if (!decode_ret) {
+      return InflightAction::Abort(decode_ret.error());
+    }
+    if (decode_ret.value() != true_size) {
+      return InflightAction::Abort(EIO);
+    }
+    return InflightAction::Buf(buffer);
   } else {
     return InflightAction::Abort(ENODATA);
   }

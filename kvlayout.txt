@@ -22,7 +22,8 @@ prefix 'f' inode offset3 'p'\x02\x00... -> key contains 512 bytes of parity for 
     there should be only one kv pair within a given offset(n) to offset(n+1)
     range.
 prefix 'x' inode xattrname -> XattrRecord (currently unused place for metadata)
-prefix 'X' inode xattrname -> exactly one block of raw data
+prefix 'X' inode xattrname -> zero or one block(s) of raw data
+                              (if the data is zero-length, this KV is omitted)
 
 The \x00 space for locks is adjacent to the inodes, because in a mandatory
 locking system, you'd need to read them along with the inode. So we'll
