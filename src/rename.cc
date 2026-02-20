@@ -12,6 +12,7 @@
 #include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
+#include "util_unlink.h"
 #include "values.pb.h"
 
 /*************************************************************
@@ -35,7 +36,6 @@ struct AttemptState_rename : public AttemptState {
   DirectoryEntry origin_dirent;
   unique_future destination_lookup;
   DirectoryEntry destination_dirent;
-  bool destination_in_use = false;
   unique_future directory_listing_fetch;
   unique_future inode_metadata_fetch;
 };
@@ -97,84 +97,34 @@ InflightAction Inflight_rename::complicated() {
     fdb_transaction_clear(transaction.get(), key.data(), key.size());
   }
 
-  const FDBKeyValue *kvs;
-  int kvcount;
-  fdb_bool_t more;
-  fdb_error_t err;
-
-  err = fdb_future_get_keyvalue_array(a().inode_metadata_fetch.get(), &kvs,
-                                      &kvcount, &more);
-  if (err)
-    return InflightAction::FDBError(err);
-  if (kvcount < 1) {
-    // referential integrity error; dirent points to missing inode
-    return InflightAction::Abort(EIO);
-  }
-  // the first record had better be the inode
-  FDBKeyValue inode_kv = kvs[0];
-
-  INodeRecord inode;
-  inode.ParseFromArray(inode_kv.value, inode_kv.value_length);
-  if (!inode.IsInitialized()) {
-    // well, bugger
-    return InflightAction::Abort(EIO);
-  }
-
-  if (kvcount > 1) {
-    FDBKeyValue kv = kvs[1];
-    if ((kv.key_length > (inode_key_length + 1)) &&
-        kv.key[inode_key_length] == 0x01) {
-      // there's a use record present.
-      a().destination_in_use = true;
-    }
-  }
-
-  // TODO permissions checking on the whatever being removed
-
   if (a().directory_listing_fetch) {
-    const FDBKeyValue *kvs;
-    int kvcount;
-    fdb_bool_t more;
-    fdb_error_t err;
-
-    err = fdb_future_get_keyvalue_array(a().directory_listing_fetch.get(), &kvs,
-                                        &kvcount, &more);
-    if (err)
-      return InflightAction::FDBError(err);
-    if (kvcount > 0) {
+    const auto dir_empty =
+        keyvalue_range_is_empty(a().directory_listing_fetch.get());
+    if (!dir_empty.has_value()) {
+      return InflightAction::FDBError(dir_empty.error());
+    }
+    if (!dir_empty.value()) {
       // can't move over a directory with anything in it
       return InflightAction::Abort(ENOTEMPTY);
     }
   }
 
-  // we always decrement. that'll take directories to
-  // nlinks==1, which, if they linger around because
-  // they were held open, is how other functions know
-  // not to allow things to be created in the directory.
-  inode.set_nlinks(inode.nlinks() - 1);
-  // as such we always update the inode.
-  struct timespec tv;
-  clock_gettime(CLOCK_REALTIME, &tv);
-  update_ctime(&inode, &tv);
+  const auto parsed = parse_unlink_target_inode(a().inode_metadata_fetch.get(),
+                                                a().destination_dirent.inode());
+  if (!parsed.has_value()) {
+    return InflightAction::Abort(parsed.error().err, parsed.error().why);
+  }
 
-  std::vector<uint8_t> key(inode_kv.key, inode_kv.key + inode_kv.key_length);
-  if (!fdb_set_protobuf(transaction.get(), key, inode))
-    return InflightAction::Abort(EIO);
-
-  if ((a().directory_listing_fetch && (inode.nlinks() <= 1)) ||
-      (inode.nlinks() == 0)) {
-    // if the nlinks has dropped low enough, we may be able
-    // to erase the entire inode. even if we can't erase
-    // the whole thing, we should mark it for garbage collection.
-
-    // TODO locking?
-    if (a().destination_in_use) {
-      const auto key = pack_garbage_key(inode.inode());
-      const uint8_t b = 0;
-      fdb_transaction_set(transaction.get(), key.data(), key.size(), &b, 1);
-    } else {
-      erase_inode(transaction.get(), inode.inode());
-    }
+  INodeRecord inode = parsed->inode;
+  const auto mutation_result = apply_unlink_target_mutation(
+      transaction.get(), inode, parsed->inode_in_use,
+      UnlinkApplyOptions{
+          .nlink_mutation = UnlinkNlinkMutation::Decrement,
+          .unlink_directory_semantics =
+              static_cast<bool>(a().directory_listing_fetch),
+      });
+  if (!mutation_result.has_value()) {
+    return InflightAction::Abort(mutation_result.error());
   }
 
   // set the new dirent to the correct value

@@ -8,6 +8,7 @@ project_source_files += files([
     'garbage_collector.cc',
     'liveness.cc',
     'util.cc',
+    'util_unlink.cc',
 
     # fuse ops
 #    'flock.cc',
@@ -33,4 +34,3 @@ project_source_files += files([
     'unlink.cc',
     'write.cc'
 ])
-
