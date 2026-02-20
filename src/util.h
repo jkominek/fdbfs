@@ -101,7 +101,7 @@ extract_fdbfs_filehandle(struct fuse_file_info *);
 extern int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
                                   struct fuse_file_info *fi);
 extern void best_effort_clear_inode_use_record(fuse_ino_t ino,
-                                                uint64_t generation);
+                                               uint64_t generation);
 
 [[nodiscard]] extern std::vector<uint8_t>
 pack_inode_key(fuse_ino_t, char = INODE_PREFIX,
@@ -177,8 +177,21 @@ extern void update_directory_times(FDBTransaction *, INodeRecord &);
 
 extern void erase_inode(FDBTransaction *, fuse_ino_t);
 
+struct EncodedLogicalPayload {
+  XAttrEncoding encoding;
+  std::vector<uint8_t> bytes;
+  size_t true_block_size;
+};
+
+[[nodiscard]] extern std::expected<EncodedLogicalPayload, int>
+encode_logical_payload(std::span<const uint8_t> payload);
+[[nodiscard]] extern std::expected<size_t, int> decode_logical_payload_slice(
+    XAttrEncoding encoding, std::span<const uint8_t> stored_payload,
+    size_t true_block_size, size_t offset_into_true_block,
+    std::span<uint8_t> output);
+
 [[nodiscard]] extern std::expected<void, int>
-set_block(FDBTransaction *, const std::vector<uint8_t> &,
+set_fileblock(FDBTransaction *, const std::vector<uint8_t> &,
           std::span<const uint8_t>, bool = true);
 [[nodiscard]] extern std::expected<size_t, int>
 decode_block(const FDBKeyValue *, int, std::span<uint8_t>, size_t);

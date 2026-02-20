@@ -649,71 +649,187 @@ inline void sparsify(const uint8_t *block, size_t *write_size) {
   }
 }
 
-std::expected<void, int> set_block(FDBTransaction *transaction,
-                                   const std::vector<uint8_t> &key,
-                                   std::span<const uint8_t> block,
-                                   bool write_conflict) {
+std::expected<EncodedLogicalPayload, int>
+encode_logical_payload(std::span<const uint8_t> payload) {
+  EncodedLogicalPayload encoded{
+      .encoding = XAttrEncoding::xattr_raw,
+      .bytes = {},
+      .true_block_size = payload.size(),
+  };
+
+  size_t stored_size = payload.size();
+  if (stored_size > 0) {
+    sparsify(payload.data(), &stored_size);
+  }
+  encoded.bytes.assign(payload.begin(), payload.begin() + stored_size);
+
+  // considering that these blocks may be stored 3 times, and over
+  // their life may have to be moved repeatedly across WANs between
+  // data centers, we'll accept very small amounts of compression:
+  const size_t acceptable_size = stored_size - 16;
+  // TODO check whether or not given compression schemes are actually
+  // enabled on the filesystem.
+#ifdef ZSTD_BLOCK_COMPRESSION
+  if (stored_size >= 64) {
+    const size_t bound = ZSTD_compressBound(stored_size);
+    std::vector<uint8_t> compressed(bound);
+    const size_t ret = ZSTD_compress(compressed.data(), bound, payload.data(),
+                                     stored_size, 10);
+    if ((!ZSTD_isError(ret)) && (ret <= acceptable_size)) {
+      compressed.resize(ret);
+      encoded.encoding = XAttrEncoding::xattr_zstd;
+      encoded.bytes = std::move(compressed);
+      return encoded;
+    }
+  }
+#endif
+
+  return encoded;
+}
+
+/**
+ * Decode a true logical block slice into output.
+ *
+ * - `stored_payload` is the encoded (possibly compressed and/or sparsified)
+ *   byte sequence from storage. it is always the entire block stored in the
+ *   KV pair. our job is to pull the relevant portion out of it.
+ * - `true_block_size` is the user-visible length of the full logical block.
+ *   this is needed because of both sparsification (which truncates nulls), and
+ *   it can make it easier to determine the amount of memory needed for
+ *   decompression.
+ * - `offset_into_true_block` is the starting read offset within that logical
+ *   block.
+ * - `output` is the caller-provided destination span to fill. if we run out of
+ *   "real" data to fill it with before reaching the end, we pad with nulls.
+ *
+ * If the requested region begins at or after the end of the block's true size,
+ * then we output zero bytes, and make no guarantees about any excess space
+ * provided to us in the output memory.
+ *
+ * Expected return value is the smaller of the bytes requested, and the
+ * space available to put bytes into. Excess space is filled with nulls.
+ */
+std::expected<size_t, int> decode_logical_payload_slice(
+    XAttrEncoding encoding, std::span<const uint8_t> stored_payload,
+    size_t true_block_size, size_t offset_into_true_block,
+    std::span<uint8_t> output) {
+
+  // goal here isn't to fast path this improbable condition, but rather
+  // to ensure we don't end up with underflow later on.
+  if (offset_into_true_block >= true_block_size) {
+    return 0;
+  }
+
+  std::vector<uint8_t> decoded_storage;
+  std::span<const uint8_t> decoded;
+
+  switch (encoding) {
+  case XAttrEncoding::xattr_raw: {
+    decoded = stored_payload;
+    break;
+  }
+#ifdef ZSTD_BLOCK_COMPRESSION
+  case XAttrEncoding::xattr_zstd: {
+    // we're not going to size our temporary buffer to hold the maximum
+    // amount that might be tucked away inside of the compressed data.
+    // in the event of error or weirdness that could cause us to allocate
+    // unnecessarily large chunks of memory.
+    decoded_storage.resize(true_block_size);
+    const size_t ret =
+        ZSTD_decompress(decoded_storage.data(), true_block_size,
+                        stored_payload.data(), stored_payload.size());
+    if (ZSTD_isError(ret)) {
+      return unexpected_errno<size_t>(EIO,
+                                      "logical payload ZSTD decode failed");
+    }
+    if (ret > true_block_size) {
+      // not entirely sure we want this to be a fatal error, but it's
+      // weird and should never happen, so we can leave it as-is for now.
+      return unexpected_errno<size_t>(
+          EIO, "logical payload decode exceeded declared logical size");
+    }
+    decoded_storage.resize(ret);
+    decoded = decoded_storage;
+    break;
+  }
+#endif
+  default:
+    return unexpected_errno<size_t>(EIO, "unknown logical payload encoding");
+  }
+
+  if (decoded.size() > true_block_size) {
+    return unexpected_errno<size_t>(
+        EIO, "decoded logical payload exceeded declared logical size");
+  }
+
+  const size_t real_bytes =
+      std::min(output.size(), true_block_size - offset_into_true_block);
+  size_t copied = 0;
+  if (offset_into_true_block < decoded.size()) {
+    copied = std::min(decoded.size() - offset_into_true_block, real_bytes);
+    bcopy(decoded.data() + offset_into_true_block, output.data(), copied);
+  }
+  if (copied < output.size()) {
+    bzero(output.data() + copied, output.size() - copied);
+  }
+
+  return real_bytes;
+}
+
+std::expected<void, int> set_fileblock(FDBTransaction *transaction,
+                                       const std::vector<uint8_t> &key,
+                                       std::span<const uint8_t> block,
+                                       bool write_conflict) {
   if (key.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
     return std::unexpected(EOVERFLOW);
   const int key_size = static_cast<int>(key.size());
 
-  size_t size = block.size();
-  sparsify(block.data(), &size);
-  if (size > 0) {
-    if (!write_conflict)
-      if (fdb_transaction_set_option(
-              transaction, FDB_TR_OPTION_NEXT_WRITE_NO_WRITE_CONFLICT_RANGE,
-              NULL, 0))
-        /* it doesn't matter if this fails. semantics will be preserved,
-           there will just be some performance loss. */
-        ;
+  auto encoded = encode_logical_payload(block);
+  if (!encoded) {
+    return std::unexpected(encoded.error());
+  }
 
-// TODO here's where we'd implement the write-side cleverness for our
-// block encoding schemes. they should all not only be ifdef'd, but
-// check for whether or not the feature is enabled on the filesystem.
-#ifdef BLOCK_COMPRESSION
-    if (size >= 64) {
-      // considering that these blocks may be stored 3 times, and over
-      // their life may have to be moved repeatedly across WANs between
-      // data centers, we'll accept very small amounts of compression:
-      const size_t acceptable_size = BLOCKSIZE - 16;
-      std::vector<uint8_t> compressed(BLOCKSIZE);
-// we're arbitrarily saying blocks should be at least 64 bytes
-// after sparsification, before we'll attempt to compress them.
-#ifdef ZSTD_BLOCK_COMPRESSION
-      const size_t ret =
-          ZSTD_compress(reinterpret_cast<void *>(compressed.data()), BLOCKSIZE,
-                        reinterpret_cast<const void *>(block.data()), size, 10);
-      if ((!ZSTD_isError(ret)) && (ret <= acceptable_size)) {
-        // ok, we'll take it.
-        auto compkey = key;
-        compkey.push_back('z');  // compressed
-        compkey.push_back(0x01); // 1 byte of arguments
-        compkey.push_back(0x01); // ZSTD marker
-        if (compkey.size() >
-            static_cast<size_t>(std::numeric_limits<int>::max()))
-          return std::unexpected(EOVERFLOW);
-        const int compkey_size = static_cast<int>(compkey.size());
-        if (ret > static_cast<size_t>(std::numeric_limits<int>::max()))
-          return std::unexpected(EOVERFLOW);
-        fdb_transaction_set(transaction, compkey.data(), compkey_size,
-                            compressed.data(), static_cast<int>(ret));
-        return {};
-      }
-#endif
-    }
-#endif
-    // we'll fall back to this if none of the compression schemes bail out
-    if (size > static_cast<size_t>(std::numeric_limits<int>::max()))
-      return std::unexpected(EOVERFLOW);
-    fdb_transaction_set(transaction, key.data(), key_size, block.data(),
-                        static_cast<int>(size));
-    return {};
-  } else {
+  if (encoded->bytes.empty()) {
     // storage model allows for sparsity; interprets missing blocks as nulls.
     // clear any stale data for this block key.
     fdb_transaction_clear(transaction, key.data(), key_size);
     return {};
+  }
+
+  if (!write_conflict)
+    if (fdb_transaction_set_option(
+            transaction, FDB_TR_OPTION_NEXT_WRITE_NO_WRITE_CONFLICT_RANGE, NULL,
+            0))
+      /* it doesn't matter if this fails. semantics will be preserved,
+         there will just be some performance loss. */
+      ;
+
+  // NOTE maybe compare against the BLOCKSIZE, or some plausible KV size limit
+  // shoving 2^31 bytes into a KV will blow things up.
+  if (encoded->bytes.size() >
+      static_cast<size_t>(std::numeric_limits<int>::max()))
+    return std::unexpected(EOVERFLOW);
+  const int encoded_size = static_cast<int>(encoded->bytes.size());
+
+  switch (encoded->encoding) {
+  case XAttrEncoding::xattr_raw:
+    fdb_transaction_set(transaction, key.data(), key_size,
+                        encoded->bytes.data(), encoded_size);
+    return {};
+  case XAttrEncoding::xattr_zstd: {
+    auto compkey = key;
+    compkey.push_back('z');  // compressed
+    compkey.push_back(0x01); // 1 byte of arguments
+    compkey.push_back(0x01); // ZSTD marker
+    if (compkey.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+      return std::unexpected(EOVERFLOW);
+    const int compkey_size = static_cast<int>(compkey.size());
+    fdb_transaction_set(transaction, compkey.data(), compkey_size,
+                        encoded->bytes.data(), encoded_size);
+    return {};
+  }
+  default:
+    return std::unexpected(EIO);
   }
 }
 
@@ -738,101 +854,57 @@ std::expected<size_t, int> decode_block(const FDBKeyValue *kv, int block_offset,
   if (block_offset < 0)
     return std::unexpected(EINVAL);
 
+  const size_t bounded_target = std::min(targetsize, output.size());
+  if (bounded_target == 0)
+    return 0;
+  auto out = output.subspan(0, bounded_target);
+
   const uint8_t *key = kv->key;
   const uint8_t *value = kv->value;
-  const size_t bounded_target = std::min(targetsize, output.size());
-  // printf("decoding block\n");
-  // print_bytes(value, kv->value_length);printf("\n");
+  const std::span<const uint8_t> stored_payload(
+      value, static_cast<size_t>(kv->value_length));
+
+  // plain block: no key suffix, raw payload.
   if (kv->key_length == fileblock_key_length) {
-    // printf("   plain.\n");
-    //  plain block. there's no added info after the block key
-    if (block_offset >= kv->value_length)
-      return 0;
-    const size_t available =
-        kv->value_length - static_cast<size_t>(block_offset);
-    const size_t amount = std::min(available, bounded_target);
-    if (amount > 0)
-      bcopy(value + block_offset, output.data(), amount);
-    return amount;
+    return decode_logical_payload_slice(XAttrEncoding::xattr_raw,
+                                        stored_payload,
+                                        static_cast<size_t>(kv->value_length),
+                                        static_cast<size_t>(block_offset), out);
   }
 
-#ifdef SPECIAL_BLOCKS
-  // printf("   not plain!\n");
-  //  ah! not a plain block! there might be something interesting!
-  //  ... for now we just support compression
   const int i = fileblock_key_length;
+  if (kv->key_length <= i) {
+    return unexpected_errno<size_t>(EIO, "invalid fileblock key");
+  }
 
-#ifdef BLOCK_COMPRESSION
   if (key[i] == 'z') {
-    // printf("   compressed\n");
-    const int arglen = key[i + 1];
-    if (arglen <= 0) {
-      // printf("    no arg\n");
-      //  no argument, but we needed to know compression type
+    if (kv->key_length <= i + 1) {
       return unexpected_errno<size_t>(
           EIO, "compressed block missing compression argument");
     }
-
-#ifdef LZ4_BLOCK_COMPRESSION
-    // for now we only know how to interpret a single byte of argument
-    if (key[i + 2] == 0x00) {
-      // 0x00 means LZ4
-
-      std::vector<char> buffer(BLOCKSIZE);
-      // we'll only ask that enough be decompressed to satisfy the request
-      const int ret = LZ4_decompress_safe_partial(
-          reinterpret_cast<const char *>(value), buffer.data(),
-          kv->value_length, BLOCKSIZE, BLOCKSIZE);
-
-      if (ret < 0) {
-        return std::unexpected(ret);
-      }
-      if (ret > block_offset) {
-        // decompression produced at least one byte worth sending back
-        const size_t amount =
-            std::min(static_cast<size_t>(ret - block_offset), bounded_target);
-        bcopy(buffer.data() + block_offset, output.data(), amount);
-        return amount;
-      } else {
-        // there was less data in the block than necessary to reach the
-        // start of the copy, so we don't have to do anything.
-        return 0;
-      }
+    const int arglen = key[i + 1];
+    if (arglen <= 0) {
+      return unexpected_errno<size_t>(
+          EIO, "compressed block missing compression argument");
     }
-#endif
+    if (kv->key_length <= i + 1 + arglen) {
+      return unexpected_errno<size_t>(EIO,
+                                      "compressed block missing arguments");
+    }
 
-#ifdef ZSTD_BLOCK_COMPRESSION
     if (key[i + 2] == 0x01) {
       // 0x01 means ZSTD
-      std::vector<uint8_t> buffer(BLOCKSIZE);
-      const size_t ret =
-          ZSTD_decompress(buffer.data(), BLOCKSIZE, value, kv->value_length);
-      if (ZSTD_isError(ret)) {
-        // error
-        return unexpected_errno<size_t>(EIO, "ZSTD decompression failed");
-      }
-
-      if (ret > static_cast<size_t>(block_offset)) {
-        const size_t amount =
-            std::min(ret - static_cast<size_t>(block_offset), bounded_target);
-        bcopy(buffer.data() + block_offset, output.data(), amount);
-        return amount;
-      } else {
-        // nothing to copy
-        return 0;
-      }
+      return decode_logical_payload_slice(
+          XAttrEncoding::xattr_zstd, stored_payload, BLOCKSIZE,
+          static_cast<size_t>(block_offset), out);
     }
-#endif
     // unrecognized compression algorithm
     return unexpected_errno<size_t>(EIO,
                                     "compressed block has unknown algorithm");
   }
-#endif
-
-#endif
 
   // unrecognized block type.
-  return unexpected_errno<size_t>(EIO, "unknown block type");
+  return unexpected_errno<size_t>(EIO, "unknown fileblock type");
 }
 
 std::expected<void, int>

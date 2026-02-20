@@ -70,9 +70,8 @@ Inflight_setattr::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
       success_reply(std::move(success_reply)) {}
 
 fdb_error_t Inflight_setattr::configure_transaction() {
-  return fdb_transaction_set_option(transaction.get(),
-                                    FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE,
-                                    nullptr, 0);
+  return fdb_transaction_set_option(
+      transaction.get(), FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, nullptr, 0);
 }
 
 InflightAction Inflight_setattr::commit_cb() {
@@ -151,9 +150,9 @@ InflightAction Inflight_setattr::partial_block_fixup() {
     auto key = pack_fileblock_key(ino, a().partial_block_idx);
     // if (ret <= attr.st_size % BLOCKSIZE) then there's nothing to do.
     const auto write_size = static_cast<size_t>(attr.st_size % BLOCKSIZE);
-    const auto sret =
-        set_block(transaction.get(), key,
-                  std::span<const uint8_t>(output_buffer).first(write_size));
+    const auto sret = set_fileblock(
+        transaction.get(), key,
+        std::span<const uint8_t>(output_buffer).first(write_size));
     if (!sret)
       return InflightAction::Abort(EIO);
   }

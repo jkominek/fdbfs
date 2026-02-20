@@ -180,7 +180,7 @@ InflightAction Inflight_write::check() {
     bcopy(buffer.data(), output_buffer.data() + copy_start_off,
           copy_start_size);
     auto key = pack_fileblock_key(ino, off / BLOCKSIZE);
-    const auto sret = set_block(transaction.get(), key,
+    const auto sret = set_fileblock(transaction.get(), key,
                                 std::span<const uint8_t>(output_buffer), false);
     if (!sret)
       return InflightAction::Abort(EIO);
@@ -219,7 +219,7 @@ InflightAction Inflight_write::check() {
     // instead of actual_block_size. storing extra stuff in the block is
     // probably okay, but what was wrong with the old calculation?
     // it seems reasonable enough.
-    const auto sret = set_block(transaction.get(), key,
+    const auto sret = set_fileblock(transaction.get(), key,
                                 std::span<const uint8_t>(output_buffer), false);
     if (!sret)
       return InflightAction::Abort(EIO);
@@ -316,7 +316,7 @@ InflightCallback Inflight_write::issue() {
     block = buffer.data() + (off % BLOCKSIZE) +
             (mid_block - iter_start) * BLOCKSIZE;
     const auto sret =
-        set_block(transaction.get(), key,
+        set_fileblock(transaction.get(), key,
                   std::span<const uint8_t>(block, BLOCKSIZE), false);
     // safe to discard the result here for normal operation, since we
     // cleared the whole range beforehand.
