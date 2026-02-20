@@ -92,6 +92,24 @@ static uint64_t elapsed_seconds(const struct timespec &start,
   return static_cast<uint64_t>(sec);
 }
 
+static void fail_closed_due_to_liveness_failure() {
+  const bool already_terminating =
+      terminate.exchange(true, std::memory_order_relaxed);
+  if (already_terminating) {
+    return;
+  }
+
+  // kill everything in-flight
+  shut_it_down();
+
+  // stop processing filesystem calls immediately.
+  // the fuse loop won't notice this until the next
+  // filesystem operation comes in.
+  if (fuse_session != nullptr) {
+    fuse_session_exit(fuse_session);
+  }
+}
+
 static PidScanResult scan_pid_table() {
   const auto [start, stop] = pack_pid_subspace_range();
 
@@ -431,16 +449,7 @@ bool send_pt_entry(bool startup) {
         // all our state is missing from the database now as
         // well, our use records have been removed, etc. we can't
         // continue.
-        terminate.store(true, std::memory_order_relaxed);
-
-        // kill everything in-flight
-        shut_it_down();
-
-        // stop processing filesystem calls immediately.
-        // the fuse loop won't notice this until the next
-        // filesystem operation comes in. sigh.
-        fuse_session_exit(fuse_session);
-
+        fail_closed_due_to_liveness_failure();
         return false;
       }
     }
@@ -489,7 +498,10 @@ void *liveness_manager(void *ignore) {
     // if we exceed even 50% of whatever we're configured
     // as for the reaping time, start blocking FUSE ops
     // until we can restore our pt entry successfully
-    (void)send_pt_entry(false);
+    if (!send_pt_entry(false)) {
+      fail_closed_due_to_liveness_failure();
+      break;
+    }
     refresh_observed_pid_table();
     reap_stale_pid_entries();
   }
