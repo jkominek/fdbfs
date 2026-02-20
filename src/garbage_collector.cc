@@ -56,6 +56,8 @@ static void process_gc_candidate(const std::vector<uint8_t> &garbage_key) {
   }
 
   unique_transaction t = make_transaction();
+  auto _ = fdb_transaction_set_option(t.get(), FDB_TR_OPTION_PRIORITY_BATCH,
+                                      nullptr, 0);
 
 #if DEBUG
   printf("found garbage inode %lx\n", ino);
@@ -210,6 +212,8 @@ void *garbage_scanner(void *ignore) {
     }
 
     unique_transaction scan_t = make_transaction();
+    auto _ = fdb_transaction_set_option(
+        scan_t.get(), FDB_TR_OPTION_PRIORITY_BATCH, nullptr, 0);
     unique_future f = wrap_future(fdb_transaction_get_range(
         scan_t.get(),
         FDB_KEYSEL_FIRST_GREATER_THAN(last_key.data(), last_key.size()),
