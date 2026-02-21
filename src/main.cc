@@ -16,6 +16,7 @@
 
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "fdbfs_ops.h"
 #include "garbage_collector.h"
@@ -76,16 +77,23 @@ void fdbfs_init(void *userdata, struct fuse_conn_info *conn) {
   printf("capable %x\n", conn->capable);
   printf("want    %x\n", conn->want);
   */
-  // per the docs, transactions should be kept under 1MB.
+  // transactions have to finish in under 5 seconds, so unless
+  // we get clever and start splitting our reads across transactions
+  // (which we're not currently set up for) then we need a limit
+  // on the size of reads
+  // 1. this is probably conservative
+  // 2. docs make it sound like this might also need to be set as
+  //    a command line option.
+  if (conn->max_read > 1024 * 1024)
+    conn->max_read = 1024 * 1024;
+  // per the docs, (write) transactions should be kept under 1MB.
   // let's stay well below that.
-  if (conn->max_write > (1 << 17))
-    conn->max_write = 1 << 17;
-  // TODO maybe set this to the number of storage servers, or
-  // half that, or somethimg. using 4 at the moment, to be
-  // interesting.
-  conn->max_background = 4;
-  // TODO some intelligent way to set this?
-  conn->congestion_threshold = 0;
+  if (conn->max_write > 128 * 1024)
+    conn->max_write = 128 * 1024;
+  // these largely deal with our relationship with the kernel, and
+  // could probably be rather large
+  conn->max_background = std::thread::hardware_concurrency();
+  conn->congestion_threshold = std::thread::hardware_concurrency() * 2;
 }
 
 pthread_t network_thread;
