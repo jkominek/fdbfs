@@ -51,6 +51,10 @@ extern "C" void fdbfs_removexattr(fuse_req_t req, fuse_ino_t ino,
 extern "C" void fdbfs_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size);
 extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
                             struct fuse_file_info *fi);
+extern "C" void fdbfs_fsync(fuse_req_t req, fuse_ino_t ino, int datasync,
+                            struct fuse_file_info *fi);
+extern "C" void fdbfs_fsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync,
+                               struct fuse_file_info *fi);
 
 /* Pseudo ops, that don't correspond to fuse ops */
 

@@ -13,6 +13,7 @@ project_source_files += files([
     # fuse ops
 #    'flock.cc',
     'flush.cc',
+    'fsync.cc',
     'forget.cc',
     'getattr.cc',
     'getxattr.cc',
