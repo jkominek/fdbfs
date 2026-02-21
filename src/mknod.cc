@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/random.h>
+#include <limits>
 
 #include "fdbfs_ops.h"
 #include "inflight.h"
@@ -83,6 +84,9 @@ InflightAction Inflight_mknod::postverification() {
 
   INodeRecord parentinode;
   parentinode.ParseFromArray(value, valuelen);
+  if (!(parentinode.IsInitialized() && parentinode.has_nlinks())) {
+    return InflightAction::Abort(EIO);
+  }
 
   err = fdb_future_get_value(a().dirent_check.get(), &dirent_present, &value,
                              &valuelen);
@@ -109,6 +113,13 @@ InflightAction Inflight_mknod::postverification() {
   if (parentinode.nlinks() <= 1) {
     // directory is unlinked, no new entries to be created
     return InflightAction::Abort(ENOENT);
+  }
+
+  if (type == ft_directory) {
+    if (parentinode.nlinks() == std::numeric_limits<uint64_t>::max()) {
+      return InflightAction::Abort(EMLINK);
+    }
+    parentinode.set_nlinks(parentinode.nlinks() + 1);
   }
 
   // update the containing directory entry

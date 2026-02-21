@@ -74,6 +74,7 @@ test_sources = files(
   'tests/test_write.cc',
   'tests/test_read.cc',
   'tests/test_xattr.cc',
+  'tests/test_dir_nlink.cc',
 )
 
 # If your tests need the same deps as the filesystem client libraries, add `deps` too.

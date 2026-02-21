@@ -39,7 +39,8 @@ void verify_whole_file(
   const auto got = read_file_all(p);
   INFO("expected_size=" << expected.size() << " got_size=" << got.size());
   REQUIRE(got.size() == expected.size());
-  if (got != expected) {
+  const bool matches = (got == expected);
+  if (!matches) {
     size_t mismatch = 0;
     while (mismatch < got.size() && got[mismatch] == expected[mismatch]) {
       mismatch++;
@@ -51,7 +52,7 @@ void verify_whole_file(
                             << static_cast<unsigned>(got[mismatch]));
     }
   }
-  CHECK(got == expected);
+  CHECK(matches);
 }
 
 } // namespace

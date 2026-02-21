@@ -184,6 +184,15 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
 
   INodeRecord parent;
   parent.ParseFromArray(value, valuelen);
+  if (!(parent.IsInitialized() && parent.has_nlinks())) {
+    return InflightAction::Abort(EIO);
+  }
+  if (op == Op::Rmdir) {
+    if (parent.nlinks() == 0) {
+      return InflightAction::Abort(EIO);
+    }
+    parent.set_nlinks(parent.nlinks() - 1);
+  }
   update_directory_times(transaction.get(), parent);
 
   err = fdb_future_get_value(a().dirent_lookup.get(), &dirent_present, &value,

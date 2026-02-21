@@ -154,7 +154,7 @@ TEST_CASE("mkdir deep nested chain succeeds", "[integration][mkdir][stat]") {
 }
 
 TEST_CASE("mkdir increases parent directory nlink for subdirectories",
-          "[integration][mkdir][stat][!shouldfail]") {
+          "[integration][mkdir][stat]") {
   scenario([&](FdbfsEnv &env) {
     const fs::path parent = env.p("nlink_parent");
     FDBFS_REQUIRE_OK(::mkdir(parent.c_str(), 0755));

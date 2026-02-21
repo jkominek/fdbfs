@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits>
 
 #include <linux/fs.h>
 
@@ -112,6 +113,9 @@ InflightAction Inflight_rename::complicated() {
   const auto parsed = parse_unlink_target_inode(a().inode_metadata_fetch.get(),
                                                 a().destination_dirent.inode());
   if (!parsed.has_value()) {
+    if (parsed.error().err != EIO) {
+      return InflightAction::FDBError(parsed.error().err);
+    }
     return InflightAction::Abort(parsed.error().err, parsed.error().why);
   }
 
@@ -140,6 +144,8 @@ InflightAction Inflight_rename::complicated() {
 }
 
 InflightAction Inflight_rename::check() {
+  INodeRecord oldparent_inode;
+  INodeRecord newparent_inode;
 
   /****************************************************
    * Pull the futures over into DirectoryEntrys
@@ -178,9 +184,10 @@ InflightAction Inflight_rename::check() {
     if (!present)
       return InflightAction::Abort(ENOENT);
 
-    INodeRecord oldparent;
-    oldparent.ParseFromArray(val, vallen);
-    update_directory_times(transaction.get(), oldparent);
+    oldparent_inode.ParseFromArray(val, vallen);
+    if (!(oldparent_inode.IsInitialized() && oldparent_inode.has_nlinks())) {
+      return InflightAction::Abort(EIO);
+    }
 
     err = fdb_future_get_value(a().newparent_inode_lookup.get(), &present, &val,
                                &vallen);
@@ -189,11 +196,17 @@ InflightAction Inflight_rename::check() {
     if (!present)
       return InflightAction::Abort(ENOENT);
 
-    INodeRecord newparent;
-    newparent.ParseFromArray(val, vallen);
-    if (oldparent.inode() != newparent.inode())
-      update_directory_times(transaction.get(), newparent);
+    newparent_inode.ParseFromArray(val, vallen);
+    if (!(newparent_inode.IsInitialized() && newparent_inode.has_nlinks())) {
+      return InflightAction::Abort(EIO);
+    }
   }
+
+  int oldparent_nlink_delta = 0;
+  int newparent_nlink_delta = 0;
+  const auto is_directory = [](const DirectoryEntry &entry) {
+    return entry.has_type() && (entry.type() == ft_directory);
+  };
 
   /****************************************************
    * Compare what the futures came back with, with the
@@ -218,12 +231,25 @@ InflightAction Inflight_rename::check() {
         return InflightAction::Abort(EISDIR);
       }
     }
+
+    if (is_directory(a().origin_dirent)) {
+      oldparent_nlink_delta -= 1;
+      newparent_nlink_delta += 1;
+    }
+    if (a().destination_dirent.has_inode() && is_directory(a().destination_dirent)) {
+      newparent_nlink_delta -= 1;
+    }
   } else if (flags == RENAME_EXCHANGE) {
     // need to both exist
     if ((!a().origin_dirent.has_inode()) ||
         (!a().destination_dirent.has_inode())) {
       return InflightAction::Abort(ENOENT);
     }
+
+    const int origin_dir = is_directory(a().origin_dirent) ? 1 : 0;
+    const int destination_dir = is_directory(a().destination_dirent) ? 1 : 0;
+    oldparent_nlink_delta += destination_dir - origin_dir;
+    newparent_nlink_delta += origin_dir - destination_dir;
   }
 #ifdef RENAME_NOREPLACE
   else if (flags == RENAME_NOREPLACE) {
@@ -233,8 +259,47 @@ InflightAction Inflight_rename::check() {
     if (a().destination_dirent.has_inode()) {
       return InflightAction::Abort(EEXIST);
     }
+
+    if (is_directory(a().origin_dirent)) {
+      oldparent_nlink_delta -= 1;
+      newparent_nlink_delta += 1;
+    }
   }
 #endif
+
+  const auto apply_nlink_delta = [](INodeRecord &inode, int delta) {
+    if (delta < 0) {
+      const uint64_t magnitude = static_cast<uint64_t>(-delta);
+      if (inode.nlinks() < magnitude) {
+        return false;
+      }
+      inode.set_nlinks(inode.nlinks() - magnitude);
+    } else if (delta > 0) {
+      const uint64_t magnitude = static_cast<uint64_t>(delta);
+      if (inode.nlinks() > (std::numeric_limits<uint64_t>::max() - magnitude)) {
+        return false;
+      }
+      inode.set_nlinks(inode.nlinks() + magnitude);
+    }
+    return true;
+  };
+
+  if (oldparent_inode.inode() == newparent_inode.inode()) {
+    if (!apply_nlink_delta(oldparent_inode,
+                           oldparent_nlink_delta + newparent_nlink_delta)) {
+      return InflightAction::Abort(EIO);
+    }
+    update_directory_times(transaction.get(), oldparent_inode);
+  } else {
+    if (!apply_nlink_delta(oldparent_inode, oldparent_nlink_delta)) {
+      return InflightAction::Abort(EIO);
+    }
+    if (!apply_nlink_delta(newparent_inode, newparent_nlink_delta)) {
+      return InflightAction::Abort(EIO);
+    }
+    update_directory_times(transaction.get(), oldparent_inode);
+    update_directory_times(transaction.get(), newparent_inode);
+  }
 
   /****************************************************
    * We've established that we (so far) have all of the
