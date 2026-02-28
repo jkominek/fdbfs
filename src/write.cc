@@ -28,6 +28,36 @@
 #include <zstd.h>
 #endif
 
+namespace {
+
+std::expected<std::pair<fuse_ino_t, uint64_t>, int>
+decode_fileblock_identity(const FDBKeyValue &kv) {
+  if (kv.key_length < fileblock_key_length) {
+    return std::unexpected(EIO);
+  }
+
+  const size_t key_prefix_size = key_prefix.size();
+  if (static_cast<size_t>(kv.key_length) <
+      (key_prefix_size + 1 + sizeof(fuse_ino_t) + sizeof(uint64_t))) {
+    return std::unexpected(EIO);
+  }
+  if (!std::equal(key_prefix.begin(), key_prefix.end(), kv.key)) {
+    return std::unexpected(EIO);
+  }
+  if (kv.key[key_prefix_size] != DATA_PREFIX) {
+    return std::unexpected(EIO);
+  }
+
+  fuse_ino_t ino_be = 0;
+  uint64_t block_be = 0;
+  bcopy(kv.key + key_prefix_size + 1, &ino_be, sizeof(fuse_ino_t));
+  bcopy(kv.key + key_prefix_size + 1 + sizeof(fuse_ino_t), &block_be,
+        sizeof(uint64_t));
+  return std::make_pair(be64toh(ino_be), be64toh(block_be));
+}
+
+} // namespace
+
 /*************************************************************
  * write
  *************************************************************
@@ -162,6 +192,10 @@ InflightAction Inflight_write::check() {
                                         &kvcount, &more);
     if (err)
       return InflightAction::FDBError(err);
+    assert(kvcount <= 1);
+    if (kvcount > 1) {
+      return InflightAction::Abort(EIO);
+    }
 
     const uint64_t copy_start_off = off % BLOCKSIZE;
     const uint64_t copy_start_size =
@@ -171,6 +205,14 @@ InflightAction Inflight_write::check() {
     const uint64_t total_buffer_size = BLOCKSIZE;
     std::vector<uint8_t> output_buffer(total_buffer_size, 0);
     if (kvcount > 0) {
+      const auto identity = decode_fileblock_identity(kvs[0]);
+      if (!identity.has_value()) {
+        return InflightAction::Abort(EIO);
+      }
+      const uint64_t expected_block = off / BLOCKSIZE;
+      if ((identity->first != ino) || (identity->second != expected_block)) {
+        return InflightAction::Abort(EIO);
+      }
       const auto dret = decode_block(
           &kvs[0], 0, std::span<uint8_t>(output_buffer), total_buffer_size);
       if (!dret) {
@@ -180,8 +222,8 @@ InflightAction Inflight_write::check() {
     bcopy(buffer.data(), output_buffer.data() + copy_start_off,
           copy_start_size);
     auto key = pack_fileblock_key(ino, off / BLOCKSIZE);
-    const auto sret = set_fileblock(transaction.get(), key,
-                                std::span<const uint8_t>(output_buffer), false);
+    const auto sret = set_fileblock(
+        transaction.get(), key, std::span<const uint8_t>(output_buffer), false);
     if (!sret)
       return InflightAction::Abort(EIO);
   }
@@ -196,12 +238,24 @@ InflightAction Inflight_write::check() {
                                         &kvcount, &more);
     if (err)
       return InflightAction::FDBError(err);
+    assert(kvcount <= 1);
+    if (kvcount > 1) {
+      return InflightAction::Abort(EIO);
+    }
 
     const uint64_t copysize = ((off + buffer.size()) % BLOCKSIZE);
     const uint64_t bufcopystart = buffer.size() - copysize;
     const uint64_t total_buffer_size = BLOCKSIZE;
     std::vector<uint8_t> output_buffer(total_buffer_size, 0);
     if (kvcount > 0) {
+      const auto identity = decode_fileblock_identity(kvs[0]);
+      if (!identity.has_value()) {
+        return InflightAction::Abort(EIO);
+      }
+      const uint64_t expected_block = (off + buffer.size()) / BLOCKSIZE;
+      if ((identity->first != ino) || (identity->second != expected_block)) {
+        return InflightAction::Abort(EIO);
+      }
       const auto dret = decode_block(
           &kvs[0], 0, std::span<uint8_t>(output_buffer), total_buffer_size);
       if (!dret) {
@@ -219,8 +273,8 @@ InflightAction Inflight_write::check() {
     // instead of actual_block_size. storing extra stuff in the block is
     // probably okay, but what was wrong with the old calculation?
     // it seems reasonable enough.
-    const auto sret = set_fileblock(transaction.get(), key,
-                                std::span<const uint8_t>(output_buffer), false);
+    const auto sret = set_fileblock(
+        transaction.get(), key, std::span<const uint8_t>(output_buffer), false);
     if (!sret)
       return InflightAction::Abort(EIO);
   }
@@ -257,7 +311,7 @@ InflightCallback Inflight_write::issue() {
   }
 
   int iter_start, iter_stop;
-  int doing_start_block = 0;
+  bool doing_start_block = false;
   // now, are we doing block-partial writes?
   if ((off % BLOCKSIZE) != 0) {
     const int start_block = off / BLOCKSIZE;
@@ -268,11 +322,11 @@ InflightCallback Inflight_write::issue() {
             transaction.get(),
             FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(),
                                               start_key.size()),
-            FDB_KEYSEL_FIRST_GREATER_THAN(stop_key.data(), stop_key.size()), 1,
-            0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+            FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop_key.data(), stop_key.size()),
+            1, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
         a().start_block_fetch);
     iter_start = start_block + 1;
-    doing_start_block = 1;
+    doing_start_block = true;
   } else {
     iter_start = off / BLOCKSIZE;
   }
@@ -284,14 +338,14 @@ InflightCallback Inflight_write::issue() {
     if ((!doing_start_block) || (stop_block != (off / BLOCKSIZE))) {
       const auto [start_key, stop_key] =
           pack_fileblock_single_range(ino, stop_block);
-      wait_on_future(
-          fdb_transaction_get_range(
-              transaction.get(),
-              FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(),
-                                                start_key.size()),
-              FDB_KEYSEL_FIRST_GREATER_THAN(stop_key.data(), stop_key.size()),
-              1, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-          a().stop_block_fetch);
+      wait_on_future(fdb_transaction_get_range(
+                         transaction.get(),
+                         FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(),
+                                                           start_key.size()),
+                         FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop_key.data(),
+                                                           stop_key.size()),
+                         1, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+                     a().stop_block_fetch);
     }
     iter_stop = stop_block;
   } else {
@@ -312,12 +366,14 @@ InflightCallback Inflight_write::issue() {
   // require a read-write cycle.
   for (int mid_block = iter_start; mid_block < iter_stop; mid_block++) {
     const auto key = pack_fileblock_key(ino, mid_block);
-    const uint8_t *block;
-    block = buffer.data() + (off % BLOCKSIZE) +
-            (mid_block - iter_start) * BLOCKSIZE;
+    // Offset into user write buffer for this full block:
+    // file_offset(mid_block_start) - write_start_offset.
+    const size_t block_buffer_offset =
+        static_cast<size_t>(mid_block) * BLOCKSIZE - static_cast<size_t>(off);
+    const uint8_t *block = buffer.data() + block_buffer_offset;
     const auto sret =
         set_fileblock(transaction.get(), key,
-                  std::span<const uint8_t>(block, BLOCKSIZE), false);
+                      std::span<const uint8_t>(block, BLOCKSIZE), false);
     // safe to discard the result here for normal operation, since we
     // cleared the whole range beforehand.
     if (!sret) {

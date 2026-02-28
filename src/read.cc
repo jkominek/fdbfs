@@ -56,7 +56,6 @@ private:
   const fuse_ino_t ino;
   const size_t requested_size; // size of the read
   const off_t off;             // offset into file
-
 };
 
 Inflight_read::Inflight_read(fuse_req_t req, fuse_ino_t ino, size_t size,
@@ -105,8 +104,9 @@ InflightAction Inflight_read::callback() {
         fdb_transaction_get_range(
             transaction.get(),
             FDB_KEYSEL_FIRST_GREATER_THAN(last_kv->key, last_kv->key_length),
-            FDB_KEYSEL_FIRST_GREATER_THAN(a().requested_range.second.data(),
-                                          a().requested_range.second.size()),
+            FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(
+                a().requested_range.second.data(),
+                a().requested_range.second.size()),
             0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
         next_range_fetch);
   } else {
@@ -125,9 +125,13 @@ InflightAction Inflight_read::callback() {
           ? std::numeric_limits<size_t>::max()
           : static_cast<size_t>(avail64);
   const size_t size = std::min(requested_size, avail);
+  if (size == 0)
+    return InflightAction::Buf({}, 0);
 
   for (int i = 0; i < kvcount; i++) {
     const FDBKeyValue kv = kvs[i];
+    // if we're getting short keys, the fdb client library is broken
+    assert(kv.key_length >= fileblock_key_length);
     std::vector<uint8_t> key(kv.key, kv.key + kv.key_length);
 #if DEBUG
     print_key(key);
@@ -150,6 +154,10 @@ InflightAction Inflight_read::callback() {
       // we need an offset into the target buffer, as our block
       // starts after the requested read area.
       const size_t bufferoff = block * BLOCKSIZE - off;
+      if (bufferoff >= size) {
+        // out-of-range block for the requested read; ignore defensively.
+        continue;
+      }
       auto out = std::span<uint8_t>(a().buffer).subspan(bufferoff);
       const auto dret = decode_block(&kv, 0, out, size - bufferoff);
       if (!dret) {
@@ -181,8 +189,8 @@ InflightCallback Inflight_read::issue() {
           transaction.get(),
           FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(a().requested_range.first.data(),
                                             a().requested_range.first.size()),
-          FDB_KEYSEL_FIRST_GREATER_THAN(a().requested_range.second.data(),
-                                        a().requested_range.second.size()),
+          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(a().requested_range.second.data(),
+                                            a().requested_range.second.size()),
           0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
       a().range_fetch);
   return std::bind(&Inflight_read::callback, this);
@@ -190,6 +198,10 @@ InflightCallback Inflight_read::issue() {
 
 extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
                            off_t off, struct fuse_file_info *fi) {
+  if (size == 0) {
+    fuse_reply_buf(req, nullptr, 0);
+    return;
+  }
   // reject negative offset reads
   if (off < 0) {
     fuse_reply_err(req, EINVAL);
