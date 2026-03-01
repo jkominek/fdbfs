@@ -30,7 +30,7 @@ thread_pool pool;
 bool shut_it_down_forever = false;
 
 void shut_it_down() {
-  // all the future handlers will ENOSYS when they're
+  // all the future handlers will ENOCONN when they're
   // invoked. we could do this a little bit faster if
   // we kept a set (or something) of all of the inflights,
   // so we could just go down the list and delete them all.
@@ -427,6 +427,16 @@ bool Inflight::run_current_callback() {
 }
 
 void Inflight::future_ready(FDBFuture *f) {
+  if (fuse_req_interrupted(req)) {
+    fail_inflight(this, EINTR, "fuse operation interrupted");
+    return;
+  }
+
+  if (shut_it_down_forever) {
+    fail_inflight(this, ENOTCONN, "fdbfs commanded to shutdown");
+    return;
+  }
+
   assert(!attempt_state().future_queue.empty());
   if (attempt_state().future_queue.empty()) {
     fail_inflight(this, EIO, "future_ready called with empty queue");
@@ -482,13 +492,6 @@ void Inflight::wait_on_future(FDBFuture *f, unique_future &dest) {
  */
 extern "C" void fdbfs_error_processor(FDBFuture *f, void *p) {
   Inflight *inflight = static_cast<Inflight *>(p);
-
-  if (shut_it_down_forever) {
-    // everything is to be terminated immediately
-    fuse_reply_err(inflight->req, ENOSYS);
-    delete inflight;
-    return;
-  }
 
   fdb_error_t err = fdb_future_get_error(f);
   // done with this either way.

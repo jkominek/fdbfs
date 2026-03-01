@@ -94,8 +94,13 @@ void fdbfs_init(void *userdata, struct fuse_conn_info *conn) {
     conn->max_write = 128 * 1024;
   // these largely deal with our relationship with the kernel, and
   // could probably be rather large
-  conn->max_background = std::thread::hardware_concurrency();
-  conn->congestion_threshold = std::thread::hardware_concurrency() * 2;
+  conn->max_background = 256;
+  conn->congestion_threshold = 192;
+#if FUSE_VERSION >= 317
+  if (conn->capable_ext & FUSE_CAP_ASYNC_DIO) {
+    fuse_set_feature_flag(conn, FUSE_CAP_ASYNC_DIO);
+  }
+#endif
 }
 
 pthread_t network_thread;

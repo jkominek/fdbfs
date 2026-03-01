@@ -203,10 +203,14 @@ public:
    */
   template <typename F> void push_task(const F &task) {
     tasks_total++;
+    bool was_empty = false;
     {
       const std::scoped_lock lock(queue_mutex);
-      tasks.push(std::function<void()>(task));
+      was_empty = tasks.empty();
+      tasks.push(std::move(task));
     }
+    if (was_empty)
+      cv.notify_one();
   }
 
   /**
@@ -385,24 +389,6 @@ private:
   }
 
   /**
-   * @brief Try to pop a new task out of the queue.
-   *
-   * @param task A reference to the task. Will be populated with a function if
-   * the queue is not empty.
-   * @return true if a task was found, false if the queue is empty.
-   */
-  bool pop_task(std::function<void()> &task) {
-    const std::scoped_lock lock(queue_mutex);
-    if (tasks.empty())
-      return false;
-    else {
-      task = std::move(tasks.front());
-      tasks.pop();
-      return true;
-    }
-  }
-
-  /**
    * @brief Sleep for sleep_duration microseconds. If that variable is set to
    * zero, yield instead.
    *
@@ -420,14 +406,24 @@ private:
    * atomic variable running is set to true.
    */
   void worker() {
-    while (running) {
+    while (running.load(std::memory_order_relaxed)) {
       std::function<void()> task;
-      if (!paused && pop_task(task)) {
-        task();
-        tasks_total--;
-      } else {
-        sleep_or_yield();
+      {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        cv.wait(lock, [&] {
+          return !running.load(std::memory_order_relaxed) ||
+                 (!paused.load(std::memory_order_relaxed) && !tasks.empty());
+        });
+        if (!running.load(std::memory_order_relaxed))
+          break;
+        if (paused.load(std::memory_order_relaxed) || tasks.empty())
+          continue;
+
+        task = std::move(tasks.front());
+        tasks.pop();
       }
+      task();
+      tasks_total--;
     }
   }
 
@@ -440,6 +436,8 @@ private:
    * threads.
    */
   mutable std::mutex queue_mutex = {};
+
+  std::condition_variable cv;
 
   /**
    * @brief An atomic variable indicating to the workers to keep running. When
@@ -490,7 +488,7 @@ public:
    * std::cout.
    */
   synced_stream(std::ostream &_out_stream = std::cout)
-      : out_stream(_out_stream){};
+      : out_stream(_out_stream) {};
 
   /**
    * @brief Print any number of items into the output stream. Ensures that no
