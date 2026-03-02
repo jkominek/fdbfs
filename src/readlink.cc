@@ -31,7 +31,7 @@ struct AttemptState_readlink : public AttemptState {
 };
 
 class Inflight_readlink
-    : public InflightWithAttempt<AttemptState_readlink> {
+    : public InflightWithAttempt<AttemptState_readlink, InflightPolicyReadOnly> {
 public:
   Inflight_readlink(fuse_req_t, fuse_ino_t, unique_transaction);
   InflightCallback issue();
@@ -43,7 +43,7 @@ private:
 
 Inflight_readlink::Inflight_readlink(fuse_req_t req, fuse_ino_t ino,
                                      unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       ino(ino) {}
 
 InflightAction Inflight_readlink::callback() {

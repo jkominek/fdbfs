@@ -30,7 +30,7 @@ struct AttemptState_getxattr : public AttemptState {
   unique_future xattr_data_fetch;
 };
 
-class Inflight_getxattr : public InflightWithAttempt<AttemptState_getxattr> {
+class Inflight_getxattr : public InflightWithAttempt<AttemptState_getxattr, InflightPolicyReadOnly> {
 public:
   Inflight_getxattr(fuse_req_t, fuse_ino_t, std::string, size_t,
                     unique_transaction);
@@ -47,7 +47,7 @@ private:
 Inflight_getxattr::Inflight_getxattr(fuse_req_t req, fuse_ino_t ino,
                                      std::string name, size_t maxsize,
                                      unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       ino(ino), name(name), maxsize(maxsize) {}
 
 InflightAction Inflight_getxattr::process() {

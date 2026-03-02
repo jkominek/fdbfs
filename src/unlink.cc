@@ -49,7 +49,7 @@ struct AttemptState_unlink_rmdir : public AttemptState {
 };
 
 class Inflight_unlink_rmdir
-    : public InflightWithAttempt<AttemptState_unlink_rmdir> {
+    : public InflightWithAttempt<AttemptState_unlink_rmdir, InflightPolicyWrite> {
 public:
   Inflight_unlink_rmdir(fuse_req_t, fuse_ino_t, std::string, Op,
                         unique_transaction);
@@ -75,7 +75,7 @@ private:
 Inflight_unlink_rmdir::Inflight_unlink_rmdir(fuse_req_t req, fuse_ino_t parent,
                                              std::string name, Op op,
                                              unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       parent(parent), name(std::move(name)),
       dirent_key(pack_dentry_key(parent, this->name)), op(op) {}
 

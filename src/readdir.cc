@@ -29,7 +29,8 @@ struct AttemptState_readdir : public AttemptState {
   unique_future range_fetch;
 };
 
-class Inflight_readdir : public InflightWithAttempt<AttemptState_readdir> {
+class Inflight_readdir
+    : public InflightWithAttempt<AttemptState_readdir, InflightPolicyReadOnly> {
 public:
   Inflight_readdir(fuse_req_t, fuse_ino_t, size_t, off_t, unique_transaction);
   InflightCallback issue();
@@ -44,8 +45,8 @@ private:
 
 Inflight_readdir::Inflight_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
                                    off_t off, unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
-      ino(ino), size(size), off(off) {}
+    : InflightWithAttempt(req, std::move(transaction)), ino(ino), size(size),
+      off(off) {}
 
 InflightAction Inflight_readdir::callback() {
   const FDBKeyValue *kvs;

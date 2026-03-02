@@ -37,6 +37,29 @@ extern void shut_it_down();
 // ReadOnly: no writes.
 enum class ReadWrite { Yes, IdempotentWrite, ReadOnly };
 
+// Fresh: fetch a new read version on the first try
+// Cached: using the cached read version is
+enum class ReadVersion { Fresh, Cached };
+
+template <ReadWrite RW, ReadVersion RV = ReadVersion::Cached,
+          bool UsesOplog = (RW == ReadWrite::Yes)>
+struct InflightPolicy {
+  static constexpr ReadWrite read_write = RW;
+  static constexpr ReadVersion read_version = RV;
+  static constexpr bool uses_oplog = UsesOplog;
+};
+
+using InflightPolicyWrite = InflightPolicy<ReadWrite::Yes>;
+using InflightPolicyIdempotentWrite =
+    InflightPolicy<ReadWrite::IdempotentWrite>;
+using InflightPolicyReadOnly = InflightPolicy<ReadWrite::ReadOnly>;
+
+struct InflightRuntimePolicy {
+  ReadWrite read_write;
+  ReadVersion read_version;
+  bool uses_oplog;
+};
+
 using OpLogResultVariant =
     std::variant<OpLogResultOK, OpLogResultEntry, OpLogResultAttr,
                  OpLogResultOpen, OpLogResultBuf, OpLogResultReadlink,
@@ -91,7 +114,7 @@ public:
 
 protected:
   // constructor
-  Inflight(fuse_req_t, ReadWrite, unique_transaction);
+  Inflight(fuse_req_t, const InflightRuntimePolicy &, unique_transaction);
 
   // Per-attempt transaction configuration hook. Called from start() before any
   // reads/writes (including oplog checks).
@@ -110,8 +133,8 @@ protected:
   [[nodiscard]] bool write_oplog_result(const OpLogResultVariant &);
 
 private:
-  // whether we're intended as r/w or not.
-  ReadWrite readwrite;
+  // static behavior selected by the subclass policy.
+  const InflightRuntimePolicy *policy;
   bool commit_unknown_seen = false;
   std::optional<uint64_t> op_id;
   std::unique_ptr<AttemptState> attempt;
@@ -129,11 +152,17 @@ private:
   friend void fdbfs_error_checker(FDBFuture *, void *);
 };
 
-template <typename AttemptT> class InflightWithAttempt : public Inflight {
+template <typename AttemptT, typename Policy>
+class InflightWithAttempt : public Inflight {
 public:
-  InflightWithAttempt(fuse_req_t req, ReadWrite readwrite,
-                      unique_transaction transaction)
-      : Inflight(req, readwrite, std::move(transaction)) {
+  static constexpr InflightRuntimePolicy runtime_policy{
+      .read_write = Policy::read_write,
+      .read_version = Policy::read_version,
+      .uses_oplog = Policy::uses_oplog,
+  };
+
+  InflightWithAttempt(fuse_req_t req, unique_transaction transaction)
+      : Inflight(req, runtime_policy, std::move(transaction)) {
     reset_attempt_state();
   }
 
@@ -153,7 +182,9 @@ struct AttemptState_markused : public AttemptState {
   unique_future inode_fetch;
 };
 
-class Inflight_markused : public InflightWithAttempt<AttemptState_markused> {
+class Inflight_markused
+    : public InflightWithAttempt<AttemptState_markused,
+                                 InflightPolicyIdempotentWrite> {
 public:
   Inflight_markused(fuse_req_t, uint64_t, struct fuse_entry_param,
                     unique_transaction);
@@ -329,4 +360,4 @@ protected:
   friend class Inflight;
 };
 
-#endif // __INFLIGHT_H_
+#endif

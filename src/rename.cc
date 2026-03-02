@@ -8,8 +8,6 @@
 #include <string.h>
 #include <limits>
 
-#include <linux/fs.h>
-
 #include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
@@ -41,7 +39,7 @@ struct AttemptState_rename : public AttemptState {
   unique_future inode_metadata_fetch;
 };
 
-class Inflight_rename : public InflightWithAttempt<AttemptState_rename> {
+class Inflight_rename : public InflightWithAttempt<AttemptState_rename, InflightPolicyWrite> {
 public:
   Inflight_rename(fuse_req_t, fuse_ino_t, std::string, fuse_ino_t, std::string,
                   int, unique_transaction transaction);
@@ -66,7 +64,7 @@ Inflight_rename::Inflight_rename(fuse_req_t req, fuse_ino_t oldparent,
                                  std::string oldname, fuse_ino_t newparent,
                                  std::string newname, int flags,
                                  unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       oldparent(oldparent), oldname(std::move(oldname)), newparent(newparent),
       newname(std::move(newname)), flags(flags) {}
 

@@ -93,7 +93,7 @@ struct AttemptState_write : public AttemptState {
   unique_future stop_block_fetch;
 };
 
-class Inflight_write : public InflightWithAttempt<AttemptState_write> {
+class Inflight_write : public InflightWithAttempt<AttemptState_write, InflightPolicyWrite> {
 public:
   Inflight_write(fuse_req_t, fuse_ino_t, std::vector<uint8_t>, off_t,
                  unique_transaction);
@@ -113,7 +113,7 @@ private:
 Inflight_write::Inflight_write(fuse_req_t req, fuse_ino_t ino,
                                std::vector<uint8_t> buffer, off_t off,
                                unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       ino(ino), buffer(std::move(buffer)), off(off) {}
 
 fdb_error_t Inflight_write::configure_transaction() {

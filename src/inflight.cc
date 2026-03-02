@@ -159,10 +159,9 @@ std::optional<std::pair<uint64_t, uint64_t>> claim_local_oplog_cleanup_span() {
  */
 
 // allocate an inflight struct and fill and out some basics.
-// readwrite specifies the transaction will include writes
-Inflight::Inflight(fuse_req_t req, ReadWrite readwrite,
+Inflight::Inflight(fuse_req_t req, const InflightRuntimePolicy &runtime_policy,
                    unique_transaction provided)
-    : transaction(std::move(provided)), req(req), readwrite(readwrite) {
+    : transaction(std::move(provided)), req(req), policy(&runtime_policy) {
   if (uses_oplog()) {
     op_id = allocate_oplog_id();
     mark_oplog_live(*op_id);
@@ -182,7 +181,7 @@ void Inflight::reset_attempt_state() { attempt = create_attempt_state(); }
 
 InflightAction Inflight::oplog_recovery(const OpLogRecord &) {
   // it shouldn't be possible to reach this code, anything that
-  // declares itself as ReadWrite::Yes must override this.
+  // opts into oplog usage must override this.
   // TODO enforce in the typesystem, by having separate Inflight
   // subclasses for each ReadWrite value? (and then eliminating
   // the value)
@@ -257,7 +256,7 @@ bool Inflight::should_check_oplog() const {
   return uses_oplog() && commit_unknown_seen;
 }
 
-bool Inflight::uses_oplog() const { return readwrite == ReadWrite::Yes; }
+bool Inflight::uses_oplog() const { return policy->uses_oplog; }
 
 InflightAction Inflight::check_oplog_or_issue() {
   fdb_bool_t present = 0;
@@ -558,9 +557,8 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p) {
 Inflight_markused::Inflight_markused(fuse_req_t req, uint64_t generation,
                                      struct fuse_entry_param entry,
                                      unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::IdempotentWrite,
-                          std::move(transaction)),
-      generation(generation), entry(entry) {}
+    : InflightWithAttempt(req, std::move(transaction)), generation(generation),
+      entry(entry) {}
 
 InflightCallback Inflight_markused::issue() {
   auto inode_key = pack_inode_key(entry.ino);

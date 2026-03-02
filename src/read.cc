@@ -45,7 +45,7 @@ struct AttemptState_read : public AttemptState {
   std::vector<uint8_t> buffer;
 };
 
-class Inflight_read : public InflightWithAttempt<AttemptState_read> {
+class Inflight_read : public InflightWithAttempt<AttemptState_read, InflightPolicyReadOnly> {
 public:
   Inflight_read(fuse_req_t, fuse_ino_t, size_t, off_t, unique_transaction);
   InflightCallback issue();
@@ -60,7 +60,7 @@ private:
 
 Inflight_read::Inflight_read(fuse_req_t req, fuse_ino_t ino, size_t size,
                              off_t off, unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       ino(ino), requested_size(size), off(off) {
   a().buffer.assign(requested_size + 32, 0);
 }

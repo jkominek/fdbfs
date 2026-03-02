@@ -30,7 +30,7 @@ struct AttemptState_removexattr : public AttemptState {
 };
 
 class Inflight_removexattr
-    : public InflightWithAttempt<AttemptState_removexattr> {
+    : public InflightWithAttempt<AttemptState_removexattr, InflightPolicyWrite> {
 public:
   Inflight_removexattr(fuse_req_t, fuse_ino_t, std::string, unique_transaction);
   InflightCallback issue();
@@ -48,7 +48,7 @@ private:
 Inflight_removexattr::Inflight_removexattr(fuse_req_t req, fuse_ino_t ino,
                                            std::string name,
                                            unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       ino(ino), name(std::move(name)) {}
 
 fdb_error_t Inflight_removexattr::configure_transaction() {

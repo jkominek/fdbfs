@@ -38,7 +38,7 @@ struct AttemptState_mknod : public AttemptState {
   struct stat attr{};
 };
 
-class Inflight_mknod : public InflightWithAttempt<AttemptState_mknod> {
+class Inflight_mknod : public InflightWithAttempt<AttemptState_mknod, InflightPolicyWrite> {
 public:
   Inflight_mknod(fuse_req_t, fuse_ino_t, std::string, mode_t, filetype, dev_t,
                  unique_transaction, std::optional<std::string>);
@@ -60,7 +60,7 @@ Inflight_mknod::Inflight_mknod(
     fuse_req_t req, fuse_ino_t parent, std::string name, mode_t mode,
     filetype type, dev_t rdev, unique_transaction transaction,
     std::optional<std::string> symlink_target_opt = std::nullopt)
-    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       parent(parent), name(std::move(name)), type(type), mode(mode), rdev(rdev),
       symlink_target((type == ft_symlink && symlink_target_opt.has_value())
                          ? std::move(*symlink_target_opt)

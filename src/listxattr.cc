@@ -47,7 +47,7 @@ struct AttemptState_listxattr : public AttemptState {
 };
 
 class Inflight_listxattr
-    : public InflightWithAttempt<AttemptState_listxattr> {
+    : public InflightWithAttempt<AttemptState_listxattr, InflightPolicyReadOnly> {
 public:
   Inflight_listxattr(fuse_req_t, fuse_ino_t, size_t, unique_transaction);
   InflightCallback issue();
@@ -61,7 +61,7 @@ private:
 Inflight_listxattr::Inflight_listxattr(fuse_req_t req, fuse_ino_t ino,
                                        size_t maxsize,
                                        unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       ino(ino), maxsize(maxsize) {
   a().buf.reserve(maxsize);
 }
@@ -139,7 +139,8 @@ struct AttemptState_listxattr_count : public AttemptState {
 };
 
 class Inflight_listxattr_count
-    : public InflightWithAttempt<AttemptState_listxattr_count> {
+    : public InflightWithAttempt<AttemptState_listxattr_count,
+                                 InflightPolicyReadOnly> {
 public:
   Inflight_listxattr_count(fuse_req_t, fuse_ino_t, unique_transaction);
   InflightCallback issue();
@@ -151,7 +152,7 @@ private:
 
 Inflight_listxattr_count::Inflight_listxattr_count(
     fuse_req_t req, fuse_ino_t ino, unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       ino(ino) {}
 
 InflightAction Inflight_listxattr_count::process() {

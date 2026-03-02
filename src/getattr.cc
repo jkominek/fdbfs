@@ -34,7 +34,7 @@ struct AttemptState_getattr : public AttemptState {
   unique_future inode_fetch;
 };
 
-class Inflight_getattr : public InflightWithAttempt<AttemptState_getattr> {
+class Inflight_getattr : public InflightWithAttempt<AttemptState_getattr, InflightPolicyReadOnly> {
 public:
   Inflight_getattr(fuse_req_t, fuse_ino_t, unique_transaction);
   InflightCallback issue();
@@ -46,7 +46,7 @@ private:
 
 Inflight_getattr::Inflight_getattr(fuse_req_t req, fuse_ino_t ino,
                                    unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       ino(ino) {}
 
 InflightAction Inflight_getattr::callback() {

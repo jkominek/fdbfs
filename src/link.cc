@@ -33,7 +33,7 @@ struct AttemptState_link : public AttemptState {
   unique_future target_lookup;
 };
 
-class Inflight_link : public InflightWithAttempt<AttemptState_link> {
+class Inflight_link : public InflightWithAttempt<AttemptState_link, InflightPolicyWrite> {
 public:
   Inflight_link(fuse_req_t, fuse_ino_t, fuse_ino_t, std::string,
                 unique_transaction);
@@ -52,7 +52,7 @@ private:
 Inflight_link::Inflight_link(fuse_req_t req, fuse_ino_t ino,
                              fuse_ino_t newparent, std::string newname,
                              unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       ino(ino), newparent(newparent), newname(std::move(newname)) {}
 
 bool Inflight_link::write_success_oplog_result() {

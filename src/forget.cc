@@ -25,7 +25,7 @@ struct ForgetEntry {
   uint64_t generation;
 };
 
-class Inflight_forget : public InflightWithAttempt<AttemptState_forget> {
+class Inflight_forget : public InflightWithAttempt<AttemptState_forget, InflightPolicyIdempotentWrite> {
 public:
   Inflight_forget(fuse_req_t, std::vector<ForgetEntry>, unique_transaction);
   InflightCallback issue();
@@ -37,8 +37,7 @@ private:
 Inflight_forget::Inflight_forget(fuse_req_t req,
                                  std::vector<ForgetEntry> entries,
                                  unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::IdempotentWrite,
-                          std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       entries(std::move(entries)) {}
 
 InflightCallback Inflight_forget::issue() {

@@ -35,7 +35,7 @@ struct AttemptState_setattr : public AttemptState {
   uint64_t partial_block_idx = 0;
 };
 
-class Inflight_setattr : public InflightWithAttempt<AttemptState_setattr> {
+class Inflight_setattr : public InflightWithAttempt<AttemptState_setattr, InflightPolicyWrite> {
 public:
   struct SuccessReplyAttr {};
   struct SuccessReplyOpen {
@@ -65,7 +65,7 @@ Inflight_setattr::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
                                    struct stat attr, int to_set,
                                    unique_transaction transaction,
                                    SuccessReply success_reply)
-    : InflightWithAttempt(req, ReadWrite::Yes, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       ino(ino), attr(attr), to_set(to_set),
       success_reply(std::move(success_reply)) {}
 

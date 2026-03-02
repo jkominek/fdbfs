@@ -27,7 +27,7 @@ struct AttemptState_statfs : public AttemptState {
   unique_future status_fetch;
 };
 
-class Inflight_statfs : public InflightWithAttempt<AttemptState_statfs> {
+class Inflight_statfs : public InflightWithAttempt<AttemptState_statfs, InflightPolicyReadOnly> {
 public:
   Inflight_statfs(fuse_req_t, unique_transaction);
   InflightCallback issue();
@@ -37,7 +37,7 @@ private:
 };
 
 Inflight_statfs::Inflight_statfs(fuse_req_t req, unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)) {}
+    : InflightWithAttempt(req, std::move(transaction)) {}
 
 InflightAction Inflight_statfs::process_status() {
   fdb_bool_t present = 0;

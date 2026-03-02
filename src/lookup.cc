@@ -40,7 +40,7 @@ struct AttemptState_lookup : public AttemptState {
   unique_future inode_fetch;
 };
 
-class Inflight_lookup : public InflightWithAttempt<AttemptState_lookup> {
+class Inflight_lookup : public InflightWithAttempt<AttemptState_lookup, InflightPolicyReadOnly> {
 public:
   Inflight_lookup(fuse_req_t, fuse_ino_t, std::string, unique_transaction);
   InflightCallback issue();
@@ -57,7 +57,7 @@ private:
 Inflight_lookup::Inflight_lookup(fuse_req_t req, fuse_ino_t parent,
                                  std::string name,
                                  unique_transaction transaction)
-    : InflightWithAttempt(req, ReadWrite::ReadOnly, std::move(transaction)),
+    : InflightWithAttempt(req, std::move(transaction)),
       parent(parent), name(std::move(name)) {}
 
 InflightAction Inflight_lookup::process_inode() {
