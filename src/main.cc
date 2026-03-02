@@ -66,7 +66,7 @@ static struct fuse_lowlevel_ops fdbfs_oper = {
     .listxattr = fdbfs_listxattr,
     .removexattr = fdbfs_removexattr,
     .forget_multi = fdbfs_forget_multi,
-    //    .flock      = fdbfs_flock
+    .readdirplus = fdbfs_readdirplus,
 };
 
 void fdbfs_init(void *userdata, struct fuse_conn_info *conn) {

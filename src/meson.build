@@ -25,6 +25,7 @@ project_source_files += files([
     'open.cc',
     'read.cc',
     'readdir.cc',
+    'readdirplus.cc',
     'readlink.cc',
     'release.cc',
     'removexattr.cc',

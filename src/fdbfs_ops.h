@@ -12,6 +12,8 @@ extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
                               struct fuse_file_info *fi);
 extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
                               off_t off, struct fuse_file_info *fi);
+extern "C" void fdbfs_readdirplus(fuse_req_t req, fuse_ino_t ino, size_t size,
+                                  off_t off, struct fuse_file_info *fi);
 extern "C" void fdbfs_open(fuse_req_t req, fuse_ino_t ino,
                            struct fuse_file_info *fi);
 extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
