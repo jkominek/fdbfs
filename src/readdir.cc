@@ -109,13 +109,23 @@ InflightAction Inflight_readdir::callback() {
 InflightCallback Inflight_readdir::issue() {
   const auto [start, stop] = pack_dentry_subspace_range(ino);
 
-  int offset = off;
-  int limit = 10; // we should try to guess this better
+  // Estimate how many entries can fit in the caller-provided buffer.
+  // We use an 8-byte representative filename to avoid wildly
+  // overestimating the count for typical names.
+  struct stat dummy_attr{};
+  size_t estimated_entry_size =
+      fuse_add_direntry(req, nullptr, 0, "12345678", &dummy_attr, off + 1);
+  if (estimated_entry_size == 0) {
+    estimated_entry_size = 1;
+  }
+  const size_t estimated_count =
+      std::max<size_t>(1, size / estimated_entry_size);
+  const int limit = static_cast<int>(estimated_count);
 
   // well this is tricky. how large a range should we request?
   wait_on_future(
       fdb_transaction_get_range(transaction.get(), start.data(), start.size(),
-                                0, 1 + offset, stop.data(), stop.size(), 0, 1,
+                                0, 1 + off, stop.data(), stop.size(), 0, 1,
                                 limit, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
       a().range_fetch);
   return std::bind(&Inflight_readdir::callback, this);
