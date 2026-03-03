@@ -118,6 +118,33 @@ bool wait_for_mount(const fs::path &mnt, std::chrono::milliseconds timeout) {
   return is_fuse_mounted(mnt);
 }
 
+bool wait_for_child_reap(pid_t pid, std::chrono::milliseconds timeout,
+                         int *status_out = nullptr) {
+  using namespace std::chrono;
+  auto deadline = steady_clock::now() + timeout;
+  int status = 0;
+  while (steady_clock::now() < deadline) {
+    const pid_t rc = ::waitpid(pid, &status, WNOHANG);
+    if (rc == pid) {
+      if (status_out != nullptr) {
+        *status_out = status;
+      }
+      return true;
+    }
+    if (rc < 0 && errno == ECHILD) {
+      if (status_out != nullptr) {
+        *status_out = 0;
+      }
+      return true;
+    }
+    if (rc < 0 && errno != EINTR) {
+      return false;
+    }
+    ::usleep(10 * 1000);
+  }
+  return false;
+}
+
 int run_cmd_capture(const std::vector<std::string> &argv,
                     const fs::path &stdout_path, const fs::path &stderr_path) {
   pid_t pid = ::fork();
@@ -467,8 +494,20 @@ void FdbfsEnv::stop_fdbfs_best_effort() noexcept {
   }
 
   int status = 0;
-  (void)::waitpid(fuse_pid, &status, WNOHANG);
-  fuse_pid = -1;
+  if (wait_for_child_reap(fuse_pid, std::chrono::milliseconds(1500),
+                          &status)) {
+    fuse_pid = -1;
+    return;
+  }
+
+  // Escalate if still unreaped.
+  ::kill(-fuse_pid, SIGKILL);
+  if (wait_for_child_reap(fuse_pid, std::chrono::milliseconds(1500), &status)) {
+    fuse_pid = -1;
+    return;
+  }
+
+  append_op("warning: failed to reap fuse child pid=" + std::to_string(fuse_pid));
 }
 
 void FdbfsEnv::capture_state(std::string_view why) noexcept {
