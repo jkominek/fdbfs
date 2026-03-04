@@ -6,12 +6,15 @@
 #include <foundationdb/fdb_c.h>
 
 #include <assert.h>
+#include <chrono>
+#include <condition_variable>
 #include <errno.h>
 #include <fcntl.h>
+#include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include <thread>
 
 #include "inflight.h"
 #include "liveness.h"
@@ -29,8 +32,9 @@
  * awhile, we should die.
  */
 
-pthread_t gc_thread;
-std::atomic<bool> gc_stop = false;
+std::jthread gc_thread;
+std::mutex gc_sleep_mutex;
+std::condition_variable gc_sleep_cv;
 
 constexpr int gc_scan_batch_limit = 64;
 
@@ -190,18 +194,24 @@ static void process_gc_candidate(const std::vector<uint8_t> &garbage_key) {
   (void)wait_err;
 }
 
-void *garbage_scanner(void *ignore) {
-  struct timespec ts;
+void garbage_scanner(std::stop_token stop_token) {
+  std::stop_callback stop_wakeup(stop_token,
+                                 []() { gc_sleep_cv.notify_all(); });
   auto [gc_start_key, gc_stop_key] = pack_garbage_subspace_range();
   std::vector<uint8_t> last_key = gc_start_key;
 #if DEBUG
   printf("gc starting\n");
 #endif
-  while (!gc_stop.load(std::memory_order_relaxed)) {
+  while (!stop_token.stop_requested()) {
     // TODO vary this or do something to slow things down.
-    ts.tv_sec = 1;
-    ts.tv_nsec = 0;
-    nanosleep(&ts, NULL);
+    {
+      std::unique_lock<std::mutex> lk(gc_sleep_mutex);
+      gc_sleep_cv.wait_for(lk, std::chrono::seconds(1),
+                           [&]() { return stop_token.stop_requested(); });
+    }
+    if (stop_token.stop_requested()) {
+      break;
+    }
 
     if (auto span = claim_local_oplog_cleanup_span(); span.has_value()) {
       const auto range = pack_local_oplog_span_range(span->first, span->second);
@@ -226,8 +236,9 @@ void *garbage_scanner(void *ignore) {
     if (fdb_future_block_until_ready(f.get()) ||
         fdb_future_get_keyvalue_array(f.get(), &kvs, &kvcount, &more)) {
       // error, take a longer break.
-      ts.tv_sec = 3;
-      nanosleep(&ts, NULL);
+      std::unique_lock<std::mutex> lk(gc_sleep_mutex);
+      gc_sleep_cv.wait_for(lk, std::chrono::seconds(3),
+                           [&]() { return stop_token.stop_requested(); });
       continue;
     }
 
@@ -255,20 +266,26 @@ void *garbage_scanner(void *ignore) {
 #if DEBUG
   printf("gc done\n");
 #endif
-  return NULL;
 }
 
 bool start_gc() {
-  // just in case we restart the gc for some reason
-  gc_stop.store(false, std::memory_order_relaxed);
-
-  if (pthread_create(&gc_thread, NULL, garbage_scanner, NULL)) {
+  if (gc_thread.joinable()) {
+    return false;
+  }
+  try {
+    gc_thread = std::jthread(garbage_scanner);
+  } catch (const std::system_error &) {
     return true;
   }
   return false;
 }
 
 void terminate_gc() {
-  gc_stop.store(true, std::memory_order_relaxed);
-  pthread_join(gc_thread, NULL);
+  if (!gc_thread.joinable()) {
+    return;
+  }
+
+  gc_thread.request_stop();
+  gc_sleep_cv.notify_all();
+  gc_thread.join();
 }

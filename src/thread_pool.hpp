@@ -88,6 +88,7 @@ public:
   ~thread_pool() {
     wait_for_tasks();
     running = false;
+    cv.notify_all();
     destroy_threads();
   }
 
@@ -250,6 +251,7 @@ public:
     paused = true;
     wait_for_tasks();
     running = false;
+    cv.notify_all();
     destroy_threads();
     thread_count =
         _thread_count ? _thread_count : std::thread::hardware_concurrency();

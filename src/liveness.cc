@@ -5,9 +5,10 @@
 #include <foundationdb/fdb_c.h>
 
 #include <assert.h>
+#include <chrono>
+#include <condition_variable>
 #include <errno.h>
 #include <fcntl.h>
-#include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -24,6 +25,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include "inflight.h"
 #include "liveness.h"
@@ -41,9 +43,11 @@
 std::vector<uint8_t> pid;
 ProcessTableEntry pt_entry;
 struct fuse_session *fuse_session;
-pthread_t liveness_thread;
+std::jthread liveness_thread;
 std::atomic<bool> terminate = true;
 bool liveness_started = false;
+std::mutex liveness_sleep_mutex;
+std::condition_variable liveness_sleep_cv;
 
 struct ObservedPidState {
   std::optional<ProcessTableEntry> entry;
@@ -97,6 +101,11 @@ static void fail_closed_due_to_liveness_failure() {
       terminate.exchange(true, std::memory_order_relaxed);
   if (already_terminating) {
     return;
+  }
+
+  if (liveness_thread.joinable()) {
+    liveness_thread.request_stop();
+    liveness_sleep_cv.notify_all();
   }
 
   // kill everything in-flight
@@ -466,8 +475,7 @@ bool send_pt_entry(bool startup) {
   return run_sync_transaction(f).value_or(false);
 }
 
-const int liveness_refresh_sec = 0;
-const int liveness_refresh_nsec = 500 * 1000000;
+constexpr auto liveness_refresh_interval = std::chrono::milliseconds(500);
 
 void update_pt_entry_time() {
   struct timespec tv;
@@ -477,19 +485,23 @@ void update_pt_entry_time() {
   pt_entry.mutable_last_updated()->set_nsec(tv.tv_nsec);
 }
 
-std::mutex manager_running;
-void *liveness_manager(void *ignore) {
-  const std::unique_lock<std::mutex> lock(manager_running);
+void liveness_manager(std::stop_token stop_token) {
+  std::stop_callback stop_wakeup(stop_token,
+                                 []() { liveness_sleep_cv.notify_all(); });
 
-  while (!terminate.load(std::memory_order_relaxed)) {
+  while (!stop_token.stop_requested()) {
     // TODO fetch fdb_database_get_client_status
     // then inspect the "Healthy" flag. if we're not
     // healthy, start blocking FUSE operations until
     // we are
-    struct timespec sleep;
-    sleep.tv_sec = liveness_refresh_sec;
-    sleep.tv_nsec = liveness_refresh_nsec;
-    nanosleep(&sleep, NULL);
+    {
+      std::unique_lock<std::mutex> lock(liveness_sleep_mutex);
+      liveness_sleep_cv.wait_for(lock, liveness_refresh_interval,
+                                 [&]() { return stop_token.stop_requested(); });
+    }
+    if (stop_token.stop_requested()) {
+      break;
+    }
 
     update_pt_entry_time();
     pt_entry.set_liveness_counter(pt_entry.liveness_counter() + 1);
@@ -505,8 +517,6 @@ void *liveness_manager(void *ignore) {
     refresh_observed_pid_table();
     reap_stale_pid_entries();
   }
-
-  return NULL;
 }
 
 // returns false if liveness is started by the time the function returns
@@ -555,7 +565,9 @@ bool start_liveness(struct fuse_session *se) {
 
   terminate.store(false, std::memory_order_relaxed);
 
-  if (pthread_create(&liveness_thread, NULL, liveness_manager, NULL)) {
+  try {
+    liveness_thread = std::jthread(liveness_manager);
+  } catch (const std::system_error &) {
     terminate.store(true, std::memory_order_relaxed);
     fuse_session = NULL;
     pid.clear();
@@ -574,9 +586,11 @@ void terminate_liveness() {
   liveness_started = false;
 
   terminate.store(true, std::memory_order_relaxed);
-
-  // wait until the liveness_manager is done
-  const std::unique_lock<std::mutex> lock(manager_running);
+  if (liveness_thread.joinable()) {
+    liveness_thread.request_stop();
+    liveness_sleep_cv.notify_all();
+    liveness_thread.join();
+  }
 
   // clear our PID record
   std::function<int(FDBTransaction *)> f = [](FDBTransaction *t) {
