@@ -16,6 +16,7 @@
 #include <limits>
 
 #include "fdbfs_ops.h"
+#include "filehandle.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -391,8 +392,20 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
     return;
   }
 
+  auto fh = extract_fdbfs_filehandle(fi);
+  if (!fh) {
+    fuse_reply_err(req, EBADF);
+    return;
+  }
+
   std::vector<uint8_t> buffer(buf, buf + size);
   Inflight_write *inflight =
       new Inflight_write(req, ino, buffer, off, make_transaction());
-  inflight->start();
+
+  auto &serializer = fh->serializer;
+  if (!serializer.enqueue_inflight(inflight)) {
+    delete inflight;
+    fuse_reply_err(req, EBADF);
+    return;
+  }
 }

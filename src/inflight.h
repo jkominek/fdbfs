@@ -111,6 +111,7 @@ public:
   // run before delete, in case there is anything a subclass
   // wants to take care of.
   void cleanup();
+  void set_on_done(std::function<void()> callback);
 
 protected:
   // constructor
@@ -135,6 +136,8 @@ protected:
 private:
   // static behavior selected by the subclass policy.
   const InflightRuntimePolicy *policy;
+  // single callback for completion, intended for use by FilehandleSerializer
+  std::function<void()> on_done;
   bool commit_unknown_seen = false;
   std::optional<uint64_t> op_id;
   std::unique_ptr<AttemptState> attempt;

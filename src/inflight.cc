@@ -249,6 +249,14 @@ void Inflight::cleanup() {
     printf("inflight %p for req %p took %li s\n", this, req, secs);
   }
 #endif
+  if (on_done) {
+    auto callback = std::move(on_done);
+    callback();
+  }
+}
+
+void Inflight::set_on_done(std::function<void()> callback) {
+  on_done = std::move(callback);
 }
 
 bool Inflight::should_check_oplog() const {

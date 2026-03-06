@@ -35,6 +35,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "filehandle.h"
 #include "values.pb.h"
 
 #define INODE_PREFIX 'i'
@@ -75,7 +76,7 @@ extern std::mutex lookup_counts_mutex;
 
 struct fdbfs_filehandle {
   explicit fdbfs_filehandle(fuse_ino_t ino, bool atime)
-      : atime(atime), atime_update_needed(false) {}
+      : atime(atime), atime_update_needed(false), serializer(ino) {}
 
   // TODO include a 'noatime' flag, possibly an enum with multiple settings
   // such as: none, normal, rel, lazy.
@@ -98,6 +99,7 @@ struct fdbfs_filehandle {
   // other systems might dramatically increase the atime, at which point
   // we can avoid wasting our time attempting updates.
   struct timespec atime_last_known;
+  FilehandleSerializer serializer;
 };
 [[nodiscard]] extern std::shared_ptr<struct fdbfs_filehandle>
 extract_fdbfs_filehandle(struct fuse_file_info *);

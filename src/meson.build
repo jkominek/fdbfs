@@ -5,6 +5,7 @@ generated += gen.process(files('values.proto'))
 
 project_source_files += files([
     'main.cc',
+    'filehandle.cc',
     'garbage_collector.cc',
     'liveness.cc',
     'util.cc',

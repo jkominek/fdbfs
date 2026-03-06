@@ -28,11 +28,18 @@ extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
     return;
   }
 
+  if (!fh->serializer.enqueue_barrier(
+          [req, ino, fh]() {
             auto generation = decrement_lookup_count(ino, 1);
             if (generation.has_value()) {
               best_effort_clear_inode_use_record(ino, *generation);
             }
             fuse_reply_err(req, 0);
+          },
+          true)) {
+    fuse_reply_err(req, EBADF);
+    return;
+  }
 
   free_fdbfs_filehandle_slot(fi);
 }
