@@ -74,6 +74,9 @@ extern std::mutex lookup_counts_mutex;
 [[nodiscard]] extern bool lookup_count_nonzero(fuse_ino_t);
 
 struct fdbfs_filehandle {
+  explicit fdbfs_filehandle(fuse_ino_t ino, bool atime)
+      : atime(atime), atime_update_needed(false) {}
+
   // TODO include a 'noatime' flag, possibly an enum with multiple settings
   // such as: none, normal, rel, lazy.
   // we also need to track the latest atime here, along with whatever Inflight
@@ -96,8 +99,9 @@ struct fdbfs_filehandle {
   // we can avoid wasting our time attempting updates.
   struct timespec atime_last_known;
 };
-[[nodiscard]] extern struct fdbfs_filehandle **
+[[nodiscard]] extern std::shared_ptr<struct fdbfs_filehandle>
 extract_fdbfs_filehandle(struct fuse_file_info *);
+extern void free_fdbfs_filehandle_slot(struct fuse_file_info *);
 extern int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
                                   struct fuse_file_info *fi);
 extern void best_effort_clear_inode_use_record(fuse_ino_t ino,

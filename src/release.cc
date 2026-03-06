@@ -22,12 +22,17 @@
 
 extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
                               struct fuse_file_info *fi) {
-  delete *(extract_fdbfs_filehandle(fi));
-
-  auto generation = decrement_lookup_count(ino, 1);
-  if (generation.has_value()) {
-    best_effort_clear_inode_use_record(ino, *generation);
+  auto fh = extract_fdbfs_filehandle(fi);
+  if (!fh) {
+    fuse_reply_err(req, EBADF);
+    return;
   }
 
-  fuse_reply_err(req, 0);
+            auto generation = decrement_lookup_count(ino, 1);
+            if (generation.has_value()) {
+              best_effort_clear_inode_use_record(ino, *generation);
+            }
+            fuse_reply_err(req, 0);
+
+  free_fdbfs_filehandle_slot(fi);
 }

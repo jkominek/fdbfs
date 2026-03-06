@@ -60,22 +60,52 @@ unique_future wrap_future(FDBFuture *f) {
   return uf;
 }
 
-struct fdbfs_filehandle **extract_fdbfs_filehandle(struct fuse_file_info *fi) {
-  static_assert(sizeof(fi->fh) >= sizeof(struct fdbfs_filehandle *),
+namespace {
+
+std::shared_ptr<struct fdbfs_filehandle> **
+extract_fdbfs_filehandle_slot(struct fuse_file_info *fi) {
+  static_assert(sizeof(fi->fh) >=
+                    sizeof(std::shared_ptr<struct fdbfs_filehandle> *),
                 "FUSE File handle can't hold a pointer to our structure");
-  return reinterpret_cast<struct fdbfs_filehandle **>(&(fi->fh));
+  return reinterpret_cast<std::shared_ptr<struct fdbfs_filehandle> **>(
+      &(fi->fh));
+}
+
+} // namespace
+
+std::shared_ptr<struct fdbfs_filehandle>
+extract_fdbfs_filehandle(struct fuse_file_info *fi) {
+  if (fi == nullptr) {
+    return {};
+  }
+  auto **slot = extract_fdbfs_filehandle_slot(fi);
+  if (slot == nullptr || *slot == nullptr) {
+    return {};
+  }
+  return **slot;
+}
+
+void free_fdbfs_filehandle_slot(struct fuse_file_info *fi) {
+  if (fi == nullptr) {
+    return;
+  }
+  auto **slot = extract_fdbfs_filehandle_slot(fi);
+  if (slot == nullptr || *slot == nullptr) {
+    return;
+  }
+  delete *slot;
+  *slot = nullptr;
 }
 
 int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
                            struct fuse_file_info *fi) {
-  struct fdbfs_filehandle *fh = new fdbfs_filehandle;
-  fh->atime_update_needed = false;
+  bool atime = true;
 #ifdef O_NOATIME
-  fh->atime = ((fi->flags & O_NOATIME) == 0);
-#else
-  fh->atime = true;
+  atime = ((fi->flags & O_NOATIME) == 0);
 #endif
-  *(extract_fdbfs_filehandle(fi)) = fh;
+  auto slot = new std::shared_ptr<struct fdbfs_filehandle>(
+      std::make_shared<struct fdbfs_filehandle>(ino, atime));
+  *(extract_fdbfs_filehandle_slot(fi)) = slot;
 
   auto generation = increment_lookup_count(ino);
   // open should only arrive for an inode that was already looked up.
@@ -83,7 +113,7 @@ int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
 
   if (fuse_reply_open(req, fi) < 0) {
     // release won't be called if open failed.
-    delete fh;
+    free_fdbfs_filehandle_slot(fi);
 
     auto clear_generation = decrement_lookup_count(ino, 1);
     // paired decrement should never drop to zero under the same invariant.
