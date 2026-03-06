@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -145,6 +146,46 @@ bool wait_for_child_reap(pid_t pid, std::chrono::milliseconds timeout,
   return false;
 }
 
+std::string child_status_summary(int status) {
+  std::ostringstream os;
+  os << "status=" << status;
+  if (WIFEXITED(status)) {
+    os << " exited code=" << WEXITSTATUS(status);
+    return os.str();
+  }
+  if (WIFSIGNALED(status)) {
+    const int sig = WTERMSIG(status);
+    os << " signaled sig=" << sig;
+    const char *sig_name = ::strsignal(sig);
+    if (sig_name != nullptr) {
+      os << " (" << sig_name << ")";
+    }
+#ifdef WCOREDUMP
+    if (WCOREDUMP(status)) {
+      os << " core_dumped=1";
+    }
+#endif
+    return os.str();
+  }
+  if (WIFSTOPPED(status)) {
+    const int sig = WSTOPSIG(status);
+    os << " stopped sig=" << sig;
+    const char *sig_name = ::strsignal(sig);
+    if (sig_name != nullptr) {
+      os << " (" << sig_name << ")";
+    }
+    return os.str();
+  }
+#ifdef WIFCONTINUED
+  if (WIFCONTINUED(status)) {
+    os << " continued";
+    return os.str();
+  }
+#endif
+  os << " unknown";
+  return os.str();
+}
+
 int run_cmd_capture(const std::vector<std::string> &argv,
                     const fs::path &stdout_path, const fs::path &stderr_path) {
   pid_t pid = ::fork();
@@ -245,7 +286,7 @@ void write_file_contents(const fs::path &path,
   require_posix_success(::close(fd), "close(" + path.string() + ")");
 }
 
-std::vector<uint8_t> generate_bytes(std::mt19937_64 &rng, size_t size) {
+std::vector<uint8_t> generate_bytes_impl(std::mt19937_64 &rng, size_t size) {
   std::vector<uint8_t> data(size, 0);
   std::uniform_int_distribution<int> mode_dist(0, 2);
   const int mode = mode_dist(rng);
@@ -334,7 +375,7 @@ void populate_seeded_dataset(const fs::path &mnt, const SeedConfig &cfg) {
           const fs::path p = dir / ("f_" + std::to_string(depth) + "_" +
                                     std::to_string(slot_id));
           const size_t size = file_size_dist(rng);
-          write_file_contents(p, generate_bytes(rng, size));
+          write_file_contents(p, generate_bytes_impl(rng, size));
           maybe_set_random_xattrs(p, rng, name_counter);
         } else if (kind == 1) {
           const fs::path p = dir / ("l_" + std::to_string(depth) + "_" +
@@ -386,6 +427,10 @@ void reset_database_with_gen_py(const fs::path &source_dir,
 }
 
 } // namespace
+
+std::vector<uint8_t> generate_bytes(std::mt19937_64 &rng, size_t size) {
+  return generate_bytes_impl(rng, size);
+}
 
 fs::path required_env_path(const char *name) {
   const char *v = std::getenv(name);
@@ -496,6 +541,7 @@ void FdbfsEnv::stop_fdbfs_best_effort() noexcept {
   int status = 0;
   if (wait_for_child_reap(fuse_pid, std::chrono::milliseconds(1500),
                           &status)) {
+    append_op("fuse child reaped: " + child_status_summary(status));
     fuse_pid = -1;
     return;
   }
@@ -503,6 +549,7 @@ void FdbfsEnv::stop_fdbfs_best_effort() noexcept {
   // Escalate if still unreaped.
   ::kill(-fuse_pid, SIGKILL);
   if (wait_for_child_reap(fuse_pid, std::chrono::milliseconds(1500), &status)) {
+    append_op("fuse child reaped after SIGKILL: " + child_status_summary(status));
     fuse_pid = -1;
     return;
   }

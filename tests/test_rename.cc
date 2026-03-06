@@ -50,6 +50,8 @@ TEST_CASE("rename basic and replacement behavior", "[integration][rename]") {
     const fs::path b = env.p("b");
     create_file_with_contents(a, "aaa");
 
+    REQUIRE(fs::exists(a));
+    REQUIRE(!fs::exists(b));
     FDBFS_REQUIRE_OK(::rename(a.c_str(), b.c_str()));
     CHECK(!fs::exists(a));
     CHECK(fs::exists(b));
@@ -57,6 +59,7 @@ TEST_CASE("rename basic and replacement behavior", "[integration][rename]") {
     const fs::path c = env.p("c");
     create_file_with_contents(c, "ccc");
 
+    REQUIRE(fs::exists(c));
     FDBFS_REQUIRE_OK(::rename(b.c_str(), c.c_str()));
     CHECK(!fs::exists(b));
     CHECK(fs::exists(c));

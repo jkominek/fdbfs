@@ -4,6 +4,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <random>
 #include <string>
 #include <string_view>
 #include <sys/types.h>
@@ -37,6 +38,7 @@ fs::path required_env_path(const char *name);
 void scenario(const fs::path &fs_exe, const fs::path &source_dir,
               const std::function<void(FdbfsEnv &)> &fn);
 void scenario(const std::function<void(FdbfsEnv &)> &fn);
+std::vector<uint8_t> generate_bytes(std::mt19937_64 &rng, size_t size);
 
 inline std::string errno_with_message(int err) {
   const char *msg = std::strerror(err);

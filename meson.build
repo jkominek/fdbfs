@@ -3,10 +3,10 @@ project('fdbfs', 'cpp',
 )
 
 cc = meson.get_compiler('cpp')
-add_project_arguments(
-  cc.get_supported_arguments(['-Wall']),
-  language : 'cpp'
-)
+
+if get_option('buildtype') == 'debug'
+  add_project_arguments('-DFDBFS_THREADPOOL_CHAOS', language: 'cpp')
+endif
 
 protoc = find_program('protoc', required : true)
 
