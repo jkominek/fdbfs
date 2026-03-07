@@ -1,11 +1,11 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <limits>
 
 #include "fdbfs_ops.h"
 #include "inflight.h"
@@ -38,7 +38,8 @@ struct AttemptState_rename : public AttemptState {
   unique_future inode_metadata_fetch;
 };
 
-class Inflight_rename : public InflightWithAttempt<AttemptState_rename, InflightPolicyWrite> {
+class Inflight_rename
+    : public InflightWithAttempt<AttemptState_rename, InflightPolicyWrite> {
 public:
   Inflight_rename(fuse_req_t, fuse_ino_t, std::string, fuse_ino_t, std::string,
                   int, unique_transaction transaction);
@@ -63,9 +64,12 @@ Inflight_rename::Inflight_rename(fuse_req_t req, fuse_ino_t oldparent,
                                  std::string oldname, fuse_ino_t newparent,
                                  std::string newname, int flags,
                                  unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)),
-      oldparent(oldparent), oldname(std::move(oldname)), newparent(newparent),
-      newname(std::move(newname)), flags(flags) {}
+    : InflightWithAttempt(req, std::move(transaction)), oldparent(oldparent),
+      oldname(std::move(oldname)), newparent(newparent),
+      newname(std::move(newname)), flags(flags) {
+  track_inode_for_fsync(oldparent);
+  track_inode_for_fsync(newparent);
+}
 
 bool Inflight_rename::write_success_oplog_result() {
   OpLogResultOK result;
@@ -117,6 +121,8 @@ InflightAction Inflight_rename::complicated() {
   }
 
   INodeRecord inode = parsed->inode;
+  track_inode_for_fsync(inode.inode());
+
   const auto mutation_result = apply_unlink_target_mutation(
       transaction.get(), inode, parsed->inode_in_use,
       UnlinkApplyOptions{
@@ -233,7 +239,8 @@ InflightAction Inflight_rename::check() {
       oldparent_nlink_delta -= 1;
       newparent_nlink_delta += 1;
     }
-    if (a().destination_dirent.has_inode() && is_directory(a().destination_dirent)) {
+    if (a().destination_dirent.has_inode() &&
+        is_directory(a().destination_dirent)) {
       newparent_nlink_delta -= 1;
     }
   } else if (flags == RENAME_EXCHANGE) {

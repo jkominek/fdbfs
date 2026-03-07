@@ -178,6 +178,13 @@ const AttemptState &Inflight::attempt_state() const { return *attempt; }
 
 void Inflight::reset_attempt_state() { attempt = create_attempt_state(); }
 
+void Inflight::track_inode_for_fsync(fuse_ino_t ino) {
+  if (fsync_tokens.find(ino) != fsync_tokens.end()) {
+    return;
+  }
+  fsync_tokens.emplace(ino, g_fsync_barrier_table.begin_op(ino));
+}
+
 InflightAction Inflight::oplog_recovery(const OpLogRecord &) {
   // it shouldn't be possible to reach this code, anything that
   // opts into oplog usage must override this.
@@ -237,6 +244,11 @@ void Inflight::cleanup() {
   if (op_id.has_value()) {
     mark_oplog_dead(*op_id);
   }
+  for (auto &[ino, token] : fsync_tokens) {
+    (void)ino;
+    g_fsync_barrier_table.end_op(token);
+  }
+  fsync_tokens.clear();
 #if DEBUG
   struct timespec stop;
   clock_gettime(CLOCK_MONOTONIC, &stop);

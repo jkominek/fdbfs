@@ -15,6 +15,7 @@
 #include <queue>
 #include <set>
 #include <source_location>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 
@@ -23,6 +24,7 @@
 #endif
 
 #include "util.h"
+#include "fsync.h"
 
 #include "thread_pool.hpp"
 
@@ -124,6 +126,7 @@ protected:
   void wait_on_future(FDBFuture *, unique_future &);
   [[nodiscard]] virtual std::unique_ptr<AttemptState>
   create_attempt_state() = 0;
+  void track_inode_for_fsync(fuse_ino_t ino);
   [[nodiscard]] virtual InflightAction oplog_recovery(const OpLogRecord &);
   AttemptState &attempt_state();
   const AttemptState &attempt_state() const;
@@ -138,6 +141,7 @@ private:
   const InflightRuntimePolicy *policy;
   // single callback for completion, intended for use by FilehandleSerializer
   std::function<void()> on_done;
+  std::unordered_map<fuse_ino_t, FsyncBarrierTable::Token> fsync_tokens;
   bool commit_unknown_seen = false;
   std::optional<uint64_t> op_id;
   std::unique_ptr<AttemptState> attempt;

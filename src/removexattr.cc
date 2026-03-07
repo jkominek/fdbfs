@@ -30,7 +30,8 @@ struct AttemptState_removexattr : public AttemptState {
 };
 
 class Inflight_removexattr
-    : public InflightWithAttempt<AttemptState_removexattr, InflightPolicyWrite> {
+    : public InflightWithAttempt<AttemptState_removexattr,
+                                 InflightPolicyWrite> {
 public:
   Inflight_removexattr(fuse_req_t, fuse_ino_t, std::string, unique_transaction);
   InflightCallback issue();
@@ -48,13 +49,14 @@ private:
 Inflight_removexattr::Inflight_removexattr(fuse_req_t req, fuse_ino_t ino,
                                            std::string name,
                                            unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)),
-      ino(ino), name(std::move(name)) {}
+    : InflightWithAttempt(req, std::move(transaction)), ino(ino),
+      name(std::move(name)) {
+  track_inode_for_fsync(ino);
+}
 
 fdb_error_t Inflight_removexattr::configure_transaction() {
-  return fdb_transaction_set_option(transaction.get(),
-                                    FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE,
-                                    nullptr, 0);
+  return fdb_transaction_set_option(
+      transaction.get(), FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, nullptr, 0);
 }
 
 bool Inflight_removexattr::write_success_oplog_result() {
@@ -75,8 +77,8 @@ InflightAction Inflight_removexattr::process() {
   int vallen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(a().xattr_node_fetch.get(), &present, &val,
-                             &vallen);
+  err =
+      fdb_future_get_value(a().xattr_node_fetch.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
 

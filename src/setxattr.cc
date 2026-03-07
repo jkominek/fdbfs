@@ -38,7 +38,8 @@ struct AttemptState_setxattr : public AttemptState {
   unique_future xattr_node_fetch;
 };
 
-class Inflight_setxattr : public InflightWithAttempt<AttemptState_setxattr, InflightPolicyWrite> {
+class Inflight_setxattr
+    : public InflightWithAttempt<AttemptState_setxattr, InflightPolicyWrite> {
 public:
   Inflight_setxattr(fuse_req_t, fuse_ino_t, std::string, std::vector<uint8_t>,
                     SetXattrBehavior, unique_transaction);
@@ -60,9 +61,11 @@ Inflight_setxattr::Inflight_setxattr(fuse_req_t req, fuse_ino_t ino,
                                      std::vector<uint8_t> xattr_value,
                                      SetXattrBehavior behavior,
                                      unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)),
-      ino(ino), name(std::move(name)), xattr_value(std::move(xattr_value)),
-      behavior(behavior) {}
+    : InflightWithAttempt(req, std::move(transaction)), ino(ino),
+      name(std::move(name)), xattr_value(std::move(xattr_value)),
+      behavior(behavior) {
+  track_inode_for_fsync(ino);
+}
 
 bool Inflight_setxattr::write_success_oplog_result() {
   OpLogResultOK result;
@@ -82,8 +85,8 @@ InflightAction Inflight_setxattr::process() {
   int vallen;
   fdb_error_t err;
 
-  err = fdb_future_get_value(a().xattr_node_fetch.get(), &present, &val,
-                             &vallen);
+  err =
+      fdb_future_get_value(a().xattr_node_fetch.get(), &present, &val, &vallen);
   if (err)
     return InflightAction::FDBError(err);
 

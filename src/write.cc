@@ -17,6 +17,7 @@
 
 #include "fdbfs_ops.h"
 #include "filehandle.h"
+#include "fsync.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -93,7 +94,8 @@ struct AttemptState_write : public AttemptState {
   unique_future stop_block_fetch;
 };
 
-class Inflight_write : public InflightWithAttempt<AttemptState_write, InflightPolicyWrite> {
+class Inflight_write
+    : public InflightWithAttempt<AttemptState_write, InflightPolicyWrite> {
 public:
   Inflight_write(fuse_req_t, fuse_ino_t, std::vector<uint8_t>, off_t,
                  unique_transaction);
@@ -113,8 +115,10 @@ private:
 Inflight_write::Inflight_write(fuse_req_t req, fuse_ino_t ino,
                                std::vector<uint8_t> buffer, off_t off,
                                unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)),
-      ino(ino), buffer(std::move(buffer)), off(off) {}
+    : InflightWithAttempt(req, std::move(transaction)), ino(ino),
+      buffer(std::move(buffer)), off(off) {
+  track_inode_for_fsync(ino);
+}
 
 fdb_error_t Inflight_write::configure_transaction() {
   return fdb_transaction_set_option(

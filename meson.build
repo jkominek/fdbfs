@@ -37,8 +37,8 @@ fs_exe = executable(
 catch2_dep = dependency('catch2-with-main', version : '>=3.4.0', required : true)
 
 pure_helpers_sources = files(
-  'tests/test_pure_helpers.cc',
   'src/util.cc',
+  'tests/test_pure_helpers.cc',
 )
 
 pure_helpers_exe = executable(
@@ -57,24 +57,25 @@ test(
 )
 
 test_sources = files(
-  'tests/test_support.cc',
+  'tests/test_dir_nlink.cc',
   'tests/test_file_io.cc',
   'tests/test_getattr.cc',
   'tests/test_link.cc',
+  'tests/test_mkdir.cc',
   'tests/test_mknod.cc',
   'tests/test_mount.cc',
-  'tests/test_mkdir.cc',
   'tests/test_open.cc',
+  'tests/test_fsync.cc',
+  'tests/test_read.cc',
   'tests/test_readdir.cc',
-  'tests/test_rmdir.cc',
   'tests/test_readlink.cc',
   'tests/test_rename.cc',
+  'tests/test_rmdir.cc',
   'tests/test_setattr.cc',
+  'tests/test_support.cc',
   'tests/test_unlink.cc',
   'tests/test_write.cc',
-  'tests/test_read.cc',
   'tests/test_xattr.cc',
-  'tests/test_dir_nlink.cc',
 )
 
 # If your tests need the same deps as the filesystem client libraries, add `deps` too.

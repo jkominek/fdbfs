@@ -7,11 +7,11 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/random.h>
-#include <limits>
 
 #include "fdbfs_ops.h"
 #include "inflight.h"
@@ -38,7 +38,8 @@ struct AttemptState_mknod : public AttemptState {
   struct stat attr{};
 };
 
-class Inflight_mknod : public InflightWithAttempt<AttemptState_mknod, InflightPolicyWrite> {
+class Inflight_mknod
+    : public InflightWithAttempt<AttemptState_mknod, InflightPolicyWrite> {
 public:
   Inflight_mknod(fuse_req_t, fuse_ino_t, std::string, mode_t, filetype, dev_t,
                  unique_transaction, std::optional<std::string>);
@@ -60,11 +61,13 @@ Inflight_mknod::Inflight_mknod(
     fuse_req_t req, fuse_ino_t parent, std::string name, mode_t mode,
     filetype type, dev_t rdev, unique_transaction transaction,
     std::optional<std::string> symlink_target_opt = std::nullopt)
-    : InflightWithAttempt(req, std::move(transaction)),
-      parent(parent), name(std::move(name)), type(type), mode(mode), rdev(rdev),
+    : InflightWithAttempt(req, std::move(transaction)), parent(parent),
+      name(std::move(name)), type(type), mode(mode), rdev(rdev),
       symlink_target((type == ft_symlink && symlink_target_opt.has_value())
                          ? std::move(*symlink_target_opt)
-                         : std::string()) {}
+                         : std::string()) {
+  track_inode_for_fsync(parent);
+}
 
 InflightAction Inflight_mknod::postverification() {
   fdb_bool_t dirinode_present, inode_present, dirent_present;

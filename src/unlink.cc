@@ -49,7 +49,8 @@ struct AttemptState_unlink_rmdir : public AttemptState {
 };
 
 class Inflight_unlink_rmdir
-    : public InflightWithAttempt<AttemptState_unlink_rmdir, InflightPolicyWrite> {
+    : public InflightWithAttempt<AttemptState_unlink_rmdir,
+                                 InflightPolicyWrite> {
 public:
   Inflight_unlink_rmdir(fuse_req_t, fuse_ino_t, std::string, Op,
                         unique_transaction);
@@ -75,9 +76,11 @@ private:
 Inflight_unlink_rmdir::Inflight_unlink_rmdir(fuse_req_t req, fuse_ino_t parent,
                                              std::string name, Op op,
                                              unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)),
-      parent(parent), name(std::move(name)),
-      dirent_key(pack_dentry_key(parent, this->name)), op(op) {}
+    : InflightWithAttempt(req, std::move(transaction)), parent(parent),
+      name(std::move(name)), dirent_key(pack_dentry_key(parent, this->name)),
+      op(op) {
+  track_inode_for_fsync(parent);
+}
 
 bool Inflight_unlink_rmdir::write_success_oplog_result() {
   OpLogResultOK result;
@@ -113,8 +116,9 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check() {
     }
     return InflightAction::Abort(parsed.error().err, parsed.error().why);
   }
-  INodeRecord inode = parsed->inode;
 
+  INodeRecord inode = parsed->inode;
+  track_inode_for_fsync(inode.inode());
   // dirent deletion (has to wait until we're sure we can remove the
   // entire thing)
   fdb_transaction_clear(transaction.get(), dirent_key.data(),
@@ -149,6 +153,7 @@ InflightAction Inflight_unlink_rmdir::inode_check() {
     return InflightAction::Abort(parsed.error().err, parsed.error().why);
   }
   INodeRecord inode = parsed->inode;
+  track_inode_for_fsync(inode.inode());
 
   const auto mutation_result = apply_unlink_target_mutation(
       transaction.get(), inode, parsed->inode_in_use,
