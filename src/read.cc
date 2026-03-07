@@ -15,6 +15,7 @@
 #include <algorithm>
 
 #include "fdbfs_ops.h"
+#include "filehandle.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -206,10 +207,22 @@ extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
     fuse_reply_err(req, EINVAL);
     return;
   }
+
+  auto fh = extract_fdbfs_filehandle(fi);
+  if (!fh) {
+    fuse_reply_err(req, EBADF);
+    return;
+  }
+
   // given inode, figure out the appropriate key range, and
   // start reading it, filling it into a buffer to be sent back
   // with fuse_reply_buf
   Inflight_read *inflight =
       new Inflight_read(req, ino, size, off, make_transaction());
-  inflight->start();
+  auto &serializer = fh->serializer;
+  if (!serializer.enqueue_inflight(inflight)) {
+    delete inflight;
+    fuse_reply_err(req, EBADF);
+    return;
+  }
 }

@@ -303,13 +303,33 @@ extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
                               int to_set, struct fuse_file_info *fi) {
   Inflight_setattr *inflight =
       new Inflight_setattr(req, ino, *attr, to_set, make_transaction());
-  inflight->start();
+  if ((to_set & FUSE_SET_ATTR_SIZE) && (fi != nullptr)) {
+    // we're doing a truncate on an open file, so we have to be serialized
+    auto fh = extract_fdbfs_filehandle(fi);
+    if (!fh) {
+      delete inflight;
+      fuse_reply_err(req, EBADF);
+      return;
+    }
+    auto &serializer = fh->serializer;
+    if (!serializer.enqueue_inflight(inflight)) {
+      delete inflight;
+      fuse_reply_err(req, EBADF);
+      return;
+    }
+  } else {
+    // the no-serialization path, so we just fire it up
+    inflight->start();
+  }
 }
 
 extern "C" void fdbfs_setattr_open_trunc(fuse_req_t req, fuse_ino_t ino,
                                          struct fuse_file_info *fi) {
   struct stat attr{};
   attr.st_size = 0;
+  // we're being called by open, so our 'fi' doesn't have a filehandle
+  // in it, which is fine. we don't need to serialize this operation since
+  // the file doesn't exist until we return. so there's nothing to serialize.
   Inflight_setattr *inflight = new Inflight_setattr(
       req, ino, attr, FUSE_SET_ATTR_SIZE, make_transaction(),
       Inflight_setattr::SuccessReplyOpen{*fi});

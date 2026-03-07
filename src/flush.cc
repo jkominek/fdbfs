@@ -13,11 +13,21 @@
 /*************************************************************
  * flush
  *************************************************************
+ * Insert a barrier into the FilehandleSerializer which will
+ * reply to FUSE indicating that all of the operations have been
+ * flushed.
  */
 
 extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
                             struct fuse_file_info *fi) {
-  // This is a no-op, we don't maintain buffers, yet.
-
-  fuse_reply_err(req, 0);
+  auto fh = extract_fdbfs_filehandle(fi);
+  if (!fh) {
+    fuse_reply_err(req, EBADF);
+    return;
+  }
+  if (!fh->serializer.enqueue_barrier(
+          [req, fh]() { fuse_reply_err(req, 0); })) {
+    fuse_reply_err(req, EBADF);
+    return;
+  }
 }
