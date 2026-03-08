@@ -134,9 +134,12 @@ TEST_CASE("renameat2 NOREPLACE and EXCHANGE", "[integration][rename]") {
     CHECK(std::string(right_data.begin(), right_data.end()) == "L");
 
 #ifdef RENAME_WHITEOUT
-    errno = 0;
-    CHECK(renameat2_wrapper(left, right, RENAME_WHITEOUT) == -1);
-    CHECK((errno == ENOSYS || errno == EINVAL));
+    // this is an odd feature that we can't/won't implement
+    if (!is_host_backend()) {
+      errno = 0;
+      CHECK(renameat2_wrapper(left, right, RENAME_WHITEOUT) == -1);
+      CHECK((errno == ENOSYS || errno == EINVAL));
+    }
 #endif
   });
 }

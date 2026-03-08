@@ -18,8 +18,10 @@ TEST_CASE("mount root inode baseline", "[integration][mount][stat]") {
     struct stat st{};
     FDBFS_REQUIRE_OK(::stat(env.mnt.c_str(), &st));
     CHECK(S_ISDIR(st.st_mode));
-    CHECK(st.st_ino == 1);
-    CHECK((st.st_mode & 0555) == 0555);
+    if (!is_host_backend()) {
+      CHECK(st.st_ino == 1);
+      CHECK((st.st_mode & 0555) == 0555);
+    }
     CHECK(st.st_nlink >= 2);
   });
 }
@@ -28,7 +30,9 @@ TEST_CASE("mount statfs sanity", "[integration][mount][statfs]") {
   scenario([&](FdbfsEnv &env) {
     struct statfs s{};
     FDBFS_REQUIRE_OK(::statfs(env.mnt.c_str(), &s));
-    CHECK(s.f_type == FUSE_SUPER_MAGIC);
+    if (!is_host_backend()) {
+      CHECK(s.f_type == FUSE_SUPER_MAGIC);
+    }
     CHECK(s.f_bsize > 1);
     CHECK(s.f_blocks > s.f_bfree);
     CHECK(s.f_blocks > s.f_bavail);

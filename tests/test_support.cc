@@ -32,6 +32,7 @@ namespace {
 constexpr long FUSE_SUPER_MAGIC = 0x65735546; // "eUsF"
 
 enum class DatasetProfile { Empty, Seeded };
+enum class TestBackend { Fdbfs, Host };
 
 struct SeedConfig {
   int depth = 2;
@@ -255,6 +256,24 @@ std::vector<DatasetProfile> dataset_profiles_from_env() {
     throw std::runtime_error("FDBFS_TEST_MATRIX selected no profiles");
   }
   return profiles;
+}
+
+TestBackend backend_from_env() {
+  const char *raw = std::getenv("FDBFS_TEST_BACKEND");
+  if (!raw || raw[0] == '\0') {
+    return TestBackend::Fdbfs;
+  }
+  std::string value(raw);
+  for (char &c : value) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (value == "fdbfs") {
+    return TestBackend::Fdbfs;
+  }
+  if (value == "host" || value == "hostfs" || value == "local") {
+    return TestBackend::Host;
+  }
+  throw std::runtime_error("unknown FDBFS_TEST_BACKEND value: " + value);
 }
 
 void require_posix_success(int rc, const std::string &what) {
@@ -562,6 +581,8 @@ void FdbfsEnv::capture_state(std::string_view why) noexcept {
   write_text(artifacts / "reason.txt", std::string(why) + "\n");
 
   dump_mountinfo(artifacts / "mountinfo.txt");
+  (void)run_cmd_capture({"df", "-h"}, artifacts / "df-h.txt",
+                        artifacts / "df-h.stderr");
   dump_tree(root, artifacts / "host_tree.txt");
 
   // Try listing the FUSE tree; best-effort.
@@ -578,6 +599,7 @@ void scenario(const fs::path &fs_exe, const fs::path &source_dir,
               const std::function<void(FdbfsEnv &)> &fn) {
   static const std::vector<DatasetProfile> profiles =
       dataset_profiles_from_env();
+  static const TestBackend backend = backend_from_env();
   const SeedConfig seed_cfg{};
   static std::atomic<unsigned int> next_empty_idx = 0;
   static std::atomic<unsigned int> next_seeded_idx = 0;
@@ -594,13 +616,22 @@ void scenario(const fs::path &fs_exe, const fs::path &source_dir,
     }();
 
     INFO("filesystem dataset profile: " << profile_name(profile));
+    INFO("filesystem backend: "
+         << (backend == TestBackend::Host ? "host" : "fdbfs"));
     INFO("filesystem case dir: " << env.root.filename().string());
     INFO("filesystem artifacts dir: " << env.artifacts.string());
     INFO("filesystem key prefix: " << key_prefix);
+    env.append_op("backend: " +
+                  std::string(backend == TestBackend::Host ? "host"
+                                                           : "fdbfs"));
     env.append_op("dataset profile: " + profile_name(profile));
     env.append_op("using key_prefix=" + key_prefix);
-    reset_database_with_gen_py(source_dir, env.artifacts, key_prefix);
-    env.start_fdbfs(fs_exe, key_prefix);
+    if (backend == TestBackend::Fdbfs) {
+      reset_database_with_gen_py(source_dir, env.artifacts, key_prefix);
+      env.start_fdbfs(fs_exe, key_prefix);
+    } else {
+      env.append_op("host backend: using local filesystem directly");
+    }
 
     if (profile == DatasetProfile::Seeded) {
       env.append_op("seed begin");
@@ -625,7 +656,14 @@ void scenario(const fs::path &fs_exe, const fs::path &source_dir,
 }
 
 void scenario(const std::function<void(FdbfsEnv &)> &fn) {
-  static const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-  static const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-  scenario(fs_exe, source_dir, fn);
+  static const TestBackend backend = backend_from_env();
+  if (backend == TestBackend::Fdbfs) {
+    static const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
+    static const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
+    scenario(fs_exe, source_dir, fn);
+    return;
+  }
+  scenario(fs::path{}, fs::path{}, fn);
 }
+
+bool is_host_backend() { return backend_from_env() == TestBackend::Host; }

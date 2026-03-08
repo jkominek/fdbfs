@@ -1,8 +1,7 @@
-project('fdbfs', 'cpp',
-  default_options : ['cpp_std=c++23']
-)
+project('fdbfs', 'cpp', default_options: ['cpp_std=c++23'])
 
 cc = meson.get_compiler('cpp')
+add_project_arguments(cc.get_supported_arguments(['-Wall']), language: 'cpp')
 
 if get_option('buildtype') == 'debug'
   add_project_arguments('-DFDBFS_THREADPOOL_CHAOS', language: 'cpp')
@@ -23,12 +22,7 @@ generated = []
 
 subdir('src')
 
-fs_exe = executable(
-  'fs',
-  project_source_files,
-  generated,
-  dependencies : deps
-)
+fs_exe = executable('fs', project_source_files, generated, dependencies: deps)
 
 # -------------------------
 # Tests (Catch2 v3 installed)
@@ -66,6 +60,7 @@ test_sources = files(
   'tests/test_mount.cc',
   'tests/test_open.cc',
   'tests/test_fsync.cc',
+  'tests/test_posix_locks.cc',
   'tests/test_read.cc',
   'tests/test_readdir.cc',
   'tests/test_readlink.cc',
@@ -86,6 +81,17 @@ test_exe = executable(
   dependencies : [catch2_dep],
   # Useful while developing integration tests:
   # cpp_args : cc.get_supported_arguments(['-O0', '-g']),
+)
+
+test(
+  'fdbfs_hostfs_validation',
+  test_exe,
+  env : [
+    'FDBFS_TEST_BACKEND=host',
+    'FDBFS_TEST_MATRIX=empty',
+  ],
+  timeout : 180,
+  is_parallel : false,
 )
 
 # Make ./fs available to the test at a stable path.

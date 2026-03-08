@@ -39,6 +39,23 @@ jobs:
       id: secfs_test
       continue-on-error: true
       run: ./runsecfs.sh
+    - name: package integration artifacts (best effort)
+      if: ${{ always() }}
+      run: |
+        set -euo pipefail
+        mkdir -p /tmp/ci-artifacts
+
+        if [ -d /tmp/fdbfs-tests ]; then
+          tar -C /tmp --ignore-failed-read -czf /tmp/ci-artifacts/fdbfs-tests.tar.gz fdbfs-tests || true
+        fi
+
+        if [ -f build/meson-logs/testlog.txt ]; then
+          cp build/meson-logs/testlog.txt /tmp/ci-artifacts/
+        fi
+
+        if [ -f /tmp/valgrind.txt ]; then
+          cp /tmp/valgrind.txt /tmp/ci-artifacts/
+        fi
     - name: upload integration artifacts
       if: ${{ always() }}
       uses: actions/upload-artifact@v4
@@ -47,9 +64,7 @@ jobs:
         if-no-files-found: warn
         retention-days: 14
         path: |
-          /tmp/fdbfs-tests
-          build/meson-logs/testlog.txt
-          /tmp/valgrind.txt
+          /tmp/ci-artifacts
     - name: enforce test outcomes
       if: ${{ always() }}
       run: |

@@ -46,6 +46,9 @@ TEST_CASE("readlink errors on non-symlink and missing path",
 
 TEST_CASE("symlink rejects target longer than internal limit",
           "[integration][readlink][mknod]") {
+  if (is_host_backend()) {
+    SKIP("fdbfs-specific symlink target length limit");
+  }
   scenario([&](FdbfsEnv &env) {
     const std::string long_target(1025, 't');
     errno = 0;

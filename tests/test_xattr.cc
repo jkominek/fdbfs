@@ -149,12 +149,17 @@ TEST_CASE("xattr enforces name length limit", "[integration][xattr]") {
     FDBFS_REQUIRE_NONNEG(fd);
     FDBFS_REQUIRE_OK(::close(fd));
 
-    const std::string max_name(255, 'n');
-    const std::string too_long_name(256, 'n');
+    const std::string max_name = "user." + std::string(250, 'n');      // 255
+    const std::string too_long_name = "user." + std::string(251, 'n'); // 256
     const std::string payload = "v";
 
-    FDBFS_REQUIRE_OK(::setxattr(p.c_str(), max_name.c_str(), payload.data(),
-                                payload.size(), 0));
+    errno = 0;
+    const int rc = ::setxattr(p.c_str(), max_name.c_str(), payload.data(),
+                              payload.size(), 0);
+    if (rc != 0 && is_host_backend() && errno == ENOTSUP) {
+      SKIP("xattrs not supported on this local filesystem");
+    }
+    REQUIRE(rc == 0);
 
     errno = 0;
     CHECK(::setxattr(p.c_str(), too_long_name.c_str(), payload.data(),
@@ -172,9 +177,16 @@ TEST_CASE("xattr payload roundtrip matrix", "[integration][xattr]") {
     FDBFS_REQUIRE_OK(::close(fd));
 
     const size_t block_size = fs_block_size(p);
-    std::vector<size_t> sizes = {
-        0, 1, 1024, block_size - 1, block_size, block_size + 1, 65535, 65536,
-    };
+    std::vector<size_t> sizes;
+    if (is_host_backend()) {
+      // ext{2,3,4} can cap total xattr bytes per inode to roughly one fs block.
+      sizes = {0, 1, 64};
+    } else {
+      sizes = {
+          0, 1, 64, 1024, block_size - 1, block_size, block_size + 1, 65535,
+          65536,
+      };
+    }
 
     for (const size_t size : sizes) {
       const std::vector<std::pair<std::string, std::vector<uint8_t>>> payloads =

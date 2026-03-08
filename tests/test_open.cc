@@ -5,8 +5,8 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <source_location>
 #include <ctime>
+#include <source_location>
 #include <string>
 #include <vector>
 
@@ -212,8 +212,16 @@ TEST_CASE("open O_TRUNC on already-empty file keeps size and file times",
     struct stat st_after{};
     require_stat_regular_file(p, st_after);
     CHECK(st_after.st_size == 0);
-    CHECK(compare_timespec(st_after.st_mtim, st_before.st_mtim) == 0);
-    CHECK(compare_timespec(st_after.st_ctim, st_before.st_ctim) == 0);
+    if (is_host_backend()) {
+      // other filesystems may increase the timestamps if they truncate
+      // an already empty file.
+      CHECK(compare_timespec(st_after.st_mtim, st_before.st_mtim) >= 0);
+      CHECK(compare_timespec(st_after.st_ctim, st_before.st_ctim) >= 0);
+    } else {
+      // fdbfs doesn't modify times unless something else changes
+      CHECK(compare_timespec(st_after.st_mtim, st_before.st_mtim) == 0);
+      CHECK(compare_timespec(st_after.st_ctim, st_before.st_ctim) == 0);
+    }
   });
 }
 
