@@ -9,6 +9,7 @@
 #include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
+#include "util_locks.h"
 
 /*************************************************************
  * flush
@@ -25,8 +26,20 @@ extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
     fuse_reply_err(req, EBADF);
     return;
   }
-  if (!fh->serializer.enqueue_barrier(
-          [req, fh]() { fuse_reply_err(req, 0); })) {
+
+  // construct the appropriate callback for the barrier
+  std::function<void()> barrier_callback;
+  if (fi->lock_owner) {
+    auto lock_owner = fi->lock_owner;
+    barrier_callback = [req, ino, lock_owner]() {
+      ByteRange range(0, std::numeric_limits<off_t>::max());
+      queue_lock_manipulation(req, ino, lock_owner, 0, 0, F_UNLCK, range);
+    };
+  } else {
+    barrier_callback = [req]() { fuse_reply_err(req, 0); };
+  }
+
+  if (!fh->serializer.enqueue_barrier(barrier_callback)) {
     fuse_reply_err(req, EBADF);
     return;
   }

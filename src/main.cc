@@ -22,6 +22,7 @@
 #include "garbage_collector.h"
 #include "liveness.h"
 #include "util.h"
+#include "util_locks.h"
 #include "values.pb.h"
 
 // will be filled out before operation begins
@@ -65,6 +66,8 @@ static struct fuse_lowlevel_ops fdbfs_oper = {
     .getxattr = fdbfs_getxattr,
     .listxattr = fdbfs_listxattr,
     .removexattr = fdbfs_removexattr,
+    .getlk = fdbfs_getlk,
+    .setlk = fdbfs_setlk,
     .forget_multi = fdbfs_forget_multi,
     .readdirplus = fdbfs_readdirplus,
 };
@@ -270,6 +273,11 @@ int main(int argc, char *argv[]) {
     goto shutdown_liveness;
   }
 
+  if (start_lock_manager()) {
+    err = 1;
+    goto shutdown_gc;
+  }
+
   if (opts.singlethread) {
     err = fuse_session_loop(se);
   } else {
@@ -278,6 +286,8 @@ int main(int argc, char *argv[]) {
     err = fuse_session_loop_mt(se, &config);
   }
 
+  terminate_lock_manager();
+shutdown_gc:
   terminate_gc();
 shutdown_liveness:
   terminate_liveness();

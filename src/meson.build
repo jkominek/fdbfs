@@ -9,10 +9,10 @@ project_source_files += files([
     'garbage_collector.cc',
     'liveness.cc',
     'util.cc',
+    'util_locks.cc',
     'util_unlink.cc',
 
     # fuse ops
-#    'flock.cc',
     'flush.cc',
     'fsync.cc',
     'forget.cc',
@@ -31,6 +31,7 @@ project_source_files += files([
     'release.cc',
     'removexattr.cc',
     'rename.cc',
+    'posix_locks.cc',
     'setattr.cc',
     'setxattr.cc',
     'statfs.cc',
