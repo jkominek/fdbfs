@@ -4,17 +4,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-bool FilehandleSerializer::enqueue_inflight(Inflight *inflight) {
+bool FilehandleSerializer::enqueue_inflight(Inflight *inflight,
+                                            std::optional<ByteRange> range) {
   std::unique_lock lk(mu);
   if (closed) {
     return false;
   }
 
-  queue.push_back(PendingItem{
-      .kind = PendingKind::Inflight,
-      .inflight = inflight,
-      .callback = {},
-  });
+  auto pi =
+      PendingItem{.kind = PendingKind::Inflight,
+                  .inflight = inflight,
+                  .callback = {},
+                  .readonly = inflight->read_write() == ReadWrite::ReadOnly};
+  if (range.has_value())
+    pi.range = *range;
+  queue.push_back(std::move(pi));
   maybe_start_next_locked(lk);
   return true;
 }
@@ -26,11 +30,10 @@ bool FilehandleSerializer::enqueue_barrier(std::function<void()> callback,
     return false;
   }
 
-  queue.push_back(PendingItem{
-      .kind = PendingKind::Barrier,
-      .inflight = nullptr,
-      .callback = std::move(callback),
-  });
+  queue.push_back(PendingItem{.kind = PendingKind::Barrier,
+                              .inflight = nullptr,
+                              .callback = std::move(callback),
+                              .readonly = true});
   if (close_after_enqueue) {
     closed = true;
   }
@@ -40,23 +43,16 @@ bool FilehandleSerializer::enqueue_barrier(std::function<void()> callback,
 
 void FilehandleSerializer::on_inflight_done(Inflight *inflight) {
   std::unique_lock lk(mu);
-  if (!running || queue.empty()) {
-    return;
+  auto it = active.find(inflight);
+  assert(it != active.end());
+
+  if (it->second.readonly) {
+    inflight_reads -= std::make_pair(it->second.range, 1);
+  } else {
+    inflight_writes -= std::make_pair(it->second.range, 1);
   }
-  // TODO when we're convinced this isn't happening (regularly?)
-  // we'll just make it an assert.
-  if (queue.front().kind != PendingKind::Inflight ||
-      queue.front().inflight != inflight) {
-    fprintf(stderr,
-            "fdbfs serializer fatal mismatch: this=%p running=%d "
-            "queue_size=%zu done_inflight=%p front_kind=%d front_inflight=%p\n",
-            static_cast<void *>(this), static_cast<int>(running), queue.size(),
-            static_cast<void *>(inflight), static_cast<int>(queue.front().kind),
-            static_cast<void *>(queue.front().inflight));
-    std::terminate();
-  }
-  queue.pop_front();
-  running = false;
+
+  active.erase(it);
   maybe_start_next_locked(lk);
 }
 
@@ -72,7 +68,7 @@ bool FilehandleSerializer::is_closed() const {
 
 bool FilehandleSerializer::is_running() const {
   std::scoped_lock lk(mu);
-  return running;
+  return !active.empty();
 }
 
 std::size_t FilehandleSerializer::queued_count() const {
@@ -82,9 +78,13 @@ std::size_t FilehandleSerializer::queued_count() const {
 
 void FilehandleSerializer::maybe_start_next_locked(
     std::unique_lock<std::mutex> &lk) {
-  while (!running && !queue.empty()) {
+  while (!queue.empty()) {
     auto &next = queue.front();
     if (next.kind == PendingKind::Barrier) {
+      // Barriers only run once all currently-active operations have drained.
+      if (!active.empty()) {
+        return;
+      }
       auto cb = std::move(next.callback);
       queue.pop_front();
 
@@ -102,7 +102,32 @@ void FilehandleSerializer::maybe_start_next_locked(
     }
 
     Inflight *inflight = next.inflight;
-    running = true;
+    // Keep queue order: stop dispatch as soon as the front item conflicts.
+    if (next.readonly) {
+      // read/read overlap is allowed; read/write overlap is not.
+      if (boost::icl::intersects(inflight_writes, next.range)) {
+        return;
+      }
+    } else {
+      // write conflicts with both reads and writes.
+      if (boost::icl::intersects(inflight_reads, next.range) ||
+          boost::icl::intersects(inflight_writes, next.range)) {
+        return;
+      }
+    }
+
+    auto [it, inserted] = active.emplace(inflight, next);
+    if (!inserted) {
+      // duplicate pointer in active set is a serializer logic error.
+      std::terminate();
+    }
+
+    if (it->second.readonly) {
+      inflight_reads += std::make_pair(it->second.range, 1);
+    } else {
+      inflight_writes += std::make_pair(it->second.range, 1);
+    }
+    queue.pop_front();
 
     // Assumes Inflight will expose a completion callback hook.
     inflight->set_on_done([this, inflight]() { on_inflight_done(inflight); });
@@ -110,6 +135,6 @@ void FilehandleSerializer::maybe_start_next_locked(
     lk.unlock();
     inflight->start();
     lk.lock();
-    return;
+    // Continue dispatching until front item conflicts.
   }
 }

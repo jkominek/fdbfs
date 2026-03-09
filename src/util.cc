@@ -1,4 +1,5 @@
 #include "util.h"
+#include "filehandle.h"
 #include "liveness.h" // manages pid
 
 #include <assert.h>

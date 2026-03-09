@@ -13,6 +13,7 @@
 #include <variant>
 
 #include "fdbfs_ops.h"
+#include "filehandle.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -306,6 +307,12 @@ extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
   Inflight_setattr *inflight =
       new Inflight_setattr(req, ino, *attr, to_set, make_transaction());
   if ((to_set & FUSE_SET_ATTR_SIZE) && (fi != nullptr)) {
+    if (attr->st_size < 0) {
+      // admittedly unlikely we'll get a negative value from the kernel
+      delete inflight;
+      fuse_reply_err(req, EINVAL);
+      return;
+    }
     // we're doing a truncate on an open file, so we have to be serialized
     auto fh = extract_fdbfs_filehandle(fi);
     if (!fh) {
@@ -314,7 +321,9 @@ extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
       return;
     }
     auto &serializer = fh->serializer;
-    if (!serializer.enqueue_inflight(inflight)) {
+    if (!serializer.enqueue_inflight(
+            inflight, ByteRange::closed(attr->st_size,
+                                        std::numeric_limits<off_t>::max()))) {
       delete inflight;
       fuse_reply_err(req, EBADF);
       return;

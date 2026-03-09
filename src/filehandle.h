@@ -5,9 +5,14 @@
 #include <fuse_lowlevel.h>
 
 #include <cstddef>
+#include <ctime>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <mutex>
+#include <unordered_map>
+
+#include "util.h"
 
 class Inflight;
 
@@ -24,7 +29,10 @@ public:
   FilehandleSerializer &operator=(FilehandleSerializer &&) = delete;
 
   // Enqueue an inflight that should run under this serializer.
-  [[nodiscard]] bool enqueue_inflight(Inflight *inflight);
+  [[nodiscard]] bool
+  enqueue_inflight(Inflight *inflight,
+                   std::optional<ByteRange> range =
+                       ByteRange::closed(0, std::numeric_limits<off_t>::max()));
 
   // Enqueue a non-inflight barrier callback (e.g. flush/release drain marker).
   // When close_after_enqueue is true, no further enqueue operations are
@@ -50,6 +58,8 @@ private:
     PendingKind kind;
     Inflight *inflight = nullptr;
     std::function<void()> callback;
+    bool readonly;
+    ByteRange range = ByteRange::closed(0, std::numeric_limits<off_t>::max());
   };
 
   // Starts or dispatches the next queued item if idle.
@@ -57,9 +67,41 @@ private:
 
   mutable std::mutex mu;
   std::deque<PendingItem> queue;
+  std::unordered_map<Inflight *, PendingItem> active;
+
+  boost::icl::split_interval_map<off_t, int> inflight_reads;
+  boost::icl::split_interval_map<off_t, int> inflight_writes;
+
   const fuse_ino_t ino;
-  bool running = false;
   bool closed = false;
+};
+
+struct fdbfs_filehandle {
+  explicit fdbfs_filehandle(fuse_ino_t ino, bool atime)
+      : atime(atime), atime_update_needed(false), serializer(ino) {}
+
+  // TODO include a 'noatime' flag, possibly an enum with multiple settings
+  // such as: none, normal, rel, lazy.
+  // we also need to track the latest atime here, along with whatever Inflight
+  // is trying to update the atime. only want to try running one at a time
+  // per inode, since we've got to read and then write the inode to update the
+  // atime, there's an opportunity for multiple reads to finish, incrementing
+  // the atime here before we get around to applying it to fdb. we'll need
+  // to be able to lock the value.
+
+  // immutable; if true, update atime field when appropriate.
+  bool atime;
+  // take before manipulating any of the atime fields
+  std::mutex atime_mutex;
+  bool atime_update_needed;
+  // the time of our most recent access. when updating the database,
+  // wait to take the lock and read this for as long as possible.
+  struct timespec atime_target;
+  // update this whenever we're sure the atime is a larger value.
+  // other systems might dramatically increase the atime, at which point
+  // we can avoid wasting our time attempting updates.
+  struct timespec atime_last_known;
+  FilehandleSerializer serializer;
 };
 
 #endif

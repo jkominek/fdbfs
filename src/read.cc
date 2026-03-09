@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <limits>
 
 #include "fdbfs_ops.h"
 #include "filehandle.h"
@@ -45,7 +46,8 @@ struct AttemptState_read : public AttemptState {
   std::vector<uint8_t> buffer;
 };
 
-class Inflight_read : public InflightWithAttempt<AttemptState_read, InflightPolicyReadOnly> {
+class Inflight_read
+    : public InflightWithAttempt<AttemptState_read, InflightPolicyReadOnly> {
 public:
   Inflight_read(fuse_req_t, fuse_ino_t, size_t, off_t, unique_transaction);
   InflightCallback issue();
@@ -60,8 +62,8 @@ private:
 
 Inflight_read::Inflight_read(fuse_req_t req, fuse_ino_t ino, size_t size,
                              off_t off, unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)),
-      ino(ino), requested_size(size), off(off) {
+    : InflightWithAttempt(req, std::move(transaction)), ino(ino),
+      requested_size(size), off(off) {
   a().buffer.assign(requested_size + 32, 0);
 }
 
@@ -202,7 +204,6 @@ extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
     fuse_reply_buf(req, nullptr, 0);
     return;
   }
-  // reject negative offset reads
   if (off < 0) {
     fuse_reply_err(req, EINVAL);
     return;
@@ -220,7 +221,8 @@ extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
   Inflight_read *inflight =
       new Inflight_read(req, ino, size, off, make_transaction());
   auto &serializer = fh->serializer;
-  if (!serializer.enqueue_inflight(inflight)) {
+  if (!serializer.enqueue_inflight(inflight,
+                                   offset_size_to_byte_range(off, size))) {
     delete inflight;
     fuse_reply_err(req, EBADF);
     return;

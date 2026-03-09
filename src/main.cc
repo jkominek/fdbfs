@@ -5,14 +5,17 @@
 #include <foundationdb/fdb_c.h>
 
 #include <assert.h>
-#include <stddef.h>
 #include <errno.h>
+#include <execinfo.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <memory>
 #include <string>

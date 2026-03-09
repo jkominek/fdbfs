@@ -1,7 +1,6 @@
 #ifndef __UTIL_LOCKS_H__
 #define __UTIL_LOCKS_H__
 
-#include <boost/icl/interval_set.hpp>
 #include <optional>
 #include <stdint.h>
 #include <sys/types.h>
@@ -10,7 +9,6 @@
 #include <fuse_lowlevel.h>
 
 #include "util.h"
-using ByteRange = boost::icl::interval_set<off_t>::interval_type;
 
 struct LockConflict {
   pid_t pid;

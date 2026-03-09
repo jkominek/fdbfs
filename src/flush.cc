@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "fdbfs_ops.h"
+#include "filehandle.h"
 #include "inflight.h"
 #include "util.h"
 #include "util_locks.h"

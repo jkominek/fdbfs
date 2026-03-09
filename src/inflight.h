@@ -23,8 +23,8 @@
 #include <time.h>
 #endif
 
-#include "util.h"
 #include "fsync.h"
+#include "util.h"
 
 #include "thread_pool.hpp"
 
@@ -114,6 +114,8 @@ public:
   // wants to take care of.
   void cleanup();
   void set_on_done(std::function<void()> callback);
+
+  inline ReadWrite read_write() { return policy->read_write; };
 
 protected:
   // constructor

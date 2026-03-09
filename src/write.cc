@@ -395,6 +395,10 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
     fuse_reply_write(req, 0);
     return;
   }
+  if (off < 0) {
+    fuse_reply_err(req, EINVAL);
+    return;
+  }
 
   auto fh = extract_fdbfs_filehandle(fi);
   if (!fh) {
@@ -407,7 +411,8 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
       new Inflight_write(req, ino, buffer, off, make_transaction());
 
   auto &serializer = fh->serializer;
-  if (!serializer.enqueue_inflight(inflight)) {
+  if (!serializer.enqueue_inflight(inflight,
+                                   offset_size_to_byte_range(off, size))) {
     delete inflight;
     fuse_reply_err(req, EBADF);
     return;

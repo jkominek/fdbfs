@@ -29,13 +29,13 @@
 #include <expected>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
 #include <unordered_map>
 #include <vector>
 
-#include "filehandle.h"
 #include <boost/icl/discrete_interval.hpp>
 #include <boost/icl/interval_set.hpp>
 #include <boost/icl/split_interval_map.hpp>
@@ -80,33 +80,7 @@ extern std::mutex lookup_counts_mutex;
                                                                     uint64_t);
 [[nodiscard]] extern bool lookup_count_nonzero(fuse_ino_t);
 
-struct fdbfs_filehandle {
-  explicit fdbfs_filehandle(fuse_ino_t ino, bool atime)
-      : atime(atime), atime_update_needed(false), serializer(ino) {}
-
-  // TODO include a 'noatime' flag, possibly an enum with multiple settings
-  // such as: none, normal, rel, lazy.
-  // we also need to track the latest atime here, along with whatever Inflight
-  // is trying to update the atime. only want to try running one at a time
-  // per inode, since we've got to read and then write the inode to update the
-  // atime, there's an opportunity for multiple reads to finish, incrementing
-  // the atime here before we get around to applying it to fdb. we'll need
-  // to be able to lock the value.
-
-  // immutable; if true, update atime field when appropriate.
-  bool atime;
-  // take before manipulating any of the atime fields
-  std::mutex atime_mutex;
-  bool atime_update_needed;
-  // the time of our most recent access. when updating the database,
-  // wait to take the lock and read this for as long as possible.
-  struct timespec atime_target;
-  // update this whenever we're sure the atime is a larger value.
-  // other systems might dramatically increase the atime, at which point
-  // we can avoid wasting our time attempting updates.
-  struct timespec atime_last_known;
-  FilehandleSerializer serializer;
-};
+struct fdbfs_filehandle;
 [[nodiscard]] extern std::shared_ptr<struct fdbfs_filehandle>
 extract_fdbfs_filehandle(struct fuse_file_info *);
 extern void free_fdbfs_filehandle_slot(struct fuse_file_info *);
@@ -206,7 +180,7 @@ encode_logical_payload(std::span<const uint8_t> payload);
 
 [[nodiscard]] extern std::expected<void, int>
 set_fileblock(FDBTransaction *, const std::vector<uint8_t> &,
-          std::span<const uint8_t>, bool = true);
+              std::span<const uint8_t>, bool = true);
 [[nodiscard]] extern std::expected<size_t, int>
 decode_block(const FDBKeyValue *, int, std::span<uint8_t>, size_t);
 
