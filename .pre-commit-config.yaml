@@ -1,0 +1,8 @@
+repos:
+  - repo: local
+    hooks:
+      - id: compile
+        name: Compile staged tree
+        language: system
+        entry: bash -lc 'meson compile -C build'
+        pass_filenames: false
