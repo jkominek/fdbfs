@@ -19,7 +19,8 @@ TEST_CASE("setattr via chmod and truncate updates inode fields",
     int fd = ::open(p.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 06755);
     FDBFS_REQUIRE_NONNEG(fd);
 
-    const auto payload = make_pattern(7000, 0x12345678ull);
+    const auto payload =
+        generate_bytes(7000, BytePattern::Random, 0, 0x12345678ull);
     write_all_fd(fd, payload.data(), payload.size());
     FDBFS_REQUIRE_OK(::close(fd));
 
@@ -117,7 +118,8 @@ TEST_CASE("setattr substantial update clears setuid/setgid on regular files",
     const fs::path p = env.p("suid_file");
     int fd = ::open(p.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 06755);
     FDBFS_REQUIRE_NONNEG(fd);
-    const auto payload = make_pattern(1024, 0xabcdefu);
+    const auto payload =
+        generate_bytes(1024, BytePattern::Random, 0, 0xabcdefu);
     write_all_fd(fd, payload.data(), payload.size());
     FDBFS_REQUIRE_OK(::close(fd));
 

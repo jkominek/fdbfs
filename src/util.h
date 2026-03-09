@@ -36,6 +36,10 @@
 #include <vector>
 
 #include "filehandle.h"
+#include <boost/icl/discrete_interval.hpp>
+#include <boost/icl/interval_set.hpp>
+#include <boost/icl/split_interval_map.hpp>
+
 #include "values.pb.h"
 
 #define INODE_PREFIX 'i'
@@ -51,6 +55,8 @@
 #define MAXFILENAMELEN 255
 
 #define PID_LENGTH 16
+
+using ByteRange = boost::icl::discrete_interval<off_t>;
 
 // will be filled out before operation begins
 extern FDBDatabase *database;
@@ -172,6 +178,7 @@ pack_local_oplog_span_range(uint64_t start_op_id, uint64_t stop_op_id);
 [[nodiscard]] extern range_keys pack_xattr_node_subspace_range(fuse_ino_t);
 [[nodiscard]] extern range_keys pack_xattr_data_subspace_range(fuse_ino_t);
 [[nodiscard]] range_keys offset_size_to_range_keys(fuse_ino_t, size_t, size_t);
+[[nodiscard]] extern ByteRange offset_size_to_byte_range(off_t, size_t);
 
 [[nodiscard]] extern bool
 filename_length_check(fuse_req_t, const char *,

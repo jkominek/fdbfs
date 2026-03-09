@@ -244,6 +244,22 @@ void fdbfs_set_thread_name(const char *fmt, ...) {
 #endif
 }
 
+ByteRange offset_size_to_byte_range(off_t off, size_t size) {
+  const off_t max_off = std::numeric_limits<off_t>::max();
+  if (off >= max_off) {
+    return ByteRange::closed(max_off, max_off);
+  }
+
+  const uint64_t off_u = static_cast<uint64_t>(off);
+  const uint64_t max_u = static_cast<uint64_t>(max_off);
+  const uint64_t size_u = static_cast<uint64_t>(size);
+  if (size_u > (max_u - off_u)) {
+    return ByteRange::closed(off, max_off);
+  }
+
+  const off_t end = static_cast<off_t>(off_u + size_u);
+  return ByteRange::right_open(off, end);
+}
 
 // will be filled out before operation begins
 std::vector<uint8_t> key_prefix;

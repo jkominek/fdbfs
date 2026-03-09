@@ -4,7 +4,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <random>
 #include <string>
 #include <vector>
 
@@ -32,11 +31,12 @@ TEST_CASE("aio_fsync does not complete before prior aio_writes",
 
     constexpr int kWrites = 48;
     constexpr size_t kWriteSize = 128 * 1024;
-    std::mt19937_64 rng(0xabc1234567ULL);
     std::vector<std::vector<uint8_t>> payloads;
     payloads.reserve(kWrites);
     for (int i = 0; i < kWrites; ++i) {
-      payloads.emplace_back(generate_bytes(rng, kWriteSize));
+      payloads.emplace_back(generate_bytes(
+          kWriteSize, BytePattern::Random, 0,
+          0xabc1234567ULL + static_cast<uint64_t>(i)));
     }
 
     std::vector<struct aiocb> write_cbs(kWrites);

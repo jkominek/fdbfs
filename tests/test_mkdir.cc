@@ -5,56 +5,13 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <source_location>
 #include <ctime>
+#include <source_location>
 #include <string>
 #include <vector>
 
+#include "test_posix_helpers.h"
 #include "test_support.h"
-
-namespace {
-
-mode_t current_umask() {
-  const mode_t old_umask = ::umask(0);
-  ::umask(old_umask);
-  return old_umask;
-}
-
-int compare_timespec(const struct timespec &a, const struct timespec &b) {
-  if (a.tv_sec < b.tv_sec) {
-    return -1;
-  }
-  if (a.tv_sec > b.tv_sec) {
-    return 1;
-  }
-  if (a.tv_nsec < b.tv_nsec) {
-    return -1;
-  }
-  if (a.tv_nsec > b.tv_nsec) {
-    return 1;
-  }
-  return 0;
-}
-
-bool is_recent(const struct timespec &t, const struct timespec &now,
-               time_t max_age_sec) {
-  if (compare_timespec(t, now) > 0) {
-    return false;
-  }
-  return (now.tv_sec - t.tv_sec) <= max_age_sec;
-}
-
-void require_stat_directory(
-    const fs::path &p, struct stat &st,
-    std::source_location loc = std::source_location::current()) {
-  INFO("require_stat_directory caller=" << loc.file_name() << ":"
-                                        << loc.line());
-  INFO("path=" << p);
-  FDBFS_REQUIRE_OK(::stat(p.c_str(), &st));
-  CHECK(S_ISDIR(st.st_mode));
-}
-
-} // namespace
 
 TEST_CASE("mkdir creates a directory", "[integration][mkdir][stat]") {
   scenario([&](FdbfsEnv &env) {
@@ -63,7 +20,7 @@ TEST_CASE("mkdir creates a directory", "[integration][mkdir][stat]") {
     FDBFS_REQUIRE_OK(::mkdir(p.c_str(), 0755));
 
     struct stat st{};
-    require_stat_directory(p, st);
+    require_stat_mode(p, st, S_IFDIR);
     const mode_t expected_mode = (0755 & ~current_umask()) & 0777;
     CHECK((st.st_mode & 0777) == expected_mode);
     CHECK(st.st_nlink >= 2);
@@ -82,7 +39,7 @@ TEST_CASE("mkdir mode permutations are respected",
       FDBFS_REQUIRE_OK(::mkdir(p.c_str(), requested_modes[i]));
 
       struct stat st{};
-      require_stat_directory(p, st);
+      require_stat_mode(p, st, S_IFDIR);
 
       const mode_t expected_mode = (requested_modes[i] & ~um) & 0777;
       CHECK((st.st_mode & 0777) == expected_mode);
@@ -132,7 +89,7 @@ TEST_CASE("mkdir long name returns ENAMETOOLONG", "[integration][mkdir]") {
     const fs::path max_path = env.p(max_name);
     FDBFS_REQUIRE_OK(::mkdir(max_path.c_str(), 0755));
     struct stat st{};
-    require_stat_directory(max_path, st);
+    require_stat_mode(max_path, st, S_IFDIR);
 
     const fs::path too_long_path = env.p(too_long_name);
     errno = 0;
@@ -148,7 +105,7 @@ TEST_CASE("mkdir deep nested chain succeeds", "[integration][mkdir][stat]") {
       p /= ("d" + std::to_string(i));
       FDBFS_REQUIRE_OK(::mkdir(p.c_str(), 0755));
       struct stat st{};
-      require_stat_directory(p, st);
+      require_stat_mode(p, st, S_IFDIR);
     }
   });
 }
@@ -160,7 +117,7 @@ TEST_CASE("mkdir increases parent directory nlink for subdirectories",
     FDBFS_REQUIRE_OK(::mkdir(parent.c_str(), 0755));
 
     struct stat pst{};
-    require_stat_directory(parent, pst);
+    require_stat_mode(parent, pst, S_IFDIR);
     const nlink_t base_nlink = pst.st_nlink;
 
     for (int i = 0; i < 4; i++) {
@@ -180,7 +137,7 @@ TEST_CASE("mkdir updates parent ctime/mtime and sets recent times",
     FDBFS_REQUIRE_OK(::mkdir(parent.c_str(), 0755));
 
     struct stat pst{};
-    require_stat_directory(parent, pst);
+    require_stat_mode(parent, pst, S_IFDIR);
 
     struct timespec now{};
     FDBFS_REQUIRE_OK(::clock_gettime(CLOCK_REALTIME, &now));
@@ -195,7 +152,7 @@ TEST_CASE("mkdir updates parent ctime/mtime and sets recent times",
     const fs::path child = parent / "child";
     FDBFS_REQUIRE_OK(::mkdir(child.c_str(), 0755));
     struct stat cst{};
-    require_stat_directory(child, cst);
+    require_stat_mode(child, cst, S_IFDIR);
 
     FDBFS_REQUIRE_OK(::stat(parent.c_str(), &pst));
     CHECK(compare_timespec(pst.st_mtim, old_mtim) > 0);

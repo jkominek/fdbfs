@@ -8,7 +8,6 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <random>
 #include <string>
 #include <vector>
 
@@ -50,24 +49,6 @@ size_t fs_block_size(const fs::path &p) {
     return 4096;
   }
   return static_cast<size_t>(s.f_bsize);
-}
-
-std::vector<uint8_t> make_compressible(size_t size) {
-  std::vector<uint8_t> out(size, 0);
-  for (size_t i = 0; i < size; i++) {
-    out[i] = static_cast<uint8_t>((i % 64) < 48 ? 'A' : 'B');
-  }
-  return out;
-}
-
-std::vector<uint8_t> make_incompressible(size_t size, uint64_t seed) {
-  std::mt19937_64 rng(seed);
-  std::uniform_int_distribution<int> dist(0, 255);
-  std::vector<uint8_t> out(size, 0);
-  for (auto &b : out) {
-    b = static_cast<uint8_t>(dist(rng));
-  }
-  return out;
 }
 
 } // namespace
@@ -191,9 +172,13 @@ TEST_CASE("xattr payload roundtrip matrix", "[integration][xattr]") {
     for (const size_t size : sizes) {
       const std::vector<std::pair<std::string, std::vector<uint8_t>>> payloads =
           {
-              {"nulls", std::vector<uint8_t>(size, 0)},
-              {"compressible", make_compressible(size)},
-              {"incompressible", make_incompressible(size, 0x8a7c31b5u ^ size)},
+              {"nulls", generate_bytes(size, BytePattern::Nulls)},
+              {"compressible",
+               generate_bytes(size, BytePattern::FillByte,
+                              static_cast<uint8_t>('A'))},
+              {"incompressible",
+               generate_bytes(size, BytePattern::Random, 0,
+                              0x8a7c31b5u ^ size)},
           };
 
       for (const auto &[kind, payload] : payloads) {

@@ -1,10 +1,10 @@
 #pragma once
 
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <functional>
-#include <random>
 #include <string>
 #include <string_view>
 #include <sys/types.h>
@@ -39,7 +39,16 @@ bool is_host_backend();
 void scenario(const fs::path &fs_exe, const fs::path &source_dir,
               const std::function<void(FdbfsEnv &)> &fn);
 void scenario(const std::function<void(FdbfsEnv &)> &fn);
-std::vector<uint8_t> generate_bytes(std::mt19937_64 &rng, size_t size);
+
+enum class BytePattern {
+  Nulls,
+  FillByte,
+  Random,
+};
+
+std::vector<uint8_t> generate_bytes(size_t size, BytePattern pattern,
+                                    uint8_t fill_byte = 0,
+                                    uint64_t seed = 0);
 
 inline std::string errno_with_message(int err) {
   const char *msg = std::strerror(err);

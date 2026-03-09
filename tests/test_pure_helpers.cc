@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "test_support.h"
 #include "liveness.h"
 #include "util.h"
 
@@ -579,6 +580,36 @@ TEST_CASE("offset_size_to_range_keys maps offsets to expected block spans",
   }
 }
 
+TEST_CASE("offset_size_to_byte_range handles normal and clamp boundaries",
+          "[pure][helpers][range]") {
+  const off_t max_off = std::numeric_limits<off_t>::max();
+
+  SECTION("zero length yields empty right-open interval") {
+    const auto got = offset_size_to_byte_range(123, 0);
+    CHECK(got == ByteRange::right_open(123, 123));
+  }
+
+  SECTION("normal in-range span") {
+    const auto got = offset_size_to_byte_range(100, 50);
+    CHECK(got == ByteRange::right_open(100, 150));
+  }
+
+  SECTION("offset at max clamps to closed max point") {
+    const auto got = offset_size_to_byte_range(max_off, 1);
+    CHECK(got == ByteRange::closed(max_off, max_off));
+  }
+
+  SECTION("exactly reaches max without overflow") {
+    const auto got = offset_size_to_byte_range(max_off - 10, 10);
+    CHECK(got == ByteRange::right_open(max_off - 10, max_off));
+  }
+
+  SECTION("overflow clamps to closed max end") {
+    const auto got = offset_size_to_byte_range(max_off - 10, 11);
+    CHECK(got == ByteRange::closed(max_off - 10, max_off));
+  }
+}
+
 TEST_CASE("decode_block handles plain and error paths",
           "[pure][helpers][decode]") {
   key_prefix = {'F', 'S'};
@@ -650,6 +681,97 @@ TEST_CASE("decode_block handles plain and error paths",
     auto decoded = decode_block(&kv, 0, std::span<uint8_t>(out.data(), out.size()), 4);
     REQUIRE(!decoded.has_value());
     CHECK(decoded.error() == EIO);
+  }
+}
+
+TEST_CASE("logical payload encode/decode roundtrip and error behavior",
+          "[pure][helpers][payload]") {
+  const std::vector<size_t> sizes = {0, 1, 63, 64, 1024, static_cast<size_t>(BLOCKSIZE)};
+
+  for (int pattern = 0; pattern < 3; pattern++) {
+    for (size_t size : sizes) {
+      INFO("pattern=" << pattern << " size=" << size);
+      std::vector<uint8_t> payload(size, 0);
+      switch (pattern) {
+      case 0:
+        break;
+      case 1:
+        std::fill(payload.begin(), payload.end(), static_cast<uint8_t>('A'));
+        break;
+      case 2:
+        payload = generate_bytes(size, BytePattern::Random, 0,
+                                 0x88664422001177ULL + size);
+        break;
+      default:
+        std::fill(payload.begin(), payload.end(), static_cast<uint8_t>(0x7f));
+        break;
+      }
+
+      auto encoded =
+          encode_logical_payload(std::span<const uint8_t>(payload.data(), payload.size()));
+      REQUIRE(encoded.has_value());
+      CHECK(encoded->true_block_size == payload.size());
+
+      std::vector<uint8_t> decoded(payload.size(), 0xaa);
+      auto decode_full = decode_logical_payload_slice(
+          encoded->encoding, std::span<const uint8_t>(encoded->bytes.data(), encoded->bytes.size()),
+          encoded->true_block_size, 0,
+          std::span<uint8_t>(decoded.data(), decoded.size()));
+      REQUIRE(decode_full.has_value());
+      CHECK(decode_full.value() == payload.size());
+      CHECK(decoded == payload);
+    }
+  }
+
+  SECTION("decode offset and bounded output returns requested slice") {
+    const auto payload = generate_bytes(256, BytePattern::Random, 0,
+                                        0xdeadbeefULL);
+    auto encoded =
+        encode_logical_payload(std::span<const uint8_t>(payload.data(), payload.size()));
+    REQUIRE(encoded.has_value());
+
+    std::vector<uint8_t> decoded(32, 0xcc);
+    auto decode_slice = decode_logical_payload_slice(
+        encoded->encoding, std::span<const uint8_t>(encoded->bytes.data(), encoded->bytes.size()),
+        encoded->true_block_size, 100,
+        std::span<uint8_t>(decoded.data(), decoded.size()));
+    REQUIRE(decode_slice.has_value());
+    CHECK(decode_slice.value() == decoded.size());
+    CHECK(std::equal(decoded.begin(), decoded.end(), payload.begin() + 100));
+  }
+
+  SECTION("offset past logical end returns zero bytes") {
+    const std::vector<uint8_t> payload(24, static_cast<uint8_t>('A'));
+    auto encoded =
+        encode_logical_payload(std::span<const uint8_t>(payload.data(), payload.size()));
+    REQUIRE(encoded.has_value());
+
+    std::vector<uint8_t> decoded(16, 0x55);
+    auto decode = decode_logical_payload_slice(
+        encoded->encoding, std::span<const uint8_t>(encoded->bytes.data(), encoded->bytes.size()),
+        encoded->true_block_size, payload.size(),
+        std::span<uint8_t>(decoded.data(), decoded.size()));
+    REQUIRE(decode.has_value());
+    CHECK(decode.value() == 0);
+  }
+
+  SECTION("marked zstd with invalid payloads returns EIO") {
+    const std::vector<std::vector<uint8_t>> invalid_payloads = {
+        {0x00},             // too small
+        {0x00, 0x00, 0x00}, // nulls
+        {'g', 'o', 'a', 't', 's'},
+        {'t', 'h', 'i', 's', ' ', 'i', 's', ' ', 'n', 'o', 't', ' ', 'z', 's', 't', 'd'},
+    };
+
+    for (const auto &stored : invalid_payloads) {
+      INFO("invalid_payload_hex=" << bytes_to_hex(stored));
+      std::vector<uint8_t> out(64, 0);
+      auto decode = decode_logical_payload_slice(
+          XAttrEncoding::xattr_zstd, std::span<const uint8_t>(stored.data(), stored.size()),
+          256, 0, std::span<uint8_t>(out.data(), out.size()));
+      REQUIRE(!decode.has_value());
+      CHECK(decode.error() == EIO);
+    }
   }
 }
 

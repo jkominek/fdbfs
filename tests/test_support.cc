@@ -305,25 +305,6 @@ void write_file_contents(const fs::path &path,
   require_posix_success(::close(fd), "close(" + path.string() + ")");
 }
 
-std::vector<uint8_t> generate_bytes_impl(std::mt19937_64 &rng, size_t size) {
-  std::vector<uint8_t> data(size, 0);
-  std::uniform_int_distribution<int> mode_dist(0, 2);
-  const int mode = mode_dist(rng);
-
-  if (mode == 0) {
-    std::fill(data.begin(), data.end(), static_cast<uint8_t>('A'));
-  } else if (mode == 1) {
-    std::fill(data.begin(), data.end(), static_cast<uint8_t>(0));
-  } else {
-    std::uniform_int_distribution<int> byte_dist(0, 255);
-    for (auto &b : data) {
-      b = static_cast<uint8_t>(byte_dist(rng));
-    }
-  }
-
-  return data;
-}
-
 void maybe_set_random_xattrs(const fs::path &path, std::mt19937_64 &rng,
                              uint64_t &name_counter) {
   std::uniform_int_distribution<int> do_xattr(0, 1);
@@ -333,16 +314,13 @@ void maybe_set_random_xattrs(const fs::path &path, std::mt19937_64 &rng,
 
   std::uniform_int_distribution<int> count_dist(1, 3);
   std::uniform_int_distribution<int> len_dist(1, 64);
-  std::uniform_int_distribution<int> byte_dist(0, 255);
   const int count = count_dist(rng);
   for (int i = 0; i < count; i++) {
     const std::string name =
         "user.seed." + std::to_string(name_counter++) + "." + std::to_string(i);
     const size_t value_len = static_cast<size_t>(len_dist(rng));
-    std::vector<uint8_t> value(value_len, 0);
-    for (auto &b : value) {
-      b = static_cast<uint8_t>(byte_dist(rng));
-    }
+    std::vector<uint8_t> value =
+        generate_bytes(value_len, BytePattern::Random, 0, rng());
     if (::setxattr(path.c_str(), name.c_str(), value.data(), value.size(), 0) !=
         0) {
       throw std::runtime_error("setxattr(" + path.string() + "," + name +
@@ -394,7 +372,21 @@ void populate_seeded_dataset(const fs::path &mnt, const SeedConfig &cfg) {
           const fs::path p = dir / ("f_" + std::to_string(depth) + "_" +
                                     std::to_string(slot_id));
           const size_t size = file_size_dist(rng);
-          write_file_contents(p, generate_bytes_impl(rng, size));
+          std::uniform_int_distribution<int> mode_dist(0, 2);
+          const int mode = mode_dist(rng);
+          BytePattern pattern = BytePattern::Random;
+          uint8_t fill = 0;
+          uint64_t seed = 0;
+          if (mode == 0) {
+            pattern = BytePattern::FillByte;
+            fill = static_cast<uint8_t>('A');
+          } else if (mode == 1) {
+            pattern = BytePattern::Nulls;
+          } else {
+            pattern = BytePattern::Random;
+            seed = rng();
+          }
+          write_file_contents(p, generate_bytes(size, pattern, fill, seed));
           maybe_set_random_xattrs(p, rng, name_counter);
         } else if (kind == 1) {
           const fs::path p = dir / ("l_" + std::to_string(depth) + "_" +
@@ -447,8 +439,25 @@ void reset_database_with_gen_py(const fs::path &source_dir,
 
 } // namespace
 
-std::vector<uint8_t> generate_bytes(std::mt19937_64 &rng, size_t size) {
-  return generate_bytes_impl(rng, size);
+std::vector<uint8_t> generate_bytes(size_t size, BytePattern pattern,
+                                    uint8_t fill_byte, uint64_t seed) {
+  std::vector<uint8_t> data(size, 0);
+  switch (pattern) {
+  case BytePattern::Nulls:
+    return data;
+  case BytePattern::FillByte:
+    std::fill(data.begin(), data.end(), fill_byte);
+    return data;
+  case BytePattern::Random: {
+    std::mt19937_64 rng(seed);
+    std::uniform_int_distribution<int> byte_dist(0, 255);
+    for (auto &b : data) {
+      b = static_cast<uint8_t>(byte_dist(rng));
+    }
+    return data;
+  }
+  }
+  std::terminate();
 }
 
 fs::path required_env_path(const char *name) {
@@ -558,8 +567,7 @@ void FdbfsEnv::stop_fdbfs_best_effort() noexcept {
   }
 
   int status = 0;
-  if (wait_for_child_reap(fuse_pid, std::chrono::milliseconds(1500),
-                          &status)) {
+  if (wait_for_child_reap(fuse_pid, std::chrono::milliseconds(1500), &status)) {
     append_op("fuse child reaped: " + child_status_summary(status));
     fuse_pid = -1;
     return;
@@ -568,12 +576,14 @@ void FdbfsEnv::stop_fdbfs_best_effort() noexcept {
   // Escalate if still unreaped.
   ::kill(-fuse_pid, SIGKILL);
   if (wait_for_child_reap(fuse_pid, std::chrono::milliseconds(1500), &status)) {
-    append_op("fuse child reaped after SIGKILL: " + child_status_summary(status));
+    append_op("fuse child reaped after SIGKILL: " +
+              child_status_summary(status));
     fuse_pid = -1;
     return;
   }
 
-  append_op("warning: failed to reap fuse child pid=" + std::to_string(fuse_pid));
+  append_op("warning: failed to reap fuse child pid=" +
+            std::to_string(fuse_pid));
 }
 
 void FdbfsEnv::capture_state(std::string_view why) noexcept {
@@ -616,14 +626,13 @@ void scenario(const fs::path &fs_exe, const fs::path &source_dir,
     }();
 
     INFO("filesystem dataset profile: " << profile_name(profile));
-    INFO("filesystem backend: "
-         << (backend == TestBackend::Host ? "host" : "fdbfs"));
+    INFO("filesystem backend: " << (backend == TestBackend::Host ? "host"
+                                                                 : "fdbfs"));
     INFO("filesystem case dir: " << env.root.filename().string());
     INFO("filesystem artifacts dir: " << env.artifacts.string());
     INFO("filesystem key prefix: " << key_prefix);
     env.append_op("backend: " +
-                  std::string(backend == TestBackend::Host ? "host"
-                                                           : "fdbfs"));
+                  std::string(backend == TestBackend::Host ? "host" : "fdbfs"));
     env.append_op("dataset profile: " + profile_name(profile));
     env.append_op("using key_prefix=" + key_prefix);
     if (backend == TestBackend::Fdbfs) {

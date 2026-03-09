@@ -10,43 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "test_posix_helpers.h"
 #include "test_support.h"
-
-namespace {
-
-mode_t current_umask() {
-  const mode_t old_umask = ::umask(0);
-  ::umask(old_umask);
-  return old_umask;
-}
-
-void require_stat_regular_file(
-    const fs::path &p, struct stat &st,
-    std::source_location loc = std::source_location::current()) {
-  INFO("require_stat_regular_file caller=" << loc.file_name() << ":"
-                                           << loc.line());
-  INFO("path=" << p);
-  FDBFS_REQUIRE_OK(::stat(p.c_str(), &st));
-  CHECK(S_ISREG(st.st_mode));
-}
-
-int compare_timespec(const struct timespec &a, const struct timespec &b) {
-  if (a.tv_sec < b.tv_sec) {
-    return -1;
-  }
-  if (a.tv_sec > b.tv_sec) {
-    return 1;
-  }
-  if (a.tv_nsec < b.tv_nsec) {
-    return -1;
-  }
-  if (a.tv_nsec > b.tv_nsec) {
-    return 1;
-  }
-  return 0;
-}
-
-} // namespace
 
 TEST_CASE("open existing files read-only succeeds across many files",
           "[integration][open][stat]") {
@@ -63,7 +28,7 @@ TEST_CASE("open existing files read-only succeeds across many files",
       FDBFS_REQUIRE_OK(::close(fd));
 
       struct stat st{};
-      require_stat_regular_file(p, st);
+      require_stat_mode(p, st, S_IFREG);
     }
   });
 }
@@ -93,7 +58,7 @@ TEST_CASE("open O_CREAT respects requested modes",
       FDBFS_REQUIRE_OK(::close(fd));
 
       struct stat st{};
-      require_stat_regular_file(p, st);
+      require_stat_mode(p, st, S_IFREG);
       CHECK((st.st_mode & 0777) == expected_mode);
     }
   });
@@ -174,7 +139,7 @@ TEST_CASE("open O_TRUNC truncates non-empty file and updates file times",
     FDBFS_REQUIRE_OK(::close(fd));
 
     struct stat st{};
-    require_stat_regular_file(p, st);
+    require_stat_mode(p, st, S_IFREG);
     CHECK(st.st_size == static_cast<off_t>(payload.size()));
     const struct timespec old_mtim = st.st_mtim;
     const struct timespec old_ctim = st.st_ctim;
@@ -201,7 +166,7 @@ TEST_CASE("open O_TRUNC on already-empty file keeps size and file times",
     FDBFS_REQUIRE_OK(::close(fd));
 
     struct stat st_before{};
-    require_stat_regular_file(p, st_before);
+    require_stat_mode(p, st_before, S_IFREG);
     CHECK(st_before.st_size == 0);
 
     ::sleep(1);
@@ -210,7 +175,7 @@ TEST_CASE("open O_TRUNC on already-empty file keeps size and file times",
     FDBFS_REQUIRE_OK(::close(fd));
 
     struct stat st_after{};
-    require_stat_regular_file(p, st_after);
+    require_stat_mode(p, st_after, S_IFREG);
     CHECK(st_after.st_size == 0);
     if (is_host_backend()) {
       // other filesystems may increase the timestamps if they truncate

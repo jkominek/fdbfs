@@ -76,7 +76,8 @@ TEST_CASE("file IO mixed aligned/unaligned writes and reads",
     apply_expected_write(expected, 0, simple);
     verify_whole_file(p, expected);
 
-    const auto incompressible1 = make_pattern(bs + 73, 0x1111ull);
+    const auto incompressible1 =
+        generate_bytes(bs + 73, BytePattern::Random, 0, 0x1111ull);
     pwrite_all_fd(fd, incompressible1.data(), incompressible1.size(),
                   static_cast<off_t>(bs / 2));
     apply_expected_write(expected, static_cast<off_t>(bs / 2), incompressible1);
@@ -87,7 +88,8 @@ TEST_CASE("file IO mixed aligned/unaligned writes and reads",
     apply_expected_write(expected, static_cast<off_t>(bs * 3), zeros);
     verify_whole_file(p, expected);
 
-    const auto incompressible2 = make_pattern(bs * 5 + 19, 0x5555ull);
+    const auto incompressible2 =
+        generate_bytes(bs * 5 + 19, BytePattern::Random, 0, 0x5555ull);
     pwrite_all_fd(fd, incompressible2.data(), incompressible2.size(),
                   static_cast<off_t>(bs * 7 + 3));
     apply_expected_write(expected, static_cast<off_t>(bs * 7 + 3),
@@ -121,7 +123,8 @@ TEST_CASE("file IO mixed aligned/unaligned writes and reads",
     expected.clear();
     verify_whole_file(p, expected);
 
-    const auto final_payload = make_pattern(bs + 13, 0x9999ull);
+    const auto final_payload =
+        generate_bytes(bs + 13, BytePattern::Random, 0, 0x9999ull);
     write_all_fd(fd, final_payload.data(), final_payload.size());
     apply_expected_write(expected, 0, final_payload);
     FDBFS_REQUIRE_OK(::close(fd));
@@ -200,7 +203,10 @@ TEST_CASE("file IO fsx truncate/read/write/read regression sequence",
     const PayloadCase payload_cases[] = {
         {"zeros", [](size_t n) { return std::vector<uint8_t>(n, 0); }},
         {"A-fill", [](size_t n) { return std::vector<uint8_t>(n, 'A'); }},
-        {"random", [](size_t n) { return make_pattern(n, 0x0f00ba11ULL); }},
+        {"random",
+         [](size_t n) {
+           return generate_bytes(n, BytePattern::Random, 0, 0x0f00ba11ULL);
+         }},
     };
 
     for (const bool do_preread : {true, false}) {

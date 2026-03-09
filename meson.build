@@ -34,6 +34,7 @@ catch2_dep = dependency('catch2-with-main', version : '>=3.4.0', required : true
 pure_helpers_sources = files(
   'src/util.cc',
   'tests/test_pure_helpers.cc',
+  'tests/test_support.cc'
 )
 
 pure_helpers_exe = executable(
