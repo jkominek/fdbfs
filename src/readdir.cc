@@ -24,30 +24,42 @@
  * ?
  */
 
-struct AttemptState_readdir : public AttemptState {
+template <typename ActionT>
+struct AttemptState_readdir : public AttemptStateT<ActionT> {
   unique_future range_fetch;
 };
 
+template <typename ActionT>
 class Inflight_readdir
-    : public InflightWithAttempt<AttemptState_readdir, InflightPolicyReadOnly> {
+    : public InflightWithAttemptT<AttemptState_readdir<ActionT>,
+                                  InflightPolicyReadOnly, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_readdir<ActionT>,
+                                    InflightPolicyReadOnly, ActionT>;
+  using Base::a;
+  using Base::req;
+  using Base::transaction;
+  using Base::wait_on_future;
+
   Inflight_readdir(fuse_req_t, fuse_ino_t, size_t, off_t, unique_transaction);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
   const fuse_ino_t ino;
   const size_t size;
   const off_t off;
 
-  InflightAction callback();
+  ActionT callback();
 };
 
-Inflight_readdir::Inflight_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
-                                   off_t off, unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)), ino(ino), size(size),
-      off(off) {}
+template <typename ActionT>
+Inflight_readdir<ActionT>::Inflight_readdir(fuse_req_t req, fuse_ino_t ino,
+                                            size_t size, off_t off,
+                                            unique_transaction transaction)
+    : Base(req, std::move(transaction)), ino(ino), size(size), off(off) {}
 
-InflightAction Inflight_readdir::callback() {
+template <typename ActionT>
+ActionT Inflight_readdir<ActionT>::callback() {
   const FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
@@ -56,7 +68,7 @@ InflightAction Inflight_readdir::callback() {
   err = fdb_future_get_keyvalue_array(a().range_fetch.get(), &kvs, &kvcount,
                                       &more);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   std::vector<uint8_t> buf(size);
   size_t consumed_buffer = 0;
@@ -67,12 +79,12 @@ InflightAction Inflight_readdir::callback() {
 
     if (kv.key_length <= dirent_prefix_length) {
       // serious internal error. we somehow got back a key that was too short?
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
     int keylen = kv.key_length - dirent_prefix_length;
     if ((keylen <= 0) || (keylen > MAXFILENAMELEN)) {
       // internal error
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
     char name[MAXFILENAMELEN + 1];
     bcopy(((uint8_t *)kv.key) + dirent_prefix_length, name, keylen);
@@ -84,7 +96,7 @@ InflightAction Inflight_readdir::callback() {
       dirent.ParseFromArray(kv.value, kv.value_length);
 
       if (!dirent.IsInitialized()) {
-        return InflightAction::Abort(EIO);
+        return ActionT::Abort(EIO);
       }
       attr.st_ino = dirent.inode();
       attr.st_mode = dirent.type();
@@ -103,10 +115,11 @@ InflightAction Inflight_readdir::callback() {
   }
 
   buf.resize(consumed_buffer);
-  return InflightAction::Buf(buf);
+  return ActionT::Buf(buf);
 }
 
-InflightCallback Inflight_readdir::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_readdir<ActionT>::issue() {
   const auto [start, stop] = pack_dentry_subspace_range(ino);
 
   // Estimate how many entries can fit in the caller-provided buffer.
@@ -128,7 +141,7 @@ InflightCallback Inflight_readdir::issue() {
                                 0, 1 + off, stop.data(), stop.size(), 0, 1,
                                 limit, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
       a().range_fetch);
-  return std::bind(&Inflight_readdir::callback, this);
+  return std::bind(&Inflight_readdir<ActionT>::callback, this);
 }
 
 extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
@@ -147,7 +160,7 @@ extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
   // early, here.
 
   // let's not read much more than 64k in a go.
-  Inflight_readdir *inflight = new Inflight_readdir(
+  auto *inflight = new Inflight_readdir<FuseInflightAction>(
       req, ino, std::min(size, static_cast<size_t>(1 << 16)), off,
       make_transaction());
 

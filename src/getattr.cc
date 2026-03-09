@@ -30,62 +30,73 @@
  * maybe a small range read to pick up extended attributes
  * or less common values?
  */
-struct AttemptState_getattr : public AttemptState {
+template <typename ActionT>
+struct AttemptState_getattr : public AttemptStateT<ActionT> {
   unique_future inode_fetch;
 };
 
-class Inflight_getattr : public InflightWithAttempt<AttemptState_getattr, InflightPolicyReadOnly> {
+template <typename ActionT>
+class Inflight_getattr
+    : public InflightWithAttemptT<AttemptState_getattr<ActionT>,
+                                  InflightPolicyReadOnly, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_getattr<ActionT>,
+                                    InflightPolicyReadOnly, ActionT>;
+  using Base::a;
+  using Base::transaction;
+  using Base::wait_on_future;
+
   Inflight_getattr(fuse_req_t, fuse_ino_t, unique_transaction);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
   const fuse_ino_t ino;
-  InflightAction callback();
+  ActionT callback();
 };
 
-Inflight_getattr::Inflight_getattr(fuse_req_t req, fuse_ino_t ino,
-                                   unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)),
-      ino(ino) {}
+template <typename ActionT>
+Inflight_getattr<ActionT>::Inflight_getattr(fuse_req_t req, fuse_ino_t ino,
+                                            unique_transaction transaction)
+    : Base(req, std::move(transaction)), ino(ino) {}
 
-InflightAction Inflight_getattr::callback() {
+template <typename ActionT> ActionT Inflight_getattr<ActionT>::callback() {
   fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
   fdb_error_t err;
   err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
   if (!present) {
-    return InflightAction::Abort(ENOENT);
+    return ActionT::Abort(ENOENT);
   }
 
   INodeRecord inode;
   inode.ParseFromArray(val, vallen);
   if (!inode.IsInitialized()) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
   struct stat attr{};
   pack_inode_record_into_stat(inode, attr);
-  return InflightAction::Attr(attr);
+  return ActionT::Attr(attr);
 }
 
-InflightCallback Inflight_getattr::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_getattr<ActionT>::issue() {
   auto key = pack_inode_key(ino);
 
   // and request just that inode
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
       a().inode_fetch);
-  return std::bind(&Inflight_getattr::callback, this);
+  return std::bind(&Inflight_getattr<ActionT>::callback, this);
 }
 
 extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
                               struct fuse_file_info *fi) {
   // get the file attributes of an inode
-  Inflight_getattr *inflight =
-      new Inflight_getattr(req, ino, make_transaction());
+  auto *inflight =
+      new Inflight_getattr<FuseInflightAction>(req, ino, make_transaction());
   inflight->start();
 }

@@ -85,7 +85,8 @@ decode_fileblock_identity(const FDBKeyValue &kv) {
  * ???
  */
 
-struct AttemptState_write : public AttemptState {
+template <typename ActionT>
+struct AttemptState_write : public AttemptStateT<ActionT> {
   unique_future inode_fetch;
   // the future getting the two blocks that can be at the ends
   // of a write, which thus have to be read in order to perform
@@ -94,12 +95,23 @@ struct AttemptState_write : public AttemptState {
   unique_future stop_block_fetch;
 };
 
+template <typename ActionT>
 class Inflight_write
-    : public InflightWithAttempt<AttemptState_write, InflightPolicyWrite> {
+    : public InflightWithAttemptT<AttemptState_write<ActionT>,
+                                  InflightPolicyWrite, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_write<ActionT>,
+                                    InflightPolicyWrite, ActionT>;
+  using Base::a;
+  using Base::commit;
+  using Base::track_inode_for_fsync;
+  using Base::transaction;
+  using Base::wait_on_future;
+  using Base::write_oplog_result;
+
   Inflight_write(fuse_req_t, fuse_ino_t, std::vector<uint8_t>, off_t,
                  unique_transaction);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
   const fuse_ino_t ino;
@@ -107,42 +119,47 @@ private:
   const off_t off;
 
   fdb_error_t configure_transaction() override;
-  InflightAction check();
-  InflightAction oplog_recovery(const OpLogRecord &) override;
+  ActionT check();
+  ActionT oplog_recovery(const OpLogRecord &) override;
   bool write_success_oplog_result();
 };
 
-Inflight_write::Inflight_write(fuse_req_t req, fuse_ino_t ino,
+template <typename ActionT>
+Inflight_write<ActionT>::Inflight_write(fuse_req_t req, fuse_ino_t ino,
                                std::vector<uint8_t> buffer, off_t off,
                                unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)), ino(ino),
+    : Base(req, std::move(transaction)), ino(ino),
       buffer(std::move(buffer)), off(off) {
   track_inode_for_fsync(ino);
 }
 
-fdb_error_t Inflight_write::configure_transaction() {
+template <typename ActionT>
+fdb_error_t Inflight_write<ActionT>::configure_transaction() {
   return fdb_transaction_set_option(
       transaction.get(), FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, nullptr, 0);
 }
 
-bool Inflight_write::write_success_oplog_result() {
+template <typename ActionT>
+bool Inflight_write<ActionT>::write_success_oplog_result() {
   OpLogResultWrite result;
   result.set_size(buffer.size());
   return write_oplog_result(result);
 }
 
-InflightAction Inflight_write::oplog_recovery(const OpLogRecord &record) {
+template <typename ActionT>
+ActionT Inflight_write<ActionT>::oplog_recovery(const OpLogRecord &record) {
   if (record.result_case() != OpLogRecord::kWrite) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
   if (record.write().size() >
       static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
-  return InflightAction::Write(static_cast<size_t>(record.write().size()));
+  return ActionT::Write(static_cast<size_t>(record.write().size()));
 }
 
-InflightAction Inflight_write::check() {
+template <typename ActionT>
+ActionT Inflight_write<ActionT>::check() {
   fdb_bool_t present;
   fdb_error_t err;
 
@@ -150,21 +167,21 @@ InflightAction Inflight_write::check() {
   int vallen;
   err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
   // check everything about the inode
   if (!present) {
     // this inode doesn't exist.
-    return InflightAction::Abort(EBADF);
+    return ActionT::Abort(EBADF);
   }
 
   INodeRecord inode;
   inode.ParseFromArray(val, vallen);
   if ((!inode.IsInitialized()) || (!inode.has_type()) || (!inode.has_size())) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   } else if (inode.type() == ft_directory) {
-    return InflightAction::Abort(EISDIR);
+    return ActionT::Abort(EISDIR);
   } else if (inode.type() != ft_regular) {
-    return InflightAction::Abort(EINVAL);
+    return ActionT::Abort(EINVAL);
   } else {
     if (inode.size() < (off + buffer.size())) {
       // we need to expand size of the file
@@ -183,7 +200,7 @@ InflightAction Inflight_write::check() {
     // we've updated the inode appropriately.
     if (!fdb_set_protobuf(transaction.get(), pack_inode_key(inode.inode()),
                           inode))
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
   }
 
   // merge the edge writes into the blocks
@@ -195,10 +212,10 @@ InflightAction Inflight_write::check() {
     err = fdb_future_get_keyvalue_array(a().start_block_fetch.get(), &kvs,
                                         &kvcount, &more);
     if (err)
-      return InflightAction::FDBError(err);
+      return ActionT::FDBError(err);
     assert(kvcount <= 1);
     if (kvcount > 1) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
 
     const uint64_t copy_start_off = off % BLOCKSIZE;
@@ -211,16 +228,16 @@ InflightAction Inflight_write::check() {
     if (kvcount > 0) {
       const auto identity = decode_fileblock_identity(kvs[0]);
       if (!identity.has_value()) {
-        return InflightAction::Abort(EIO);
+        return ActionT::Abort(EIO);
       }
       const uint64_t expected_block = off / BLOCKSIZE;
       if ((identity->first != ino) || (identity->second != expected_block)) {
-        return InflightAction::Abort(EIO);
+        return ActionT::Abort(EIO);
       }
       const auto dret = decode_block(
           &kvs[0], 0, std::span<uint8_t>(output_buffer), total_buffer_size);
       if (!dret) {
-        return InflightAction::Abort(EIO);
+        return ActionT::Abort(EIO);
       }
     }
     bcopy(buffer.data(), output_buffer.data() + copy_start_off,
@@ -229,7 +246,7 @@ InflightAction Inflight_write::check() {
     const auto sret = set_fileblock(
         transaction.get(), key, std::span<const uint8_t>(output_buffer), false);
     if (!sret)
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
   }
 
   if (a().stop_block_fetch) {
@@ -241,10 +258,10 @@ InflightAction Inflight_write::check() {
     err = fdb_future_get_keyvalue_array(a().stop_block_fetch.get(), &kvs,
                                         &kvcount, &more);
     if (err)
-      return InflightAction::FDBError(err);
+      return ActionT::FDBError(err);
     assert(kvcount <= 1);
     if (kvcount > 1) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
 
     const uint64_t copysize = ((off + buffer.size()) % BLOCKSIZE);
@@ -254,16 +271,16 @@ InflightAction Inflight_write::check() {
     if (kvcount > 0) {
       const auto identity = decode_fileblock_identity(kvs[0]);
       if (!identity.has_value()) {
-        return InflightAction::Abort(EIO);
+        return ActionT::Abort(EIO);
       }
       const uint64_t expected_block = (off + buffer.size()) / BLOCKSIZE;
       if ((identity->first != ino) || (identity->second != expected_block)) {
-        return InflightAction::Abort(EIO);
+        return ActionT::Abort(EIO);
       }
       const auto dret = decode_block(
           &kvs[0], 0, std::span<uint8_t>(output_buffer), total_buffer_size);
       if (!dret) {
-        return InflightAction::Abort(EIO);
+        return ActionT::Abort(EIO);
       }
     }
     bcopy(buffer.data() + bufcopystart, output_buffer.data(), copysize);
@@ -280,17 +297,18 @@ InflightAction Inflight_write::check() {
     const auto sret = set_fileblock(
         transaction.get(), key, std::span<const uint8_t>(output_buffer), false);
     if (!sret)
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
   }
 
   if (!write_success_oplog_result()) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
-  return commit([&]() { return InflightAction::Write(buffer.size()); });
+  return commit([&]() { return ActionT::Write(buffer.size()); });
 }
 
-InflightCallback Inflight_write::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_write<ActionT>::issue() {
   // step 1 is easy, we'll need the inode record
   {
     const auto key = pack_inode_key(ino);
@@ -311,7 +329,7 @@ InflightCallback Inflight_write::issue() {
           conflict_stop_key.size(), FDB_CONFLICT_RANGE_TYPE_WRITE)) {
     // conflict-range setup failed; retryable errors should flow through
     // FoundationDB on_error handling.
-    return [err]() { return InflightAction::FDBTransactionError(err); };
+    return [err]() { return ActionT::FDBTransactionError(err); };
   }
 
   int iter_start, iter_stop;
@@ -381,11 +399,11 @@ InflightCallback Inflight_write::issue() {
     // safe to discard the result here for normal operation, since we
     // cleared the whole range beforehand.
     if (!sret) {
-      return []() { return InflightAction::Abort(EIO); };
+      return []() { return ActionT::Abort(EIO); };
     }
   }
 
-  return std::bind(&Inflight_write::check, this);
+  return std::bind(&Inflight_write<ActionT>::check, this);
 }
 
 extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
@@ -407,8 +425,8 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
   }
 
   std::vector<uint8_t> buffer(buf, buf + size);
-  Inflight_write *inflight =
-      new Inflight_write(req, ino, buffer, off, make_transaction());
+  auto *inflight = new Inflight_write<FuseInflightAction>(
+      req, ino, buffer, off, make_transaction());
 
   auto &serializer = fh->serializer;
   if (!serializer.enqueue_inflight(inflight,

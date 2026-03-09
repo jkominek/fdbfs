@@ -35,7 +35,8 @@
  */
 enum class Op { Unlink, Rmdir };
 
-struct AttemptState_unlink_rmdir : public AttemptState {
+template <typename ActionT>
+struct AttemptState_unlink_rmdir : public AttemptStateT<ActionT> {
   // parent inode, for perms checking
   unique_future parent_lookup;
   // for fetching the dirent given parent inode and path name
@@ -48,19 +49,29 @@ struct AttemptState_unlink_rmdir : public AttemptState {
   fuse_ino_t ino = 0;
 };
 
+template <typename ActionT>
 class Inflight_unlink_rmdir
-    : public InflightWithAttempt<AttemptState_unlink_rmdir,
-                                 InflightPolicyWrite> {
+    : public InflightWithAttemptT<AttemptState_unlink_rmdir<ActionT>,
+                                  InflightPolicyWrite, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_unlink_rmdir<ActionT>,
+                                    InflightPolicyWrite, ActionT>;
+  using Base::a;
+  using Base::commit;
+  using Base::track_inode_for_fsync;
+  using Base::transaction;
+  using Base::wait_on_future;
+  using Base::write_oplog_result;
+
   Inflight_unlink_rmdir(fuse_req_t, fuse_ino_t, std::string, Op,
                         unique_transaction);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
-  InflightAction postlookup();
-  InflightAction inode_check();
-  InflightAction rmdir_inode_dirlist_check();
-  InflightAction oplog_recovery(const OpLogRecord &) override;
+  ActionT postlookup();
+  ActionT inode_check();
+  ActionT rmdir_inode_dirlist_check();
+  ActionT oplog_recovery(const OpLogRecord &) override;
   bool write_success_oplog_result();
 
   // parent directory
@@ -73,37 +84,41 @@ private:
   const Op op;
 };
 
-Inflight_unlink_rmdir::Inflight_unlink_rmdir(fuse_req_t req, fuse_ino_t parent,
-                                             std::string name, Op op,
-                                             unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)), parent(parent),
+template <typename ActionT>
+Inflight_unlink_rmdir<ActionT>::Inflight_unlink_rmdir(
+    fuse_req_t req, fuse_ino_t parent, std::string name, Op op,
+    unique_transaction transaction)
+    : Base(req, std::move(transaction)), parent(parent),
       name(std::move(name)), dirent_key(pack_dentry_key(parent, this->name)),
       op(op) {
   track_inode_for_fsync(parent);
 }
 
-bool Inflight_unlink_rmdir::write_success_oplog_result() {
+template <typename ActionT>
+bool Inflight_unlink_rmdir<ActionT>::write_success_oplog_result() {
   OpLogResultOK result;
   return write_oplog_result(result);
 }
 
-InflightAction
-Inflight_unlink_rmdir::oplog_recovery(const OpLogRecord &record) {
+template <typename ActionT>
+ActionT Inflight_unlink_rmdir<ActionT>::oplog_recovery(
+    const OpLogRecord &record) {
   if (record.result_case() != OpLogRecord::kOk) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
-  return InflightAction::OK();
+  return ActionT::OK();
 }
 
-InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check() {
+template <typename ActionT>
+ActionT Inflight_unlink_rmdir<ActionT>::rmdir_inode_dirlist_check() {
   const auto dir_empty =
       keyvalue_range_is_empty(a().directory_listing_fetch.get());
   if (!dir_empty.has_value()) {
-    return InflightAction::FDBError(dir_empty.error());
+    return ActionT::FDBError(dir_empty.error());
   }
   if (!dir_empty.value()) {
     // can't rmdir a directory with any amount of stuff in it.
-    return InflightAction::Abort(ENOTEMPTY);
+    return ActionT::Abort(ENOTEMPTY);
   }
 
   // TODO check the metadata for permission to erase
@@ -112,9 +127,9 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check() {
       parse_unlink_target_inode(a().inode_metadata_fetch.get(), a().ino);
   if (!parsed.has_value()) {
     if (parsed.error().err != EIO) {
-      return InflightAction::FDBError(parsed.error().err);
+      return ActionT::FDBError(parsed.error().err);
     }
-    return InflightAction::Abort(parsed.error().err, parsed.error().why);
+    return ActionT::Abort(parsed.error().err, parsed.error().why);
   }
 
   INodeRecord inode = parsed->inode;
@@ -131,26 +146,27 @@ InflightAction Inflight_unlink_rmdir::rmdir_inode_dirlist_check() {
           .unlink_directory_semantics = false,
       });
   if (!mutation_result.has_value()) {
-    return InflightAction::Abort(mutation_result.error());
+    return ActionT::Abort(mutation_result.error());
   }
 
   if (!write_success_oplog_result()) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
-  return commit(InflightAction::OK);
+  return commit(ActionT::OK);
 }
 
-InflightAction Inflight_unlink_rmdir::inode_check() {
+template <typename ActionT>
+ActionT Inflight_unlink_rmdir<ActionT>::inode_check() {
   // TODO check the metadata for permission to erase
 
   const auto parsed =
       parse_unlink_target_inode(a().inode_metadata_fetch.get(), a().ino);
   if (!parsed.has_value()) {
     if (parsed.error().err != EIO) {
-      return InflightAction::FDBError(parsed.error().err);
+      return ActionT::FDBError(parsed.error().err);
     }
-    return InflightAction::Abort(parsed.error().err, parsed.error().why);
+    return ActionT::Abort(parsed.error().err, parsed.error().why);
   }
   INodeRecord inode = parsed->inode;
   track_inode_for_fsync(inode.inode());
@@ -162,17 +178,18 @@ InflightAction Inflight_unlink_rmdir::inode_check() {
           .unlink_directory_semantics = false,
       });
   if (!mutation_result.has_value()) {
-    return InflightAction::Abort(mutation_result.error());
+    return ActionT::Abort(mutation_result.error());
   }
 
   if (!write_success_oplog_result()) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
-  return commit(InflightAction::OK);
+  return commit(ActionT::OK);
 }
 
-InflightAction Inflight_unlink_rmdir::postlookup() {
+template <typename ActionT>
+ActionT Inflight_unlink_rmdir<ActionT>::postlookup() {
   fdb_bool_t dirinode_present, dirent_present;
   const uint8_t *value;
   int valuelen;
@@ -181,20 +198,20 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
   err = fdb_future_get_value(a().parent_lookup.get(), &dirinode_present, &value,
                              &valuelen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   if (!dirinode_present) {
-    return InflightAction::Abort(ENOENT);
+    return ActionT::Abort(ENOENT);
   }
 
   INodeRecord parent;
   parent.ParseFromArray(value, valuelen);
   if (!(parent.IsInitialized() && parent.has_nlinks())) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
   if (op == Op::Rmdir) {
     if (parent.nlinks() == 0) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
     parent.set_nlinks(parent.nlinks() - 1);
   }
@@ -203,10 +220,10 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
   err = fdb_future_get_value(a().dirent_lookup.get(), &dirent_present, &value,
                              &valuelen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   if (!dirent_present) {
-    return InflightAction::Abort(ENOENT);
+    return ActionT::Abort(ENOENT);
   }
 
   filetype dirent_type;
@@ -216,7 +233,7 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
     dirent.ParseFromArray(value, valuelen);
     if (!dirent.IsInitialized()) {
       // bad record,
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
 
     a().ino = dirent.inode();
@@ -260,11 +277,11 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
             a().directory_listing_fetch);
       }
 
-      return InflightAction::BeginWait(
-          std::bind(&Inflight_unlink_rmdir::rmdir_inode_dirlist_check, this));
+      return ActionT::BeginWait(
+          std::bind(&Inflight_unlink_rmdir<ActionT>::rmdir_inode_dirlist_check, this));
     } else {
       // mismatch. bail.
-      return InflightAction::Abort(ENOTDIR);
+      return ActionT::Abort(ENOTDIR);
     }
   } else {
     // we want anything except a directory
@@ -282,16 +299,17 @@ InflightAction Inflight_unlink_rmdir::postlookup() {
                          stop.data(), stop.size(), 0, 1, 1000, 0,
                          FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
                      a().inode_metadata_fetch);
-      return InflightAction::BeginWait(
-          std::bind(&Inflight_unlink_rmdir::inode_check, this));
+      return ActionT::BeginWait(
+          std::bind(&Inflight_unlink_rmdir<ActionT>::inode_check, this));
     } else {
       // mismatch. bail.
-      return InflightAction::Abort(EISDIR);
+      return ActionT::Abort(EISDIR);
     }
   }
 }
 
-InflightCallback Inflight_unlink_rmdir::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_unlink_rmdir<ActionT>::issue() {
   // fetch parent inode so we can check permissions
   const auto key = pack_inode_key(parent);
   wait_on_future(
@@ -302,15 +320,15 @@ InflightCallback Inflight_unlink_rmdir::issue() {
   wait_on_future(fdb_transaction_get(transaction.get(), dirent_key.data(),
                                      dirent_key.size(), 0),
                  a().dirent_lookup);
-  return std::bind(&Inflight_unlink_rmdir::postlookup, this);
+  return std::bind(&Inflight_unlink_rmdir<ActionT>::postlookup, this);
 }
 
 extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t ino, const char *name) {
   if (filename_length_check(req, name)) {
     return;
   }
-  Inflight_unlink_rmdir *inflight =
-      new Inflight_unlink_rmdir(req, ino, name, Op::Unlink, make_transaction());
+  auto *inflight = new Inflight_unlink_rmdir<FuseInflightAction>(
+      req, ino, name, Op::Unlink, make_transaction());
   inflight->start();
 }
 
@@ -318,7 +336,7 @@ extern "C" void fdbfs_rmdir(fuse_req_t req, fuse_ino_t ino, const char *name) {
   if (filename_length_check(req, name)) {
     return;
   }
-  Inflight_unlink_rmdir *inflight =
-      new Inflight_unlink_rmdir(req, ino, name, Op::Rmdir, make_transaction());
+  auto *inflight = new Inflight_unlink_rmdir<FuseInflightAction>(
+      req, ino, name, Op::Rmdir, make_transaction());
   inflight->start();
 }

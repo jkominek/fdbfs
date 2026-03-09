@@ -29,16 +29,28 @@
  * REAL PLAN
  * ???
  */
-struct AttemptState_setattr : public AttemptState {
+template <typename ActionT>
+struct AttemptState_setattr : public AttemptStateT<ActionT> {
   INodeRecord inode;
   unique_future inode_fetch;
   unique_future partial_block_fetch;
   uint64_t partial_block_idx = 0;
 };
 
+template <typename ActionT>
 class Inflight_setattr
-    : public InflightWithAttempt<AttemptState_setattr, InflightPolicyWrite> {
+    : public InflightWithAttemptT<AttemptState_setattr<ActionT>,
+                                  InflightPolicyWrite, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_setattr<ActionT>,
+                                    InflightPolicyWrite, ActionT>;
+  using Base::a;
+  using Base::commit;
+  using Base::track_inode_for_fsync;
+  using Base::transaction;
+  using Base::wait_on_future;
+  using Base::write_oplog_result;
+
   struct SuccessReplyAttr {};
   struct SuccessReplyOpen {
     struct fuse_file_info fi;
@@ -47,7 +59,7 @@ public:
 
   Inflight_setattr(fuse_req_t, fuse_ino_t, struct stat, int, unique_transaction,
                    SuccessReply = SuccessReplyAttr{});
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
   const fuse_ino_t ino;
@@ -56,40 +68,44 @@ private:
   const SuccessReply success_reply;
 
   fdb_error_t configure_transaction() override;
-  InflightAction callback();
-  InflightAction partial_block_fixup();
-  InflightAction commit_cb();
-  InflightAction oplog_recovery(const OpLogRecord &) override;
+  ActionT callback();
+  ActionT partial_block_fixup();
+  ActionT commit_cb();
+  ActionT oplog_recovery(const OpLogRecord &) override;
   bool write_success_oplog_result();
 };
 
-Inflight_setattr::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
-                                   struct stat attr, int to_set,
-                                   unique_transaction transaction,
-                                   SuccessReply success_reply)
-    : InflightWithAttempt(req, std::move(transaction)), ino(ino), attr(attr),
+template <typename ActionT>
+Inflight_setattr<ActionT>::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
+                                            struct stat attr, int to_set,
+                                            unique_transaction transaction,
+                                            SuccessReply success_reply)
+    : Base(req, std::move(transaction)), ino(ino), attr(attr),
       to_set(to_set), success_reply(std::move(success_reply)) {
   track_inode_for_fsync(ino);
 }
 
-fdb_error_t Inflight_setattr::configure_transaction() {
+template <typename ActionT>
+fdb_error_t Inflight_setattr<ActionT>::configure_transaction() {
   return fdb_transaction_set_option(
       transaction.get(), FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, nullptr, 0);
 }
 
-InflightAction Inflight_setattr::commit_cb() {
+template <typename ActionT>
+ActionT Inflight_setattr<ActionT>::commit_cb() {
   auto open_reply = std::get_if<SuccessReplyOpen>(&success_reply);
   if (open_reply != nullptr) {
     // we copy fi because success_reply is const
     struct fuse_file_info fi = open_reply->fi;
-    return InflightAction::Open(ino, fi);
+    return ActionT::Open(ino, fi);
   }
   struct stat newattr{};
   pack_inode_record_into_stat(a().inode, newattr);
-  return InflightAction::Attr(newattr);
+  return ActionT::Attr(newattr);
 }
 
-bool Inflight_setattr::write_success_oplog_result() {
+template <typename ActionT>
+bool Inflight_setattr<ActionT>::write_success_oplog_result() {
   auto open_reply = std::get_if<SuccessReplyOpen>(&success_reply);
   if (open_reply != nullptr) {
     OpLogResultOpen result;
@@ -108,15 +124,16 @@ bool Inflight_setattr::write_success_oplog_result() {
   return write_oplog_result(result);
 }
 
-InflightAction Inflight_setattr::oplog_recovery(const OpLogRecord &record) {
+template <typename ActionT>
+ActionT Inflight_setattr<ActionT>::oplog_recovery(const OpLogRecord &record) {
   switch (record.result_case()) {
   case OpLogRecord::kAttr: {
     if (!record.attr().has_attr()) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
     struct stat attr{};
     unpack_stat_record_into_stat(record.attr().attr(), attr);
-    return InflightAction::Attr(attr);
+    return ActionT::Attr(attr);
   }
   case OpLogRecord::kOpen: {
     struct fuse_file_info fi{};
@@ -124,14 +141,15 @@ InflightAction Inflight_setattr::oplog_recovery(const OpLogRecord &record) {
     fi.direct_io = record.open().direct_io();
     fi.keep_cache = record.open().keep_cache();
     fi.nonseekable = record.open().nonseekable();
-    return InflightAction::Open(record.open().ino(), fi);
+    return ActionT::Open(record.open().ino(), fi);
   }
   default:
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 }
 
-InflightAction Inflight_setattr::partial_block_fixup() {
+template <typename ActionT>
+ActionT Inflight_setattr<ActionT>::partial_block_fixup() {
   const FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
@@ -139,7 +157,7 @@ InflightAction Inflight_setattr::partial_block_fixup() {
   err = fdb_future_get_keyvalue_array(a().partial_block_fetch.get(), &kvs,
                                       &kvcount, &more);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   if (kvcount > 0) {
     // there's a block there, decode it, and rewrite a truncated version
@@ -148,7 +166,7 @@ InflightAction Inflight_setattr::partial_block_fixup() {
         decode_block(&kvs[0], 0, std::span<uint8_t>(output_buffer), BLOCKSIZE);
     if (!dret) {
       // block can't be decoded. big problem.
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
     auto key = pack_fileblock_key(ino, a().partial_block_idx);
     // if (ret <= attr.st_size % BLOCKSIZE) then there's nothing to do.
@@ -157,17 +175,18 @@ InflightAction Inflight_setattr::partial_block_fixup() {
         transaction.get(), key,
         std::span<const uint8_t>(output_buffer).first(write_size));
     if (!sret)
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
   }
 
   if (!write_success_oplog_result()) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
-  return commit(std::bind(&Inflight_setattr::commit_cb, this));
+  return commit(std::bind(&Inflight_setattr<ActionT>::commit_cb, this));
 }
 
-InflightAction Inflight_setattr::callback() {
+template <typename ActionT>
+ActionT Inflight_setattr<ActionT>::callback() {
   fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
@@ -175,20 +194,20 @@ InflightAction Inflight_setattr::callback() {
 
   err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   if (!present) {
-    return InflightAction::Abort(ENOENT);
+    return ActionT::Abort(ENOENT);
   }
 
   bool do_commit = true;
   auto next_action =
-      InflightAction::BeginWait(std::bind(&Inflight_setattr::commit_cb, this));
+      ActionT::BeginWait(std::bind(&Inflight_setattr<ActionT>::commit_cb, this));
 
   a().inode.ParseFromArray(val, vallen);
   if (!a().inode.IsInitialized()) {
     // bad inode
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
   // update inode!
@@ -229,8 +248,8 @@ InflightAction Inflight_setattr::callback() {
                 0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
             a().partial_block_fetch);
         do_commit = false;
-        next_action = InflightAction::BeginWait(
-            std::bind(&Inflight_setattr::partial_block_fixup, this));
+        next_action = ActionT::BeginWait(
+            std::bind(&Inflight_setattr<ActionT>::partial_block_fixup, this));
       }
     }
     if (static_cast<uint64_t>(attr.st_size) != a().inode.size()) {
@@ -280,11 +299,11 @@ InflightAction Inflight_setattr::callback() {
   // done updating inode!
 
   if (!fdb_set_protobuf(transaction.get(), pack_inode_key(ino), a().inode))
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
 
   if (do_commit) {
     if (!write_success_oplog_result()) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
     wait_on_future(fdb_transaction_commit(transaction.get()), a().commit);
   }
@@ -292,20 +311,21 @@ InflightAction Inflight_setattr::callback() {
   return next_action;
 }
 
-InflightCallback Inflight_setattr::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_setattr<ActionT>::issue() {
   const auto key = pack_inode_key(ino);
 
   // and request just that inode
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
       a().inode_fetch);
-  return std::bind(&Inflight_setattr::callback, this);
+  return std::bind(&Inflight_setattr<ActionT>::callback, this);
 }
 
 extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
                               int to_set, struct fuse_file_info *fi) {
-  Inflight_setattr *inflight =
-      new Inflight_setattr(req, ino, *attr, to_set, make_transaction());
+  auto *inflight = new Inflight_setattr<FuseInflightAction>(
+      req, ino, *attr, to_set, make_transaction());
   if ((to_set & FUSE_SET_ATTR_SIZE) && (fi != nullptr)) {
     if (attr->st_size < 0) {
       // admittedly unlikely we'll get a negative value from the kernel
@@ -341,8 +361,8 @@ extern "C" void fdbfs_setattr_open_trunc(fuse_req_t req, fuse_ino_t ino,
   // we're being called by open, so our 'fi' doesn't have a filehandle
   // in it, which is fine. we don't need to serialize this operation since
   // the file doesn't exist until we return. so there's nothing to serialize.
-  Inflight_setattr *inflight = new Inflight_setattr(
+  auto *inflight = new Inflight_setattr<FuseInflightAction>(
       req, ino, attr, FUSE_SET_ATTR_SIZE, make_transaction(),
-      Inflight_setattr::SuccessReplyOpen{*fi});
+      Inflight_setattr<FuseInflightAction>::SuccessReplyOpen{*fi});
   inflight->start();
 }

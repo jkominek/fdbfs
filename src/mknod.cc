@@ -30,7 +30,8 @@
  * REAL PLAN
  * ???
  */
-struct AttemptState_mknod : public AttemptState {
+template <typename ActionT>
+struct AttemptState_mknod : public AttemptStateT<ActionT> {
   unique_future dirinode_fetch;
   unique_future inode_check;
   unique_future dirent_check;
@@ -38,12 +39,23 @@ struct AttemptState_mknod : public AttemptState {
   struct stat attr{};
 };
 
+template <typename ActionT>
 class Inflight_mknod
-    : public InflightWithAttempt<AttemptState_mknod, InflightPolicyWrite> {
+    : public InflightWithAttemptT<AttemptState_mknod<ActionT>,
+                                  InflightPolicyWrite, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_mknod<ActionT>,
+                                    InflightPolicyWrite, ActionT>;
+  using Base::a;
+  using Base::commit;
+  using Base::track_inode_for_fsync;
+  using Base::transaction;
+  using Base::wait_on_future;
+  using Base::write_oplog_result;
+
   Inflight_mknod(fuse_req_t, fuse_ino_t, std::string, mode_t, filetype, dev_t,
                  unique_transaction, std::optional<std::string>);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
   const fuse_ino_t parent;
@@ -53,23 +65,25 @@ private:
   const dev_t rdev;
   const std::string symlink_target;
 
-  InflightAction postverification();
-  InflightAction oplog_recovery(const OpLogRecord &) override;
+  ActionT postverification();
+  ActionT oplog_recovery(const OpLogRecord &) override;
 };
 
-Inflight_mknod::Inflight_mknod(
+template <typename ActionT>
+Inflight_mknod<ActionT>::Inflight_mknod(
     fuse_req_t req, fuse_ino_t parent, std::string name, mode_t mode,
     filetype type, dev_t rdev, unique_transaction transaction,
-    std::optional<std::string> symlink_target_opt = std::nullopt)
-    : InflightWithAttempt(req, std::move(transaction)), parent(parent),
-      name(std::move(name)), type(type), mode(mode), rdev(rdev),
+    std::optional<std::string> symlink_target_opt)
+    : Base(req, std::move(transaction)), parent(parent), name(std::move(name)),
+      type(type), mode(mode), rdev(rdev),
       symlink_target((type == ft_symlink && symlink_target_opt.has_value())
                          ? std::move(*symlink_target_opt)
                          : std::string()) {
   track_inode_for_fsync(parent);
 }
 
-InflightAction Inflight_mknod::postverification() {
+template <typename ActionT>
+ActionT Inflight_mknod<ActionT>::postverification() {
   fdb_bool_t dirinode_present, inode_present, dirent_present;
   const uint8_t *value;
   int valuelen;
@@ -78,49 +92,49 @@ InflightAction Inflight_mknod::postverification() {
   err = fdb_future_get_value(a().dirinode_fetch.get(), &dirinode_present,
                              &value, &valuelen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   if (!dirinode_present) {
     // the parent directory doesn't exist
-    return InflightAction::Abort(ENOENT);
+    return ActionT::Abort(ENOENT);
   }
 
   INodeRecord parentinode;
   parentinode.ParseFromArray(value, valuelen);
   if (!(parentinode.IsInitialized() && parentinode.has_nlinks())) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
   err = fdb_future_get_value(a().dirent_check.get(), &dirent_present, &value,
                              &valuelen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   err = fdb_future_get_value(a().inode_check.get(), &inode_present, &value,
                              &valuelen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   if (dirent_present) {
     // can't make this entry, there's already something there
-    return InflightAction::Abort(EEXIST);
+    return ActionT::Abort(EEXIST);
   }
 
   if (inode_present) {
     // astonishingly we guessed an inode that already exists.
     // try this again!
-    return InflightAction::Restart();
+    return ActionT::Restart();
   }
 
   // TODO we need to fetch the parent inode for permissions checking
   if (parentinode.nlinks() <= 1) {
     // directory is unlinked, no new entries to be created
-    return InflightAction::Abort(ENOENT);
+    return ActionT::Abort(ENOENT);
   }
 
   if (type == ft_directory) {
     if (parentinode.nlinks() == std::numeric_limits<uint64_t>::max()) {
-      return InflightAction::Abort(EMLINK);
+      return ActionT::Abort(EMLINK);
     }
     parentinode.set_nlinks(parentinode.nlinks() + 1);
   }
@@ -140,7 +154,8 @@ InflightAction Inflight_mknod::postverification() {
   else
     inode.set_size(0);
   inode.set_rdev(rdev);
-  const fuse_ctx *ctx = fuse_req_ctx(req);
+  // TODO need to eliminate this fuse dependency
+  const fuse_ctx *ctx = fuse_req_ctx(this->req);
   inode.set_uid(ctx->uid);
   inode.set_gid(ctx->gid);
 
@@ -158,7 +173,7 @@ InflightAction Inflight_mknod::postverification() {
 
   // set the inode KV pair
   if (!fdb_set_protobuf(transaction.get(), pack_inode_key(a().ino), inode))
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
 
   DirectoryEntry dirent;
   dirent.set_inode(a().ino);
@@ -166,7 +181,7 @@ InflightAction Inflight_mknod::postverification() {
 
   if (!fdb_set_protobuf(transaction.get(), pack_dentry_key(parent, name),
                         dirent))
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
 
   OpLogResultEntry result_entry;
   result_entry.set_ino(a().ino);
@@ -175,7 +190,7 @@ InflightAction Inflight_mknod::postverification() {
   result_entry.set_attr_timeout(0.01);
   result_entry.set_entry_timeout(0.01);
   if (!write_oplog_result(result_entry)) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
   return commit([&]() {
@@ -185,16 +200,17 @@ InflightAction Inflight_mknod::postverification() {
     e.attr = a().attr;
     e.attr_timeout = 0.01;
     e.entry_timeout = 0.01;
-    return InflightAction::Entry(e);
+    return ActionT::Entry(e);
   });
 }
 
-InflightAction Inflight_mknod::oplog_recovery(const OpLogRecord &record) {
+template <typename ActionT>
+ActionT Inflight_mknod<ActionT>::oplog_recovery(const OpLogRecord &record) {
   if (record.result_case() != OpLogRecord::kEntry) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
   if (!record.entry().has_attr()) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
   struct fuse_entry_param e{};
@@ -203,10 +219,11 @@ InflightAction Inflight_mknod::oplog_recovery(const OpLogRecord &record) {
   unpack_stat_record_into_stat(record.entry().attr(), e.attr);
   e.attr_timeout = record.entry().attr_timeout();
   e.entry_timeout = record.entry().entry_timeout();
-  return InflightAction::Entry(e);
+  return ActionT::Entry(e);
 }
 
-InflightCallback Inflight_mknod::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_mknod<ActionT>::issue() {
   a().ino = 0x47d8d31b9848016f;
   do {
     if (getrandom(reinterpret_cast<void *>(&a().ino), sizeof(a().ino),
@@ -217,7 +234,7 @@ InflightCallback Inflight_mknod::issue() {
         // we are just having a bad time today. we're going to
         // have to fail, we don't have any way of making plausibly
         // random inode numbers at the moment.
-        return []() { return InflightAction::Abort(EIO); };
+        return []() { return ActionT::Abort(EIO); };
       }
       // take whatever was laying around in ino after the getrandom call
       // and xor it with the current nanoseconds. it isn't random, but it'll
@@ -247,7 +264,7 @@ InflightCallback Inflight_mknod::issue() {
         a().inode_check);
   }
 
-  return std::bind(&Inflight_mknod::postverification, this);
+  return std::bind(&Inflight_mknod<ActionT>::postverification, this);
 }
 
 extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name,
@@ -280,9 +297,9 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name,
   }
   }
 
-  Inflight_mknod *inflight =
-      new Inflight_mknod(req, parent, name, mode & (~S_IFMT), deduced_type,
-                         rdev, make_transaction());
+  auto *inflight = new Inflight_mknod<FuseInflightAction>(
+      req, parent, name, mode & (~S_IFMT), deduced_type, rdev,
+      make_transaction(), std::nullopt);
   inflight->start();
 }
 
@@ -291,8 +308,9 @@ extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
   if (filename_length_check(req, name)) {
     return;
   }
-  Inflight_mknod *inflight = new Inflight_mknod(
-      req, parent, name, mode & (~S_IFMT), ft_directory, 0, make_transaction());
+  auto *inflight = new Inflight_mknod<FuseInflightAction>(
+      req, parent, name, mode & (~S_IFMT), ft_directory, 0, make_transaction(),
+      std::nullopt);
   inflight->start();
 }
 
@@ -303,8 +321,8 @@ extern "C" void fdbfs_symlink(fuse_req_t req, const char *target,
       filename_length_check(req, name)) {
     return;
   }
-  Inflight_mknod *inflight =
-      new Inflight_mknod(req, parent, name, 0777 & (~S_IFMT), ft_symlink, 0,
-                         make_transaction(), std::string(target));
+  auto *inflight = new Inflight_mknod<FuseInflightAction>(
+      req, parent, name, 0777 & (~S_IFMT), ft_symlink, 0, make_transaction(),
+      std::string(target));
   inflight->start();
 }

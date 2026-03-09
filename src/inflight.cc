@@ -36,18 +36,6 @@ void shut_it_down() {
   shut_it_down_forever = true;
 }
 
-static void
-fail_inflight(Inflight *i, int err, const char *why,
-              std::source_location loc = std::source_location::current()) {
-  if (err != 0) {
-    InflightAction::trace_errno_error("FailInflight", err, why, loc);
-  }
-  if (!i->suppress_errors)
-    fuse_reply_err(i->req, err);
-  i->cleanup();
-  delete i;
-}
-
 namespace {
 
 std::mutex oplog_tracking_mutex;
@@ -158,8 +146,10 @@ std::optional<std::pair<uint64_t, uint64_t>> claim_local_oplog_cleanup_span() {
  */
 
 // allocate an inflight struct and fill and out some basics.
-Inflight::Inflight(fuse_req_t req, const InflightRuntimePolicy &runtime_policy,
-                   unique_transaction provided)
+template <typename ActionT>
+InflightT<ActionT>::InflightT(fuse_req_t req,
+                              const InflightRuntimePolicy &runtime_policy,
+                              unique_transaction provided)
     : transaction(std::move(provided)), req(req), policy(&runtime_policy) {
   if (uses_oplog()) {
     op_id = allocate_oplog_id();
@@ -172,29 +162,40 @@ Inflight::Inflight(fuse_req_t req, const InflightRuntimePolicy &runtime_policy,
 #endif
 }
 
-AttemptState &Inflight::attempt_state() { return *attempt; }
+template <typename ActionT>
+AttemptStateT<ActionT> &InflightT<ActionT>::attempt_state() {
+  return *attempt;
+}
 
-const AttemptState &Inflight::attempt_state() const { return *attempt; }
+template <typename ActionT>
+const AttemptStateT<ActionT> &InflightT<ActionT>::attempt_state() const {
+  return *attempt;
+}
 
-void Inflight::reset_attempt_state() { attempt = create_attempt_state(); }
+template <typename ActionT> void InflightT<ActionT>::reset_attempt_state() {
+  attempt = create_attempt_state();
+}
 
-void Inflight::track_inode_for_fsync(fuse_ino_t ino) {
+template <typename ActionT>
+void InflightT<ActionT>::track_inode_for_fsync(fuse_ino_t ino) {
   if (fsync_tokens.find(ino) != fsync_tokens.end()) {
     return;
   }
   fsync_tokens.emplace(ino, g_fsync_barrier_table.begin_op(ino));
 }
 
-InflightAction Inflight::oplog_recovery(const OpLogRecord &) {
+template <typename ActionT>
+ActionT InflightT<ActionT>::oplog_recovery(const OpLogRecord &) {
   // it shouldn't be possible to reach this code, anything that
   // opts into oplog usage must override this.
   // TODO enforce in the typesystem, by having separate Inflight
   // subclasses for each ReadWrite value? (and then eliminating
   // the value)
-  return InflightAction::Abort(EIO);
+  return ActionT::Abort(EIO);
 }
 
-bool Inflight::write_oplog_record(OpLogRecord record) {
+template <typename ActionT>
+bool InflightT<ActionT>::write_oplog_record(OpLogRecord record) {
   if (!uses_oplog()) {
     return true;
   }
@@ -209,7 +210,8 @@ bool Inflight::write_oplog_record(OpLogRecord record) {
       fdb_set_protobuf(transaction.get(), pack_oplog_key(pid, *op_id), record));
 }
 
-bool Inflight::write_oplog_result(const OpLogResultVariant &result) {
+template <typename ActionT>
+bool InflightT<ActionT>::write_oplog_result(const OpLogResultVariant &result) {
   OpLogRecord record;
 
   std::visit(
@@ -240,7 +242,7 @@ bool Inflight::write_oplog_result(const OpLogResultVariant &result) {
   return write_oplog_record(std::move(record));
 }
 
-void Inflight::cleanup() {
+template <typename ActionT> void InflightT<ActionT>::cleanup() {
   if (op_id.has_value()) {
     mark_oplog_dead(*op_id);
   }
@@ -267,50 +269,54 @@ void Inflight::cleanup() {
   }
 }
 
-void Inflight::set_on_done(std::function<void()> callback) {
+template <typename ActionT>
+void InflightT<ActionT>::set_on_done(std::function<void()> callback) {
   on_done = std::move(callback);
 }
 
-bool Inflight::should_check_oplog() const {
+template <typename ActionT>
+bool InflightT<ActionT>::should_check_oplog() const {
   return uses_oplog() && commit_unknown_seen;
 }
 
-bool Inflight::uses_oplog() const { return policy->uses_oplog; }
+template <typename ActionT> bool InflightT<ActionT>::uses_oplog() const {
+  return policy->uses_oplog;
+}
 
-InflightAction Inflight::check_oplog_or_issue() {
+template <typename ActionT> ActionT InflightT<ActionT>::check_oplog_or_issue() {
   fdb_bool_t present = 0;
   const uint8_t *val = nullptr;
   int vallen = 0;
   const fdb_error_t err = fdb_future_get_value(
       attempt_state().oplog_fetch.get(), &present, &val, &vallen);
   if (err) {
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
   }
 
   if (!present) {
     // no prior committed result found, continue with normal retry path.
-    InflightCallback next_cb = issue();
+    InflightCallbackT<ActionT> next_cb = issue();
     if (attempt_state().future_queue.empty()) {
       return next_cb();
     }
-    return InflightAction::BeginWait(next_cb);
+    return ActionT::BeginWait(next_cb);
   }
 
   OpLogRecord record;
   if (!record.ParseFromArray(val, vallen) || !record.IsInitialized()) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
   if (!op_id.has_value() || record.op_id() != *op_id) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
   if (record.result_case() == OpLogRecord::RESULT_NOT_SET) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
   return oplog_recovery(record);
 }
 
-void Inflight::start() {
+template <typename ActionT> void InflightT<ActionT>::start() {
   if (!attempt) {
     reset_attempt_state();
   }
@@ -327,10 +333,10 @@ void Inflight::start() {
     if (fdb_error_predicate(FDB_ERROR_PREDICATE_RETRYABLE, err)) {
       (void)retry_with_on_error(err, "configure_transaction");
     } else {
-      InflightAction::trace_fdb_error("ConfigureTransaction", err,
-                                      "configure_transaction failed",
-                                      std::source_location::current());
-      fail_inflight(this, EIO, "configure_transaction failed");
+      ActionT::trace_fdb_error("ConfigureTransaction", err,
+                               "configure_transaction failed",
+                               std::source_location::current());
+      fail(EIO, "configure_transaction failed");
     }
     return;
   }
@@ -338,7 +344,7 @@ void Inflight::start() {
   if (should_check_oplog()) {
     if (!op_id.has_value()) {
       // this should be impossible
-      fail_inflight(this, EIO, "oplog check requested without op_id");
+      fail(EIO, "oplog check requested without op_id");
       return;
     }
     const auto key = pack_oplog_key(pid, *op_id);
@@ -346,7 +352,7 @@ void Inflight::start() {
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
         attempt_state().oplog_fetch);
     attempt_state().cb.emplace(
-        std::bind(&Inflight::check_oplog_or_issue, this));
+        std::bind(&InflightT<ActionT>::check_oplog_or_issue, this));
   } else {
     attempt_state().cb.emplace(issue());
   }
@@ -358,12 +364,14 @@ void Inflight::start() {
   begin_wait();
 }
 
-bool Inflight::retry_with_on_error(fdb_error_t err, const char *source) {
+template <typename ActionT>
+bool InflightT<ActionT>::retry_with_on_error(fdb_error_t err,
+                                             const char *source) {
   // we're here because some fdb function in an Inflight subclass
   // returned an fdb_error_t, then FDB said it was a retryable error, so now
   // we've got to run on_error to either 1) wait (fdb controlled backoff) or 2)
   // perhaps permanently fail
-  if (InflightAction::trace_errors_enabled()) {
+  if (ActionT::trace_errors_enabled()) {
     char op_id_buf[32];
     fprintf(stderr,
             "fdbfs OnErrorBegin: inflight=%p req=%p type=%s op_id=%s "
@@ -381,33 +389,34 @@ bool Inflight::retry_with_on_error(fdb_error_t err, const char *source) {
 
   FDBFuture *nextf = fdb_transaction_on_error(transaction.get(), err);
   if (nextf == nullptr) {
-    fail_inflight(this, EIO, "fdb_transaction_on_error returned nullptr");
+    fail(EIO, "fdb_transaction_on_error returned nullptr");
     return false;
   }
 
   reset_attempt_state();
-  if (fdb_future_set_callback(nextf, fdbfs_error_processor,
+  if (fdb_future_set_callback(nextf, &InflightT<ActionT>::error_processor,
                               static_cast<void *>(this))) {
     // Avoid leaking the on_error future when callback setup fails.
     fdb_future_destroy(nextf);
-    fail_inflight(this, EIO, "fdb_future_set_callback returned an error");
+    fail(EIO, "fdb_future_set_callback returned an error");
     return false;
   }
 
   return true;
 }
 
-InflightAction Inflight::commit(InflightCallback cb) {
+template <typename ActionT>
+ActionT InflightT<ActionT>::commit(InflightCallbackT<ActionT> cb) {
   wait_on_future(fdb_transaction_commit(transaction.get()),
                  attempt_state().commit);
-  return InflightAction::BeginWait(cb);
+  return ActionT::BeginWait(cb);
 }
 
-bool Inflight::run_current_callback() {
+template <typename ActionT> bool InflightT<ActionT>::run_current_callback() {
   if (bool(attempt_state().cb)) {
-    std::function<InflightAction()> f = attempt_state().cb.value();
+    std::function<ActionT()> f = attempt_state().cb.value();
     attempt_state().cb = std::nullopt;
-    InflightAction a = f();
+    ActionT a = f();
     a.perform(this);
 
     if (a.retryable_err.has_value()) {
@@ -440,24 +449,25 @@ bool Inflight::run_current_callback() {
 
   std::cout << "no callback was set for " << typeid(*this).name()
             << " when we needed one" << std::endl;
-  fail_inflight(this, EIO, "no callback was set when we needed one");
+  fail(EIO, "no callback was set when we needed one");
   return false;
 }
 
-void Inflight::future_ready(FDBFuture *f) {
+template <typename ActionT>
+void InflightT<ActionT>::future_ready(FDBFuture *f) {
   if (fuse_req_interrupted(req)) {
-    fail_inflight(this, EINTR, "fuse operation interrupted");
+    fail(EINTR, "fuse operation interrupted");
     return;
   }
 
   if (shut_it_down_forever) {
-    fail_inflight(this, ENOTCONN, "fdbfs commanded to shutdown");
+    fail(ENOTCONN, "fdbfs commanded to shutdown");
     return;
   }
 
   assert(!attempt_state().future_queue.empty());
   if (attempt_state().future_queue.empty()) {
-    fail_inflight(this, EIO, "future_ready called with empty queue");
+    fail(EIO, "future_ready called with empty queue");
     return;
   }
 
@@ -466,7 +476,7 @@ void Inflight::future_ready(FDBFuture *f) {
   attempt_state().future_queue.pop();
   assert(next == f);
   if (next != f) {
-    fail_inflight(this, EIO, "future_ready called for unexpected future");
+    fail(EIO, "future_ready called for unexpected future");
     return;
   }
 
@@ -481,42 +491,53 @@ void Inflight::future_ready(FDBFuture *f) {
   }
 }
 
-void Inflight::begin_wait() {
+template <typename ActionT> void InflightT<ActionT>::begin_wait() {
   if (attempt_state().future_queue.empty()) {
     // we could try to resume processing the transaction, but really this
     // just shouldn't be possible, so i'm inclined to bail on it.
-    fail_inflight(this, EIO, "tried to start waiting on empty future queue");
+    fail(EIO, "tried to start waiting on empty future queue");
     return;
   }
   if (fdb_future_set_callback(attempt_state().future_queue.front(),
-                              fdbfs_error_checker, static_cast<void *>(this))) {
+                              &InflightT<ActionT>::error_checker,
+                              static_cast<void *>(this))) {
     // we don't have a way to deal with this, so destroy the
     // transaction so that nothing leaks. ideally we'd notify
     // fuse at this point that the operation is dead.
-    fail_inflight(this, EIO, "failed to set future callback");
+    fail(EIO, "failed to set future callback");
     return;
   }
 }
 
-void Inflight::wait_on_future(FDBFuture *f, unique_future &dest) {
+template <typename ActionT>
+void InflightT<ActionT>::wait_on_future(FDBFuture *f, unique_future &dest) {
   attempt_state().future_queue.push(f);
   dest.reset(f);
 }
 
-/* If fdbfs_error_checker hits an error, then execution will
- * end up here for that transaction. We give it back to FDB
- * so that it can delay this transaction, or whatever it wants
- * to do, as appropriate.
- */
-extern "C" void fdbfs_error_processor(FDBFuture *f, void *p) {
-  Inflight *inflight = static_cast<Inflight *>(p);
+template <typename ActionT>
+void InflightT<ActionT>::fail(int err, const char *why,
+                              std::source_location loc) {
+  if (err != 0) {
+    ActionT::trace_errno_error("FailInflight", err, why, loc);
+  }
+  if (!suppress_errors) {
+    ActionT::report_failure(this, err);
+  }
+  cleanup();
+  delete this;
+}
+
+template <typename ActionT>
+void InflightT<ActionT>::error_processor(FDBFuture *f, void *p) {
+  auto *inflight = static_cast<InflightT<ActionT> *>(p);
 
   fdb_error_t err = fdb_future_get_error(f);
   // done with this either way.
   fdb_future_destroy(f);
 
   if (err) {
-    if (InflightAction::trace_errors_enabled()) {
+    if (ActionT::trace_errors_enabled()) {
       char op_id_buf[32];
       fprintf(stderr,
               "fdbfs ErrorProcessorBegin: inflight=%p req=%p type=%s "
@@ -528,7 +549,7 @@ extern "C" void fdbfs_error_processor(FDBFuture *f, void *p) {
     }
     // error during an error. foundationdb says that means
     // you should give up. so we'll let fuse know they're hosed.
-    fail_inflight(inflight, EIO, "fdb_transaction_on_error future failed");
+    inflight->fail(EIO, "fdb_transaction_on_error future failed");
     return;
   }
 
@@ -538,19 +559,14 @@ extern "C" void fdbfs_error_processor(FDBFuture *f, void *p) {
   inflight->start();
 }
 
-/*
- * This is the entry point for all FDB callbacks.  So we can
- * centralize our error checking, restart transactions in the event of
- * errors, and enqueue the next step of the transaction into the thread
- * pool for execution.
- */
-extern "C" void fdbfs_error_checker(FDBFuture *f, void *p) {
-  Inflight *inflight = static_cast<Inflight *>(p);
+template <typename ActionT>
+void InflightT<ActionT>::error_checker(FDBFuture *f, void *p) {
+  auto *inflight = static_cast<InflightT<ActionT> *>(p);
 
   fdb_error_t err = fdb_future_get_error(f);
 
   if (err) {
-    if (InflightAction::trace_errors_enabled()) {
+    if (ActionT::trace_errors_enabled()) {
       char op_id_buf[32];
       fprintf(stderr,
               "fdbfs CheckerError: inflight=%p req=%p type=%s op_id=%s "
@@ -571,51 +587,63 @@ extern "C" void fdbfs_error_checker(FDBFuture *f, void *p) {
   pool.push_task([inflight, f]() { inflight->future_ready(f); });
 }
 
-// Inflight_markused
+template class InflightT<FuseInflightAction>;
 
-Inflight_markused::Inflight_markused(fuse_req_t req, uint64_t generation,
-                                     struct fuse_entry_param entry,
-                                     unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)), generation(generation),
-      entry(entry) {}
+// Inflight_markusedT
 
-InflightCallback Inflight_markused::issue() {
+template <typename ActionT>
+Inflight_markusedT<ActionT>::Inflight_markusedT(fuse_req_t req,
+                                                uint64_t generation,
+                                                struct fuse_entry_param entry,
+                                                unique_transaction transaction)
+    : InflightWithAttemptT<AttemptState_markusedT<ActionT>,
+                           InflightPolicyIdempotentWrite, ActionT>(
+          req, std::move(transaction)),
+      generation(generation), entry(entry) {}
+
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_markusedT<ActionT>::issue() {
   auto inode_key = pack_inode_key(entry.ino);
-  wait_on_future(fdb_transaction_get(transaction.get(), inode_key.data(),
-                                     inode_key.size(), 0),
-                 a().inode_fetch);
-  return std::bind(&Inflight_markused::check_inode, this);
+  this->wait_on_future(fdb_transaction_get(this->transaction.get(),
+                                           inode_key.data(), inode_key.size(),
+                                           0),
+                       this->a().inode_fetch);
+  return std::bind(&Inflight_markusedT<ActionT>::check_inode, this);
 }
 
-InflightAction Inflight_markused::check_inode() {
+template <typename ActionT> ActionT Inflight_markusedT<ActionT>::check_inode() {
   fdb_bool_t present = 0;
   const uint8_t *val = nullptr;
   int vallen = 0;
-  fdb_error_t err =
-      fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
+  fdb_error_t err = fdb_future_get_value(this->a().inode_fetch.get(), &present,
+                                         &val, &vallen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   if (!present) {
     (void)decrement_lookup_count(entry.ino, 1);
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
   auto use_key = pack_inode_use_key(entry.ino);
   const uint64_t generation_le = htole64(generation);
-  fdb_transaction_atomic_op(transaction.get(), use_key.data(), use_key.size(),
+  fdb_transaction_atomic_op(this->transaction.get(), use_key.data(),
+                            use_key.size(),
                             reinterpret_cast<const uint8_t *>(&generation_le),
                             sizeof(generation_le), FDB_MUTATION_TYPE_MAX);
-  return commit(std::bind(&Inflight_markused::reply_entry, this));
+  return this->commit(
+      std::bind(&Inflight_markusedT<ActionT>::reply_entry, this));
 }
 
-InflightAction Inflight_markused::reply_entry() {
-  if (fuse_reply_entry(req, &entry) < 0) {
+template <typename ActionT> ActionT Inflight_markusedT<ActionT>::reply_entry() {
+  if (fuse_reply_entry(this->req, &entry) < 0) {
     // if reply failed, kernel won't hold a reference for this lookup.
     auto generation_to_clear = decrement_lookup_count(entry.ino, 1);
     if (generation_to_clear.has_value()) {
       best_effort_clear_inode_use_record(entry.ino, *generation_to_clear);
     }
   }
-  return InflightAction::Ignore();
+  return ActionT::Ignore();
 }
+
+template class Inflight_markusedT<FuseInflightAction>;

@@ -34,16 +34,28 @@ enum SetXattrBehavior {
  * REAL PLAN
  * ???
  */
-struct AttemptState_setxattr : public AttemptState {
+template <typename ActionT>
+struct AttemptState_setxattr : public AttemptStateT<ActionT> {
   unique_future xattr_node_fetch;
 };
 
+template <typename ActionT>
 class Inflight_setxattr
-    : public InflightWithAttempt<AttemptState_setxattr, InflightPolicyWrite> {
+    : public InflightWithAttemptT<AttemptState_setxattr<ActionT>,
+                                  InflightPolicyWrite, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_setxattr<ActionT>,
+                                    InflightPolicyWrite, ActionT>;
+  using Base::a;
+  using Base::commit;
+  using Base::track_inode_for_fsync;
+  using Base::transaction;
+  using Base::wait_on_future;
+  using Base::write_oplog_result;
+
   Inflight_setxattr(fuse_req_t, fuse_ino_t, std::string, std::vector<uint8_t>,
                     SetXattrBehavior, unique_transaction);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
   const fuse_ino_t ino;
@@ -51,35 +63,38 @@ private:
   const std::vector<uint8_t> xattr_value;
   const SetXattrBehavior behavior;
 
-  InflightAction process();
-  InflightAction oplog_recovery(const OpLogRecord &) override;
+  ActionT process();
+  ActionT oplog_recovery(const OpLogRecord &) override;
   bool write_success_oplog_result();
 };
 
-Inflight_setxattr::Inflight_setxattr(fuse_req_t req, fuse_ino_t ino,
-                                     std::string name,
-                                     std::vector<uint8_t> xattr_value,
-                                     SetXattrBehavior behavior,
-                                     unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)), ino(ino),
+template <typename ActionT>
+Inflight_setxattr<ActionT>::Inflight_setxattr(
+    fuse_req_t req, fuse_ino_t ino, std::string name,
+    std::vector<uint8_t> xattr_value, SetXattrBehavior behavior,
+    unique_transaction transaction)
+    : Base(req, std::move(transaction)), ino(ino),
       name(std::move(name)), xattr_value(std::move(xattr_value)),
       behavior(behavior) {
   track_inode_for_fsync(ino);
 }
 
-bool Inflight_setxattr::write_success_oplog_result() {
+template <typename ActionT>
+bool Inflight_setxattr<ActionT>::write_success_oplog_result() {
   OpLogResultOK result;
   return write_oplog_result(result);
 }
 
-InflightAction Inflight_setxattr::oplog_recovery(const OpLogRecord &record) {
+template <typename ActionT>
+ActionT Inflight_setxattr<ActionT>::oplog_recovery(const OpLogRecord &record) {
   if (record.result_case() != OpLogRecord::kOk) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
-  return InflightAction::OK();
+  return ActionT::OK();
 }
 
-InflightAction Inflight_setxattr::process() {
+template <typename ActionT>
+ActionT Inflight_setxattr<ActionT>::process() {
   fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
@@ -88,35 +103,35 @@ InflightAction Inflight_setxattr::process() {
   err =
       fdb_future_get_value(a().xattr_node_fetch.get(), &present, &val, &vallen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   XAttrRecord xattr;
   if (present) {
     if (behavior & CanReplace) {
       if (!xattr.ParseFromArray(val, vallen))
-        return InflightAction::Abort(EIO);
+        return ActionT::Abort(EIO);
     } else {
-      return InflightAction::Abort(EEXIST);
+      return ActionT::Abort(EEXIST);
     }
   } else { // xattr not present
     if (!(behavior & CanCreate)) {
-      return InflightAction::Abort(ENODATA);
+      return ActionT::Abort(ENODATA);
     }
   }
 
   auto encoded = encode_logical_payload(std::span<const uint8_t>(xattr_value));
   if (!encoded)
-    return InflightAction::Abort(encoded.error());
+    return ActionT::Abort(encoded.error());
   if (encoded->true_block_size >
       static_cast<size_t>(std::numeric_limits<uint32_t>::max())) {
-    return InflightAction::Abort(EOVERFLOW);
+    return ActionT::Abort(EOVERFLOW);
   }
 
   xattr.set_size(static_cast<uint32_t>(encoded->true_block_size));
   xattr.set_encoding(encoded->encoding);
   // update xattr node metadata
   if (!fdb_set_protobuf(transaction.get(), pack_xattr_key(ino, name), xattr))
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
 
   // set/clear xattr data payload
   const auto data_key = pack_xattr_data_key(ino, name);
@@ -128,13 +143,14 @@ InflightAction Inflight_setxattr::process() {
   }
 
   if (!write_success_oplog_result()) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
-  return commit(InflightAction::OK);
+  return commit(ActionT::OK);
 }
 
-InflightCallback Inflight_setxattr::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_setxattr<ActionT>::issue() {
   const auto key = pack_xattr_key(ino, name);
 
   // and request just that xattr node
@@ -142,7 +158,7 @@ InflightCallback Inflight_setxattr::issue() {
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
       a().xattr_node_fetch);
 
-  return std::bind(&Inflight_setxattr::process, this);
+  return std::bind(&Inflight_setxattr<ActionT>::process, this);
 }
 
 extern "C" void fdbfs_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
@@ -159,7 +175,7 @@ extern "C" void fdbfs_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
   std::string sname(name);
   std::vector<uint8_t> vvalue(value, value + size);
 
-  Inflight_setxattr *inflight = new Inflight_setxattr(
+  auto *inflight = new Inflight_setxattr<FuseInflightAction>(
       req, ino, sname, vvalue, behavior, make_transaction());
   inflight->start();
 }

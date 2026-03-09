@@ -14,7 +14,8 @@
 
 #include "util.h"
 
-class Inflight;
+class FuseInflightAction;
+template <typename ActionT> class InflightT;
 
 // Per-filehandle serializer used to enforce request ordering for operations
 // that share a FUSE file handle.
@@ -30,7 +31,7 @@ public:
 
   // Enqueue an inflight that should run under this serializer.
   [[nodiscard]] bool
-  enqueue_inflight(Inflight *inflight,
+  enqueue_inflight(InflightT<FuseInflightAction> *inflight,
                    std::optional<ByteRange> range =
                        ByteRange::closed(0, std::numeric_limits<off_t>::max()));
 
@@ -41,7 +42,7 @@ public:
                                      bool close_after_enqueue = false);
 
   // Called by inflight completion path to release the current slot.
-  void on_inflight_done(Inflight *inflight);
+  void on_inflight_done(InflightT<FuseInflightAction> *inflight);
 
   // Prevent further enqueue operations.
   void close();
@@ -56,7 +57,7 @@ private:
 
   struct PendingItem {
     PendingKind kind;
-    Inflight *inflight = nullptr;
+    InflightT<FuseInflightAction> *inflight = nullptr;
     std::function<void()> callback;
     bool readonly;
     ByteRange range = ByteRange::closed(0, std::numeric_limits<off_t>::max());
@@ -67,7 +68,7 @@ private:
 
   mutable std::mutex mu;
   std::deque<PendingItem> queue;
-  std::unordered_map<Inflight *, PendingItem> active;
+  std::unordered_map<InflightT<FuseInflightAction> *, PendingItem> active;
 
   boost::icl::split_interval_map<off_t, int> inflight_reads;
   boost::icl::split_interval_map<off_t, int> inflight_writes;

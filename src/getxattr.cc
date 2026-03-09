@@ -25,32 +25,44 @@
  * REAL PLAN
  * ???
  */
-struct AttemptState_getxattr : public AttemptState {
+template <typename ActionT>
+struct AttemptState_getxattr : public AttemptStateT<ActionT> {
   unique_future xattr_node_fetch;
   unique_future xattr_data_fetch;
 };
 
-class Inflight_getxattr : public InflightWithAttempt<AttemptState_getxattr, InflightPolicyReadOnly> {
+template <typename ActionT>
+class Inflight_getxattr
+    : public InflightWithAttemptT<AttemptState_getxattr<ActionT>,
+                                  InflightPolicyReadOnly, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_getxattr<ActionT>,
+                                    InflightPolicyReadOnly, ActionT>;
+  using Base::a;
+  using Base::transaction;
+  using Base::wait_on_future;
+
   Inflight_getxattr(fuse_req_t, fuse_ino_t, std::string, size_t,
                     unique_transaction);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
   const fuse_ino_t ino;
   const std::string name;
   const size_t maxsize;
 
-  InflightAction process();
+  ActionT process();
 };
 
-Inflight_getxattr::Inflight_getxattr(fuse_req_t req, fuse_ino_t ino,
-                                     std::string name, size_t maxsize,
-                                     unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)),
+template <typename ActionT>
+Inflight_getxattr<ActionT>::Inflight_getxattr(
+    fuse_req_t req, fuse_ino_t ino, std::string name, size_t maxsize,
+    unique_transaction transaction)
+    : Base(req, std::move(transaction)),
       ino(ino), name(name), maxsize(maxsize) {}
 
-InflightAction Inflight_getxattr::process() {
+template <typename ActionT>
+ActionT Inflight_getxattr<ActionT>::process() {
   fdb_bool_t present = 0;
   const uint8_t *val = nullptr;
   int vallen;
@@ -59,16 +71,16 @@ InflightAction Inflight_getxattr::process() {
   err =
       fdb_future_get_value(a().xattr_node_fetch.get(), &present, &val, &vallen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   if (present) {
     // decode xattr node metadata to drive payload decoding
     XAttrRecord xattr;
     if (!xattr.ParseFromArray(val, vallen)) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
     if (!xattr.IsInitialized() || !xattr.has_size()) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
 
     const XAttrEncoding encoding = xattr.encoding();
@@ -76,16 +88,16 @@ InflightAction Inflight_getxattr::process() {
     err = fdb_future_get_value(a().xattr_data_fetch.get(), &present, &val,
                                &vallen);
     if (err)
-      return InflightAction::FDBError(err);
+      return ActionT::FDBError(err);
 
     const size_t true_size = static_cast<size_t>(xattr.size());
 
     if (maxsize == 0) {
-      return InflightAction::XattrSize(true_size);
+      return ActionT::XattrSize(true_size);
     }
 
     if (true_size > maxsize) {
-      return InflightAction::Abort(ERANGE);
+      return ActionT::Abort(ERANGE);
     }
 
     std::span<const uint8_t> stored_payload;
@@ -100,18 +112,19 @@ InflightAction Inflight_getxattr::process() {
     auto decode_ret = decode_logical_payload_slice(
         encoding, stored_payload, true_size, 0, std::span<uint8_t>(buffer));
     if (!decode_ret) {
-      return InflightAction::Abort(decode_ret.error());
+      return ActionT::Abort(decode_ret.error());
     }
     if (decode_ret.value() != true_size) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
-    return InflightAction::Buf(buffer);
+    return ActionT::Buf(buffer);
   } else {
-    return InflightAction::Abort(ENODATA);
+    return ActionT::Abort(ENODATA);
   }
 }
 
-InflightCallback Inflight_getxattr::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_getxattr<ActionT>::issue() {
   // we could just not fetch the node, since it doesn't
   // currently make any difference. but, we'll maybe need it
   // sooner or later, so we'll leave it.
@@ -129,7 +142,7 @@ InflightCallback Inflight_getxattr::issue() {
         a().xattr_data_fetch);
   }
 
-  return std::bind(&Inflight_getxattr::process, this);
+  return std::bind(&Inflight_getxattr<ActionT>::process, this);
 }
 
 extern "C" void fdbfs_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
@@ -137,7 +150,7 @@ extern "C" void fdbfs_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
   if (filename_length_check(req, name))
     return;
 
-  Inflight_getxattr *inflight =
-      new Inflight_getxattr(req, ino, name, size, make_transaction());
+  auto *inflight = new Inflight_getxattr<FuseInflightAction>(
+      req, ino, name, size, make_transaction());
   inflight->start();
 }

@@ -22,32 +22,44 @@
  * ???
  */
 
-struct AttemptState_statfs : public AttemptState {
+template <typename ActionT>
+struct AttemptState_statfs : public AttemptStateT<ActionT> {
   unique_future status_fetch;
 };
 
-class Inflight_statfs : public InflightWithAttempt<AttemptState_statfs, InflightPolicyReadOnly> {
+template <typename ActionT>
+class Inflight_statfs
+    : public InflightWithAttemptT<AttemptState_statfs<ActionT>,
+                                  InflightPolicyReadOnly, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_statfs<ActionT>,
+                                    InflightPolicyReadOnly, ActionT>;
+  using Base::a;
+  using Base::transaction;
+  using Base::wait_on_future;
+
   Inflight_statfs(fuse_req_t, unique_transaction);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
-  InflightAction process_status();
+  ActionT process_status();
 };
 
-Inflight_statfs::Inflight_statfs(fuse_req_t req, unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)) {}
+template <typename ActionT>
+Inflight_statfs<ActionT>::Inflight_statfs(fuse_req_t req,
+                                          unique_transaction transaction)
+    : Base(req, std::move(transaction)) {}
 
-InflightAction Inflight_statfs::process_status() {
+template <typename ActionT> ActionT Inflight_statfs<ActionT>::process_status() {
   fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
   fdb_error_t err =
       fdb_future_get_value(a().status_fetch.get(), &present, &val, &vallen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
   if (!present)
-    return InflightAction::Abort(ENOSYS);
+    return ActionT::Abort(ENOSYS);
 
   const std::string buffer(reinterpret_cast<const char *>(val), vallen);
 
@@ -59,17 +71,17 @@ InflightAction Inflight_statfs::process_status() {
   // can go wrong at almost every step. 🙄
   nlohmann::json status = nlohmann::json::parse(buffer, nullptr, false);
   if (status.is_discarded())
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
 
   // very rough estimation of space used and space available in the
   // fdb cluster
 
   auto cluster_it = status.find("cluster");
   if ((cluster_it == status.end()) || !cluster_it->is_object())
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   auto processes_it = cluster_it->find("processes");
   if ((processes_it == cluster_it->end()) || !processes_it->is_object())
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   auto &processes = *processes_it;
 
   for (auto it = processes.begin(); it != processes.end(); ++it) {
@@ -114,19 +126,21 @@ InflightAction Inflight_statfs::process_status() {
   output->f_flag = 0;
   output->f_namemax = 1024;
 
-  return InflightAction::Statfs(std::move(output));
+  return ActionT::Statfs(std::move(output));
 }
 
-InflightCallback Inflight_statfs::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_statfs<ActionT>::issue() {
   wait_on_future(fdb_transaction_get(
                      transaction.get(),
                      reinterpret_cast<const uint8_t *>("\xff\xff/status/json"),
                      14, 1),
                  a().status_fetch);
-  return std::bind(&Inflight_statfs::process_status, this);
+  return std::bind(&Inflight_statfs<ActionT>::process_status, this);
 }
 
 extern "C" void fdbfs_statfs(fuse_req_t req, fuse_ino_t ino) {
-  Inflight_statfs *inflight = new Inflight_statfs(req, make_transaction());
+  auto *inflight =
+      new Inflight_statfs<FuseInflightAction>(req, make_transaction());
   inflight->start();
 }

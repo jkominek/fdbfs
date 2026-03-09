@@ -37,7 +37,8 @@
  * handle multiple futures in the end.
  */
 
-struct AttemptState_read : public AttemptState {
+template <typename ActionT>
+struct AttemptState_read : public AttemptStateT<ActionT> {
   unique_future inode_fetch;
   unique_future range_fetch;
   range_keys requested_range;
@@ -46,42 +47,53 @@ struct AttemptState_read : public AttemptState {
   std::vector<uint8_t> buffer;
 };
 
+template <typename ActionT>
 class Inflight_read
-    : public InflightWithAttempt<AttemptState_read, InflightPolicyReadOnly> {
+    : public InflightWithAttemptT<AttemptState_read<ActionT>,
+                                  InflightPolicyReadOnly, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_read<ActionT>,
+                                    InflightPolicyReadOnly, ActionT>;
+  using Base::a;
+  using Base::transaction;
+  using Base::wait_on_future;
+
   Inflight_read(fuse_req_t, fuse_ino_t, size_t, off_t, unique_transaction);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
-  InflightAction callback();
+  ActionT callback();
 
   const fuse_ino_t ino;
   const size_t requested_size; // size of the read
   const off_t off;             // offset into file
 };
 
-Inflight_read::Inflight_read(fuse_req_t req, fuse_ino_t ino, size_t size,
-                             off_t off, unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)), ino(ino),
+template <typename ActionT>
+Inflight_read<ActionT>::Inflight_read(fuse_req_t req, fuse_ino_t ino,
+                                      size_t size, off_t off,
+                                      unique_transaction transaction)
+    : Base(req, std::move(transaction)), ino(ino),
       requested_size(size), off(off) {
   a().buffer.assign(requested_size + 32, 0);
 }
 
-InflightAction Inflight_read::callback() {
+template <typename ActionT>
+ActionT Inflight_read<ActionT>::callback() {
   const uint8_t *val;
   int vallen;
   fdb_bool_t present;
   fdb_error_t err;
   err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
   if (!present) {
-    return InflightAction::Abort(EBADF);
+    return ActionT::Abort(EBADF);
   }
   INodeRecord inode;
   inode.ParseFromArray(val, vallen);
   if (!inode.IsInitialized()) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
   const FDBKeyValue *kvs;
@@ -90,13 +102,13 @@ InflightAction Inflight_read::callback() {
   err = fdb_future_get_keyvalue_array(a().range_fetch.get(), &kvs, &kvcount,
                                       &more);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   unique_future next_range_fetch;
   if (more) {
     if (kvcount == 0) {
       // probably shouldn't be possible for (more)&&(kvcount==0), but, eh
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
     auto last_kv = &kvs[kvcount - 1];
 
@@ -120,7 +132,7 @@ InflightAction Inflight_read::callback() {
   const uint64_t uoff = static_cast<uint64_t>(off);
   // read starting at or after the end of the file should EOF
   if (uoff >= file_size)
-    return InflightAction::Buf({}, 0);
+    return ActionT::Buf({}, 0);
   const uint64_t avail64 = file_size - uoff;
   const size_t avail =
       (avail64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
@@ -128,7 +140,7 @@ InflightAction Inflight_read::callback() {
           : static_cast<size_t>(avail64);
   const size_t size = std::min(requested_size, avail);
   if (size == 0)
-    return InflightAction::Buf({}, 0);
+    return ActionT::Buf({}, 0);
 
   for (int i = 0; i < kvcount; i++) {
     const FDBKeyValue kv = kvs[i];
@@ -150,7 +162,7 @@ InflightAction Inflight_read::callback() {
       const auto dret =
           decode_block(&kv, block_off, std::span<uint8_t>(a().buffer), size);
       if (!dret) {
-        return InflightAction::Abort(EIO);
+        return ActionT::Abort(EIO);
       }
     } else {
       // we need an offset into the target buffer, as our block
@@ -163,20 +175,21 @@ InflightAction Inflight_read::callback() {
       auto out = std::span<uint8_t>(a().buffer).subspan(bufferoff);
       const auto dret = decode_block(&kv, 0, out, size - bufferoff);
       if (!dret) {
-        return InflightAction::Abort(EIO);
+        return ActionT::Abort(EIO);
       }
     }
   }
 
   if (more) {
     a().range_fetch = std::move(next_range_fetch);
-    return InflightAction::BeginWait(std::bind(&Inflight_read::callback, this));
+    return ActionT::BeginWait(std::bind(&Inflight_read<ActionT>::callback, this));
   } else {
-    return InflightAction::Buf(a().buffer, size);
+    return ActionT::Buf(a().buffer, size);
   }
 }
 
-InflightCallback Inflight_read::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_read<ActionT>::issue() {
   // we need to know how large the file is, so as to not read off the end.
   const auto key = pack_inode_key(ino);
   wait_on_future(
@@ -195,7 +208,7 @@ InflightCallback Inflight_read::issue() {
                                             a().requested_range.second.size()),
           0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
       a().range_fetch);
-  return std::bind(&Inflight_read::callback, this);
+  return std::bind(&Inflight_read<ActionT>::callback, this);
 }
 
 extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
@@ -218,8 +231,8 @@ extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
   // given inode, figure out the appropriate key range, and
   // start reading it, filling it into a buffer to be sent back
   // with fuse_reply_buf
-  Inflight_read *inflight =
-      new Inflight_read(req, ino, size, off, make_transaction());
+  auto *inflight =
+      new Inflight_read<FuseInflightAction>(req, ino, size, off, make_transaction());
   auto &serializer = fh->serializer;
   if (!serializer.enqueue_inflight(inflight,
                                    offset_size_to_byte_range(off, size))) {

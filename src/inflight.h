@@ -70,31 +70,26 @@ using OpLogResultVariant =
 [[nodiscard]] extern std::optional<std::pair<uint64_t, uint64_t>>
 claim_local_oplog_cleanup_span();
 
-class InflightAction;
+template <typename ActionT> using InflightCallbackT = std::function<ActionT()>;
 
-typedef std::function<InflightAction()> InflightCallback;
-
-extern "C" void fdbfs_error_processor(FDBFuture *, void *);
-extern "C" void fdbfs_error_checker(FDBFuture *, void *);
-
-struct AttemptState {
-  std::optional<InflightCallback> cb;
+template <typename ActionT> struct AttemptStateT {
+  std::optional<InflightCallbackT<ActionT>> cb;
   unique_future commit;
   unique_future oplog_fetch;
   std::queue<FDBFuture *> future_queue;
-  virtual ~AttemptState() = default;
+  virtual ~AttemptStateT() = default;
 };
 
-class Inflight {
+template <typename ActionT> class InflightT {
 public:
   // issuer is what we'll have to run if the future fails.
   // it'll expect the transaction to have been reset
   // (which is guaranteed by fdb)
-  [[nodiscard]] virtual InflightCallback issue() = 0;
+  [[nodiscard]] virtual InflightCallbackT<ActionT> issue() = 0;
 
   void future_ready(FDBFuture *);
 
-  virtual ~Inflight() = default;
+  virtual ~InflightT() = default;
 
   // the transaction we're tied to. will we ever want
   // two separate chains of computation using the same
@@ -108,7 +103,7 @@ public:
 
   void start();
 
-  InflightAction commit(InflightCallback);
+  ActionT commit(InflightCallbackT<ActionT>);
 
   // run before delete, in case there is anything a subclass
   // wants to take care of.
@@ -117,21 +112,22 @@ public:
 
   inline ReadWrite read_write() { return policy->read_write; };
 
+  AttemptStateT<ActionT> &attempt_state();
+  const AttemptStateT<ActionT> &attempt_state() const;
+
 protected:
   // constructor
-  Inflight(fuse_req_t, const InflightRuntimePolicy &, unique_transaction);
+  InflightT(fuse_req_t, const InflightRuntimePolicy &, unique_transaction);
 
   // Per-attempt transaction configuration hook. Called from start() before any
   // reads/writes (including oplog checks).
   [[nodiscard]] virtual fdb_error_t configure_transaction() { return 0; }
 
   void wait_on_future(FDBFuture *, unique_future &);
-  [[nodiscard]] virtual std::unique_ptr<AttemptState>
+  [[nodiscard]] virtual std::unique_ptr<AttemptStateT<ActionT>>
   create_attempt_state() = 0;
   void track_inode_for_fsync(fuse_ino_t ino);
-  [[nodiscard]] virtual InflightAction oplog_recovery(const OpLogRecord &);
-  AttemptState &attempt_state();
-  const AttemptState &attempt_state() const;
+  [[nodiscard]] virtual ActionT oplog_recovery(const OpLogRecord &);
   void reset_attempt_state();
   [[nodiscard]] bool should_check_oplog() const;
   [[nodiscard]] bool uses_oplog() const;
@@ -146,23 +142,24 @@ private:
   std::unordered_map<fuse_ino_t, FsyncBarrierTable::Token> fsync_tokens;
   bool commit_unknown_seen = false;
   std::optional<uint64_t> op_id;
-  std::unique_ptr<AttemptState> attempt;
-  [[nodiscard]] InflightAction check_oplog_or_issue();
+  std::unique_ptr<AttemptStateT<ActionT>> attempt;
+  [[nodiscard]] ActionT check_oplog_or_issue();
   bool run_current_callback();
   void begin_wait();
   bool retry_with_on_error(fdb_error_t err, const char *source);
+  void fail(int err, const char *why,
+            std::source_location loc = std::source_location::current());
+  static void error_processor(FDBFuture *, void *);
+  static void error_checker(FDBFuture *, void *);
 
 #if DEBUG
   struct timespec clockstart;
 #endif
 
-  friend class InflightAction;
-  friend void fdbfs_error_processor(FDBFuture *, void *);
-  friend void fdbfs_error_checker(FDBFuture *, void *);
 };
 
-template <typename AttemptT, typename Policy>
-class InflightWithAttempt : public Inflight {
+template <typename AttemptT, typename Policy, typename ActionT>
+class InflightWithAttemptT : public InflightT<ActionT> {
 public:
   static constexpr InflightRuntimePolicy runtime_policy{
       .read_write = Policy::read_write,
@@ -170,52 +167,49 @@ public:
       .uses_oplog = Policy::uses_oplog,
   };
 
-  InflightWithAttempt(fuse_req_t req, unique_transaction transaction)
-      : Inflight(req, runtime_policy, std::move(transaction)) {
-    reset_attempt_state();
+  InflightWithAttemptT(fuse_req_t req, unique_transaction transaction)
+      : InflightT<ActionT>(req, runtime_policy, std::move(transaction)) {
+    this->reset_attempt_state();
   }
 
 protected:
-  AttemptT &a() { return static_cast<AttemptT &>(attempt_state()); }
+  AttemptT &a() { return static_cast<AttemptT &>(this->attempt_state()); }
   const AttemptT &a() const {
-    return static_cast<const AttemptT &>(attempt_state());
+    return static_cast<const AttemptT &>(this->attempt_state());
   }
 
 private:
-  std::unique_ptr<AttemptState> create_attempt_state() override {
+  std::unique_ptr<AttemptStateT<ActionT>> create_attempt_state() override {
     return std::make_unique<AttemptT>();
   }
 };
 
-struct AttemptState_markused : public AttemptState {
+template <typename ActionT>
+struct AttemptState_markusedT : public AttemptStateT<ActionT> {
   unique_future inode_fetch;
 };
 
-class Inflight_markused
-    : public InflightWithAttempt<AttemptState_markused,
-                                 InflightPolicyIdempotentWrite> {
+template <typename ActionT>
+class Inflight_markusedT
+    : public InflightWithAttemptT<AttemptState_markusedT<ActionT>,
+                                  InflightPolicyIdempotentWrite, ActionT> {
 public:
-  Inflight_markused(fuse_req_t, uint64_t, struct fuse_entry_param,
-                    unique_transaction);
-  InflightCallback issue();
+  Inflight_markusedT(fuse_req_t, uint64_t, struct fuse_entry_param,
+                     unique_transaction);
+  InflightCallbackT<ActionT> issue();
 
 private:
-  InflightAction check_inode();
-  InflightAction reply_entry();
+  ActionT check_inode();
+  ActionT reply_entry();
 
   const uint64_t generation;
   const struct fuse_entry_param entry;
 };
 
-// TODO consider how we might pull the FUSE bits out of these,
-// or otherwise abstract what function is being called when one
-// of these is 'executed', so that we can swap in a different
-// back end for testing, or other fancy things
-// Make InflightAction a virtual base class, and have, for instance,
-// a FUSEInflightAction which is passed in to the function, and it
-// can call methods off of that.
-class InflightAction {
+class FuseInflightAction {
 public:
+  using Self = FuseInflightAction;
+
   static bool trace_errors_enabled() {
     static const bool enabled = (getenv("FDBFS_TRACE_ERRORS") != nullptr);
     return enabled;
@@ -238,23 +232,26 @@ public:
             loc.function_name(), (why && why[0]) ? " why=" : "",
             (why && why[0]) ? why : "");
   }
-  static InflightAction BeginWait(InflightCallback newcb) {
-    return InflightAction(false, true, false, [newcb](Inflight *i) {
+  static void report_failure(InflightT<Self> *i, int err) {
+    fuse_reply_err(i->req, err);
+  }
+  static Self BeginWait(InflightCallbackT<Self> newcb) {
+    return Self(false, true, false, [newcb](InflightT<Self> *i) {
       i->attempt_state().cb.emplace(newcb);
     });
   }
   // Error surfaced from fdb_transaction_* API calls where FoundationDB expects
   // us to run fdb_transaction_on_error for retryable codes.
-  static InflightAction FDBTransactionError(
+  static Self FDBTransactionError(
       fdb_error_t err, const char *why = "",
       std::source_location loc = std::source_location::current()) {
     trace_fdb_error("FDBTransactionError", err, why, loc);
     if (fdb_error_predicate(FDB_ERROR_PREDICATE_RETRYABLE, err)) {
       // retryable FDB errors must flow through fdb_transaction_on_error.
-      return InflightAction(false, false, false, [](Inflight *) {}, err);
+      return Self(false, false, false, [](InflightT<Self> *) {}, err);
     } else {
       // can't be retried, surface an error.
-      return InflightAction(true, false, false, [](Inflight *i) {
+      return Self(true, false, false, [](InflightT<Self> *i) {
         // NOTE we could, perhaps, improve this slightly by digging out
         // a list of fdb_error_t values from the code and doing a switch
         // on them, but that's not stable, and wouldn't add much value.
@@ -267,44 +264,45 @@ public:
   // surfaces). By the time we are decoding a ready future, transaction errors
   // should already have been routed via fdb_future_get_error in the checker.
   // Treat these as internal failures, not on_error retry points.
-  static InflightAction
+  static Self
   FDBError(fdb_error_t err, const char *why = "",
            std::source_location loc = std::source_location::current()) {
     trace_fdb_error("FDBError", err, why, loc);
-    return InflightAction::Abort(EIO, why, loc);
+    return Self::Abort(EIO, why, loc);
   }
-  static InflightAction Restart() {
+  static Self Restart() {
     // TODO someday track how many restarts we've done, so that after
     // N of them, we can switch to an abort?
-    return InflightAction(false, false, true, [](Inflight *) {});
+    return Self(false, false, true, [](InflightT<Self> *) {});
   }
-  static InflightAction None() {
-    return InflightAction(true, false, false,
-                          [](Inflight *i) { fuse_reply_none(i->req); });
+  static Self None() {
+    return Self(true, false, false,
+                [](InflightT<Self> *i) { fuse_reply_none(i->req); });
   };
-  static InflightAction Ignore() {
-    return InflightAction(true, false, false, [](Inflight *i) {
+  static Self Ignore() {
+    return Self(true, false, false, [](InflightT<Self> *i) {
 
     });
   };
-  static InflightAction OK() {
-    return InflightAction(true, false, false,
-                          [](Inflight *i) { fuse_reply_err(i->req, 0); });
+  static Self OK() {
+    return Self(true, false, false,
+                [](InflightT<Self> *i) { fuse_reply_err(i->req, 0); });
   };
-  static InflightAction
+  static Self
   Abort(int err, const char *why = "",
         std::source_location loc = std::source_location::current()) {
     trace_errno_error("Abort", err, why, loc);
-    return InflightAction(true, false, false,
-                          [err](Inflight *i) { fuse_reply_err(i->req, err); });
+    return Self(true, false, false,
+                [err](InflightT<Self> *i) { fuse_reply_err(i->req, err); });
   }
-  static InflightAction Entry(struct fuse_entry_param e) {
-    return InflightAction(true, false, false, [e](Inflight *i) {
+  static Self Entry(struct fuse_entry_param e) {
+    return Self(true, false, false, [e](InflightT<Self> *i) {
       auto generation = increment_lookup_count(e.ino);
       if (generation.has_value()) {
         // first lookup for this inode in local kernel cache; publish
         // a use record before replying to fuse.
-        (new Inflight_markused(i->req, *generation, e, make_transaction()))
+        (new Inflight_markusedT<Self>(i->req, *generation, e,
+                                      make_transaction()))
             ->start();
       } else {
         // already known locally; no new use record needed.
@@ -312,61 +310,60 @@ public:
       }
     });
   }
-  static InflightAction Attr(struct stat attr) {
-    return InflightAction(true, false, false, [attr](Inflight *i) {
+  static Self Attr(struct stat attr) {
+    return Self(true, false, false, [attr](InflightT<Self> *i) {
       fuse_reply_attr(i->req, &attr, 0.0);
     });
   }
-  static InflightAction Open(fuse_ino_t ino, struct fuse_file_info fi) {
-    return InflightAction(true, false, false, [ino, fi](Inflight *i) mutable {
+  static Self Open(fuse_ino_t ino, struct fuse_file_info fi) {
+    return Self(true, false, false, [ino, fi](InflightT<Self> *i) mutable {
       (void)reply_open_with_handle(i->req, ino, &fi);
     });
   }
-  static InflightAction Buf(std::vector<uint8_t> buf, int actual_size = -1) {
+  static Self Buf(std::vector<uint8_t> buf, int actual_size = -1) {
     // Note, per the default value for actual_size, we might receive
     // a buffer which is larger than the amount of useful/valid data
     // in it. By passing in an actual_size value, calling code can
     // restrict the amount of buf which is passed along.
-    return InflightAction(true, false, false, [buf, actual_size](Inflight *i) {
+    return Self(true, false, false, [buf, actual_size](InflightT<Self> *i) {
+      assert(actual_size < 0 || static_cast<size_t>(actual_size) <= buf.size());
       fuse_reply_buf(i->req, reinterpret_cast<const char *>(buf.data()),
                      (actual_size >= 0) ? actual_size : buf.size());
     });
   }
-  static InflightAction Readlink(std::string name) {
-    return InflightAction(true, false, false, [name](Inflight *i) {
+  static Self Readlink(std::string name) {
+    return Self(true, false, false, [name](InflightT<Self> *i) {
       fuse_reply_readlink(i->req, name.c_str());
     });
   }
-  static InflightAction Write(size_t size) {
-    return InflightAction(true, false, false, [size](Inflight *i) {
-      fuse_reply_write(i->req, size);
-    });
+  static Self Write(size_t size) {
+    return Self(true, false, false,
+                [size](InflightT<Self> *i) { fuse_reply_write(i->req, size); });
   }
-  static InflightAction Statfs(std::shared_ptr<struct statvfs> statbuf) {
-    return InflightAction(true, false, false, [statbuf](Inflight *i) {
+  static Self Statfs(std::shared_ptr<struct statvfs> statbuf) {
+    return Self(true, false, false, [statbuf](InflightT<Self> *i) {
       fuse_reply_statfs(i->req, statbuf.get());
     });
   }
-  static InflightAction XattrSize(ssize_t size) {
-    return InflightAction(true, false, false, [size](Inflight *i) {
-      fuse_reply_xattr(i->req, size);
-    });
+  static Self XattrSize(ssize_t size) {
+    return Self(true, false, false,
+                [size](InflightT<Self> *i) { fuse_reply_xattr(i->req, size); });
   }
 
 protected:
-  InflightAction(bool delete_this, bool begin_wait, bool restart,
-                 std::function<void(Inflight *)> perform,
-                 std::optional<fdb_error_t> retryable_err = std::nullopt)
+  FuseInflightAction(bool delete_this, bool begin_wait, bool restart,
+                     std::function<void(InflightT<Self> *)> perform,
+                     std::optional<fdb_error_t> retryable_err = std::nullopt)
       : delete_this(delete_this), begin_wait(begin_wait), restart(restart),
         perform(std::move(perform)), retryable_err(retryable_err) {};
 
   bool delete_this = false;
   bool begin_wait = false;
   bool restart = false;
-  std::function<void(Inflight *)> perform;
+  std::function<void(InflightT<Self> *)> perform;
   std::optional<fdb_error_t> retryable_err;
 
-  friend class Inflight;
+  friend class InflightT<Self>;
 };
 
 #endif

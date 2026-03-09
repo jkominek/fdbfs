@@ -19,28 +19,39 @@
  * forget
  *************************************************************
  */
-struct AttemptState_forget : public AttemptState {};
+template <typename ActionT>
+struct AttemptState_forget : public AttemptStateT<ActionT> {};
 struct ForgetEntry {
   fuse_ino_t ino;
   uint64_t generation;
 };
 
-class Inflight_forget : public InflightWithAttempt<AttemptState_forget, InflightPolicyIdempotentWrite> {
+template <typename ActionT>
+class Inflight_forget
+    : public InflightWithAttemptT<AttemptState_forget<ActionT>,
+                                  InflightPolicyIdempotentWrite, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_forget<ActionT>,
+                                    InflightPolicyIdempotentWrite, ActionT>;
+  using Base::a;
+  using Base::transaction;
+  using Base::wait_on_future;
+
   Inflight_forget(fuse_req_t, std::vector<ForgetEntry>, unique_transaction);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
   const std::vector<ForgetEntry> entries;
 };
 
-Inflight_forget::Inflight_forget(fuse_req_t req,
-                                 std::vector<ForgetEntry> entries,
-                                 unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)),
-      entries(std::move(entries)) {}
+template <typename ActionT>
+Inflight_forget<ActionT>::Inflight_forget(fuse_req_t req,
+                                          std::vector<ForgetEntry> entries,
+                                          unique_transaction transaction)
+    : Base(req, std::move(transaction)), entries(std::move(entries)) {}
 
-InflightCallback Inflight_forget::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_forget<ActionT>::issue() {
   for (const auto &entry : entries) {
     const auto key = pack_inode_use_key(entry.ino);
     const uint64_t generation_le = htole64(entry.generation);
@@ -56,7 +67,7 @@ InflightCallback Inflight_forget::issue() {
   }
 
   wait_on_future(fdb_transaction_commit(transaction.get()), a().commit);
-  return InflightAction::None;
+  return ActionT::None;
 }
 
 extern "C" void fdbfs_forget(fuse_req_t req, fuse_ino_t ino, uint64_t ncount) {
@@ -65,8 +76,8 @@ extern "C" void fdbfs_forget(fuse_req_t req, fuse_ino_t ino, uint64_t ncount) {
   if (generation.has_value()) {
     std::vector<ForgetEntry> entries(1);
     entries[0] = ForgetEntry{ino, *generation};
-    Inflight_forget *inflight =
-        new Inflight_forget(req, std::move(entries), make_transaction());
+    auto *inflight = new Inflight_forget<FuseInflightAction>(
+        req, std::move(entries), make_transaction());
     inflight->start();
   } else {
     fuse_reply_none(req);
@@ -86,8 +97,8 @@ extern "C" void fdbfs_forget_multi(fuse_req_t req, size_t count,
   }
   if (entries.size() > 0) {
     // we've got to issue forgets
-    Inflight_forget *inflight =
-        new Inflight_forget(req, std::move(entries), make_transaction());
+    auto *inflight = new Inflight_forget<FuseInflightAction>(
+        req, std::move(entries), make_transaction());
     inflight->start();
   } else {
     fuse_reply_none(req);

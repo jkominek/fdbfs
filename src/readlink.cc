@@ -26,27 +26,36 @@
  * REAL PLAN
  * ???
  */
-struct AttemptState_readlink : public AttemptState {
+template <typename ActionT>
+struct AttemptState_readlink : public AttemptStateT<ActionT> {
   unique_future inode_fetch;
 };
 
+template <typename ActionT>
 class Inflight_readlink
-    : public InflightWithAttempt<AttemptState_readlink, InflightPolicyReadOnly> {
+    : public InflightWithAttemptT<AttemptState_readlink<ActionT>,
+                                  InflightPolicyReadOnly, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_readlink<ActionT>,
+                                    InflightPolicyReadOnly, ActionT>;
+  using Base::a;
+  using Base::transaction;
+  using Base::wait_on_future;
+
   Inflight_readlink(fuse_req_t, fuse_ino_t, unique_transaction);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
   const fuse_ino_t ino;
-  InflightAction callback();
+  ActionT callback();
 };
 
-Inflight_readlink::Inflight_readlink(fuse_req_t req, fuse_ino_t ino,
-                                     unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)),
-      ino(ino) {}
+template <typename ActionT>
+Inflight_readlink<ActionT>::Inflight_readlink(fuse_req_t req, fuse_ino_t ino,
+                                              unique_transaction transaction)
+    : Base(req, std::move(transaction)), ino(ino) {}
 
-InflightAction Inflight_readlink::callback() {
+template <typename ActionT> ActionT Inflight_readlink<ActionT>::callback() {
   fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
@@ -54,36 +63,37 @@ InflightAction Inflight_readlink::callback() {
 
   err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
   if (err)
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
 
   if (present) {
     INodeRecord inode;
     inode.ParseFromArray(val, vallen);
     if (!inode.has_symlink()) {
       if (inode.type() == ft_symlink) {
-        return InflightAction::Abort(EIO);
+        return ActionT::Abort(EIO);
       } else {
-        return InflightAction::Abort(EINVAL);
+        return ActionT::Abort(EINVAL);
       }
     }
-    return InflightAction::Readlink(inode.symlink());
+    return ActionT::Readlink(inode.symlink());
   } else {
-    return InflightAction::Abort(ENOENT);
+    return ActionT::Abort(ENOENT);
   }
 }
 
-InflightCallback Inflight_readlink::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_readlink<ActionT>::issue() {
   const auto key = pack_inode_key(ino);
 
   // and request just that inode
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
       a().inode_fetch);
-  return std::bind(&Inflight_readlink::callback, this);
+  return std::bind(&Inflight_readlink<ActionT>::callback, this);
 }
 
 extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino) {
-  Inflight_readlink *inflight =
-      new Inflight_readlink(req, ino, make_transaction());
+  auto *inflight =
+      new Inflight_readlink<FuseInflightAction>(req, ino, make_transaction());
   inflight->start();
 }

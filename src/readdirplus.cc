@@ -19,7 +19,8 @@ struct ReaddirPlusEntry {
   fuse_ino_t ino;
 };
 
-struct AttemptState_readdirplus : public AttemptState {
+template <typename ActionT>
+struct AttemptState_readdirplus : public AttemptStateT<ActionT> {
   unique_future range_fetch;
   std::vector<ReaddirPlusEntry> entries;
   std::vector<unique_future> inode_fetches;
@@ -27,31 +28,42 @@ struct AttemptState_readdirplus : public AttemptState {
   int reply_size = 0;
 };
 
+template <typename ActionT>
 class Inflight_readdirplus
-    : public InflightWithAttempt<AttemptState_readdirplus,
-                                 InflightPolicyReadOnly> {
+    : public InflightWithAttemptT<AttemptState_readdirplus<ActionT>,
+                                  InflightPolicyReadOnly, ActionT> {
 public:
+  using Base = InflightWithAttemptT<AttemptState_readdirplus<ActionT>,
+                                    InflightPolicyReadOnly, ActionT>;
+  using Base::a;
+  using Base::commit;
+  using Base::req;
+  using Base::transaction;
+  using Base::wait_on_future;
+
   Inflight_readdirplus(fuse_req_t, fuse_ino_t, size_t, off_t,
                        unique_transaction);
-  InflightCallback issue();
+  InflightCallbackT<ActionT> issue();
 
 private:
-  InflightAction dirent_callback();
-  InflightAction callback();
-  InflightAction reply_buffer();
+  ActionT dirent_callback();
+  ActionT callback();
+  ActionT reply_buffer();
 
   const fuse_ino_t ino;
   const size_t size;
   const off_t off;
 };
 
-Inflight_readdirplus::Inflight_readdirplus(fuse_req_t req, fuse_ino_t ino,
-                                           size_t size, off_t off,
-                                           unique_transaction transaction)
-    : InflightWithAttempt(req, std::move(transaction)), ino(ino), size(size),
+template <typename ActionT>
+Inflight_readdirplus<ActionT>::Inflight_readdirplus(
+    fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+    unique_transaction transaction)
+    : Base(req, std::move(transaction)), ino(ino), size(size),
       off(off) {}
 
-InflightCallback Inflight_readdirplus::issue() {
+template <typename ActionT>
+InflightCallbackT<ActionT> Inflight_readdirplus<ActionT>::issue() {
   const auto [start, stop] = pack_dentry_subspace_range(ino);
 
   struct fuse_entry_param dummy{};
@@ -72,17 +84,18 @@ InflightCallback Inflight_readdirplus::issue() {
                                 0, 1 + offset, stop.data(), stop.size(), 0, 1,
                                 limit, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
       a().range_fetch);
-  return std::bind(&Inflight_readdirplus::dirent_callback, this);
+  return std::bind(&Inflight_readdirplus<ActionT>::dirent_callback, this);
 }
 
-InflightAction Inflight_readdirplus::dirent_callback() {
+template <typename ActionT>
+ActionT Inflight_readdirplus<ActionT>::dirent_callback() {
   const FDBKeyValue *kvs = nullptr;
   int kvcount = 0;
   fdb_bool_t more = 0;
   const fdb_error_t err = fdb_future_get_keyvalue_array(a().range_fetch.get(),
                                                         &kvs, &kvcount, &more);
   if (err) {
-    return InflightAction::FDBError(err);
+    return ActionT::FDBError(err);
   }
   // if there's more, that's fine, the caller can make another request, and
   // we'll fetch it then.
@@ -96,17 +109,17 @@ InflightAction Inflight_readdirplus::dirent_callback() {
   for (int i = 0; i < kvcount; i++) {
     const FDBKeyValue &kv = kvs[i];
     if (kv.key_length <= dirent_prefix_length) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
     const int keylen = kv.key_length - dirent_prefix_length;
     if (keylen <= 0 || keylen > MAXFILENAMELEN) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
 
     DirectoryEntry dirent;
     if (!dirent.ParseFromArray(kv.value, kv.value_length) ||
         !dirent.IsInitialized()) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
 
     // TODO now that we have the filenames, we could precisely
@@ -131,15 +144,16 @@ InflightAction Inflight_readdirplus::dirent_callback() {
   }
 
   if (a().inode_fetches.empty()) {
-    return InflightAction::Buf({});
+    return ActionT::Buf({});
   }
-  return InflightAction::BeginWait(
-      std::bind(&Inflight_readdirplus::callback, this));
+  return ActionT::BeginWait(
+      std::bind(&Inflight_readdirplus<ActionT>::callback, this));
 }
 
-InflightAction Inflight_readdirplus::callback() {
+template <typename ActionT>
+ActionT Inflight_readdirplus<ActionT>::callback() {
   if (a().inode_fetches.size() != a().entries.size()) {
-    return InflightAction::Abort(EIO);
+    return ActionT::Abort(EIO);
   }
 
   std::vector<uint8_t> buf(size);
@@ -156,21 +170,21 @@ InflightAction Inflight_readdirplus::callback() {
     const fdb_error_t err = fdb_future_get_value(a().inode_fetches[i].get(),
                                                  &present, &val, &vallen);
     if (err) {
-      return InflightAction::FDBError(err);
+      return ActionT::FDBError(err);
     }
     if (!present) {
       // this is some sort of db corruption; can we maybe stuff an
       // error into the response, or fill it out partially, so that
       // users can at least see which dirent is misbehaving?
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
 
     INodeRecord inode;
     if (!inode.ParseFromArray(val, vallen) || !inode.IsInitialized()) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
     if (inode.inode() != a().entries[i].ino) {
-      return InflightAction::Abort(EIO);
+      return ActionT::Abort(EIO);
     }
 
     struct fuse_entry_param e{};
@@ -198,8 +212,7 @@ InflightAction Inflight_readdirplus::callback() {
   }
 
   if (use_records.empty()) {
-    return InflightAction::Buf(std::move(buf),
-                               static_cast<int>(consumed_buffer));
+    return ActionT::Buf(std::move(buf), static_cast<int>(consumed_buffer));
   }
 
   for (const auto &[record_ino, generation] : use_records) {
@@ -212,17 +225,18 @@ InflightAction Inflight_readdirplus::callback() {
 
   a().reply_buf = std::move(buf);
   a().reply_size = static_cast<int>(consumed_buffer);
-  return commit(std::bind(&Inflight_readdirplus::reply_buffer, this));
+  return commit(std::bind(&Inflight_readdirplus<ActionT>::reply_buffer, this));
 }
 
-InflightAction Inflight_readdirplus::reply_buffer() {
-  return InflightAction::Buf(std::move(a().reply_buf), a().reply_size);
+template <typename ActionT>
+ActionT Inflight_readdirplus<ActionT>::reply_buffer() {
+  return ActionT::Buf(std::move(a().reply_buf), a().reply_size);
 }
 
 extern "C" void fdbfs_readdirplus(fuse_req_t req, fuse_ino_t ino, size_t size,
                                   off_t off, struct fuse_file_info *fi) {
   (void)fi;
-  Inflight_readdirplus *inflight =
-      new Inflight_readdirplus(req, ino, size, off, make_transaction());
+  auto *inflight = new Inflight_readdirplus<FuseInflightAction>(
+      req, ino, size, off, make_transaction());
   inflight->start();
 }

@@ -4,7 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-bool FilehandleSerializer::enqueue_inflight(Inflight *inflight,
+bool FilehandleSerializer::enqueue_inflight(
+    InflightT<FuseInflightAction> *inflight,
                                             std::optional<ByteRange> range) {
   std::unique_lock lk(mu);
   if (closed) {
@@ -41,7 +42,8 @@ bool FilehandleSerializer::enqueue_barrier(std::function<void()> callback,
   return true;
 }
 
-void FilehandleSerializer::on_inflight_done(Inflight *inflight) {
+void FilehandleSerializer::on_inflight_done(
+    InflightT<FuseInflightAction> *inflight) {
   std::unique_lock lk(mu);
   auto it = active.find(inflight);
   assert(it != active.end());
@@ -101,7 +103,7 @@ void FilehandleSerializer::maybe_start_next_locked(
       continue;
     }
 
-    Inflight *inflight = next.inflight;
+    InflightT<FuseInflightAction> *inflight = next.inflight;
     // Keep queue order: stop dispatch as soon as the front item conflicts.
     if (next.readonly) {
       // read/read overlap is allowed; read/write overlap is not.
