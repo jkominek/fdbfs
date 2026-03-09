@@ -3,7 +3,9 @@
 
 #include <assert.h>
 #include <ctype.h>
+#include <pthread.h>
 #include <source_location>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
@@ -216,6 +218,32 @@ bool lookup_count_nonzero(fuse_ino_t ino) {
     return it->second.count > 0;
   }
 }
+
+void fdbfs_set_thread_name(const char *fmt, ...) {
+  if ((fmt == nullptr) || (fmt[0] == '\0')) {
+    return;
+  }
+
+  // Linux thread names are 16 bytes including the null terminator.
+  char thread_name[16];
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vsnprintf(thread_name, sizeof(thread_name), fmt, ap);
+  va_end(ap);
+  if (n < 0) {
+    return;
+  }
+  thread_name[sizeof(thread_name) - 1] = '\0';
+
+#if defined(__linux__)
+  (void)pthread_setname_np(pthread_self(), thread_name);
+#elif defined(__APPLE__)
+  (void)pthread_setname_np(thread_name);
+#else
+  (void)thread_name;
+#endif
+}
+
 
 // will be filled out before operation begins
 std::vector<uint8_t> key_prefix;

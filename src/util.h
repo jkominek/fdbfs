@@ -108,6 +108,7 @@ extern int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
                                   struct fuse_file_info *fi);
 extern void best_effort_clear_inode_use_record(fuse_ino_t ino,
                                                uint64_t generation);
+extern void fdbfs_set_thread_name(const char *fmt, ...);
 
 [[nodiscard]] extern std::vector<uint8_t>
 pack_inode_key(fuse_ino_t, char = INODE_PREFIX,

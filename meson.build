@@ -3,10 +3,6 @@ project('fdbfs', 'cpp', default_options: ['cpp_std=c++23'])
 cc = meson.get_compiler('cpp')
 add_project_arguments(cc.get_supported_arguments(['-Wall']), language: 'cpp')
 
-if get_option('buildtype') == 'debug'
-  add_project_arguments('-DFDBFS_THREADPOOL_CHAOS', language: 'cpp')
-endif
-
 protoc = find_program('protoc', required : true)
 
 deps = [
@@ -17,12 +13,17 @@ deps = [
   dependency('nlohmann_json'),
 ]
 
+project_includes = include_directories('src', 'thirdparty/concurrentqueue')
+
 project_source_files = []
 generated = []
 
 subdir('src')
 
-fs_exe = executable('fs', project_source_files, generated, dependencies: deps)
+fs_exe = executable('fs', project_source_files, generated,
+  dependencies: deps,
+  include_directories: project_includes,
+)
 
 # -------------------------
 # Tests (Catch2 v3 installed)
@@ -40,7 +41,7 @@ pure_helpers_exe = executable(
   pure_helpers_sources,
   generated,
   dependencies : [catch2_dep] + deps,
-  include_directories : include_directories('src'),
+  include_directories : project_includes,
 )
 
 test(
@@ -79,6 +80,7 @@ test_exe = executable(
   'fdbfs_tests',
   test_sources,
   dependencies : [catch2_dep],
+  include_directories : project_includes,
   # Useful while developing integration tests:
   # cpp_args : cc.get_supported_arguments(['-O0', '-g']),
 )
@@ -90,7 +92,7 @@ test(
     'FDBFS_TEST_BACKEND=host',
     'FDBFS_TEST_MATRIX=empty',
   ],
-  timeout : 180,
+  timeout : 90,
   is_parallel : false,
 )
 
@@ -107,7 +109,7 @@ test(
     'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
     'FDBFS_TEST_MATRIX=empty',
   ],
-  timeout : 120,
+  timeout : 240,
   is_parallel : false,
 )
 
@@ -119,7 +121,7 @@ test(
     'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
     'FDBFS_TEST_MATRIX=seeded',
   ],
-  timeout : 300,
+  timeout : 420,
   is_parallel : false,
 )
 

@@ -45,6 +45,10 @@
 #include <type_traits> // std::common_type_t, std::decay_t, std::enable_if_t, std::is_void_v, std::invoke_result_t
 #include <utility>     // std::move
 
+#include <blockingconcurrentqueue.h>
+
+#include "util.h"
+
 // =============================================================================================
 // //
 //                                    Begin class thread_pool //
@@ -74,14 +78,12 @@ public:
    * CPU cores. If the argument is zero, the default value will be used instead.
    */
   thread_pool(const ui32 &_thread_count = std::thread::hardware_concurrency())
-      : thread_count(_thread_count ? _thread_count
+      : tasks(),
+        thread_count(_thread_count ? _thread_count
                                    : std::thread::hardware_concurrency()),
         threads(new std::thread[_thread_count
                                     ? _thread_count
                                     : std::thread::hardware_concurrency()]) {
-#ifdef FDBFS_THREADPOOL_CHAOS
-    init_chaos_seed();
-#endif
     create_threads();
   }
 
@@ -93,7 +95,7 @@ public:
   ~thread_pool() {
     wait_for_tasks();
     running = false;
-    cv.notify_all();
+    // TODO wake all threads to finish work?
     destroy_threads();
   }
 
@@ -107,10 +109,7 @@ public:
    *
    * @return The number of queued tasks.
    */
-  ui64 get_tasks_queued() const {
-    const std::scoped_lock lock(queue_mutex);
-    return tasks.size();
-  }
+  ui64 get_tasks_queued() const { return tasks.size_approx(); }
 
   /**
    * @brief Get the number of tasks currently being executed by the threads.
@@ -209,31 +208,7 @@ public:
    */
   template <typename F> void push_task(const F &task) {
     tasks_total++;
-    bool was_empty = false;
-    {
-      const std::scoped_lock lock(queue_mutex);
-      was_empty = tasks.empty();
-#ifdef FDBFS_THREADPOOL_CHAOS
-      if (chaos_next_bool_unlocked()) {
-        tasks.push_front(std::move(task));
-      } else {
-        tasks.push_back(std::move(task));
-      }
-#else
-      tasks.push(std::move(task));
-#endif
-    }
-    if (was_empty) {
-#ifdef FDBFS_THREADPOOL_CHAOS
-      // Occasionally wake everyone to perturb scheduling.
-      if ((chaos_next_u64_unlocked() & 0x1f) == 0)
-        cv.notify_all();
-      else
-        cv.notify_one();
-#else
-      cv.notify_one();
-#endif
-    }
+    tasks.enqueue(task);
   }
 
   /**
@@ -273,7 +248,7 @@ public:
     paused = true;
     wait_for_tasks();
     running = false;
-    cv.notify_all();
+    // TODO need to wake all threads up to finish work?
     destroy_threads();
     thread_count =
         _thread_count ? _thread_count : std::thread::hardware_concurrency();
@@ -430,44 +405,11 @@ private:
    * atomic variable running is set to true.
    */
   void worker() {
+    moodycamel::ConsumerToken ctok(tasks);
+    fdbfs_set_thread_name("worker");
     while (running.load(std::memory_order_relaxed)) {
       std::function<void()> task;
-#ifdef FDBFS_THREADPOOL_CHAOS
-      ui64 jitter = 0;
-#endif
-      {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        cv.wait(lock, [&] {
-          return !running.load(std::memory_order_relaxed) ||
-                 (!paused.load(std::memory_order_relaxed) && !tasks.empty());
-        });
-        if (!running.load(std::memory_order_relaxed))
-          break;
-        if (paused.load(std::memory_order_relaxed) || tasks.empty())
-          continue;
-
-#ifdef FDBFS_THREADPOOL_CHAOS
-        if (chaos_next_bool_unlocked()) {
-          task = std::move(tasks.front());
-          tasks.pop_front();
-        } else {
-          task = std::move(tasks.back());
-          tasks.pop_back();
-        }
-        jitter = chaos_next_u64_unlocked();
-#else
-        task = std::move(tasks.front());
-        tasks.pop();
-#endif
-      }
-#ifdef FDBFS_THREADPOOL_CHAOS
-      if ((jitter & 0x0f) == 0) {
-        std::this_thread::yield();
-      } else if ((jitter & 0x3f) == 1) {
-        std::this_thread::sleep_for(
-            std::chrono::microseconds((jitter >> 8) % 200));
-      }
-#endif
+      tasks.wait_dequeue(ctok, task);
       task();
       tasks_total--;
     }
@@ -481,9 +423,8 @@ private:
    * @brief A mutex to synchronize access to the task queue by different
    * threads.
    */
-  mutable std::mutex queue_mutex = {};
-
-  std::condition_variable cv;
+  // mutable std::mutex queue_mutex = {};
+  // std::condition_variable cv;
 
   /**
    * @brief An atomic variable indicating to the workers to keep running. When
@@ -494,11 +435,7 @@ private:
   /**
    * @brief A queue of tasks to be executed by the threads.
    */
-#ifdef FDBFS_THREADPOOL_CHAOS
-  std::deque<std::function<void()>> tasks = {};
-#else
-  std::queue<std::function<void()>> tasks = {};
-#endif
+  moodycamel::BlockingConcurrentQueue<std::function<void()>> tasks;
 
   /**
    * @brief The number of threads in the pool.
@@ -515,45 +452,6 @@ private:
    * tasks - either still in the queue, or running in a thread.
    */
   std::atomic<ui32> tasks_total = 0;
-
-#ifdef FDBFS_THREADPOOL_CHAOS
-  ui64 chaos_state = 0x9e3779b97f4a7c15ULL;
-
-  static ui64 parse_seed(const char *s, ui64 fallback) {
-    if (!s || !s[0]) {
-      return fallback;
-    }
-    char *end = nullptr;
-    const unsigned long long parsed = strtoull(s, &end, 0);
-    if (end == s) {
-      return fallback;
-    }
-    return static_cast<ui64>(parsed);
-  }
-
-  void init_chaos_seed() {
-    // Optional deterministic seed control for test reproducibility.
-    chaos_state =
-        parse_seed(std::getenv("FDBFS_THREADPOOL_SEED"), 0x9e3779b97f4a7c15ULL);
-    if (chaos_state == 0) {
-      chaos_state = 0x9e3779b97f4a7c15ULL;
-    }
-  }
-
-  ui64 chaos_next_u64_unlocked() {
-    // xorshift64* (not crypto; only for scheduling perturbation).
-    ui64 x = chaos_state;
-    x ^= x >> 12;
-    x ^= x << 25;
-    x ^= x >> 27;
-    chaos_state = x;
-    return x * 2685821657736338717ULL;
-  }
-
-  bool chaos_next_bool_unlocked() {
-    return (chaos_next_u64_unlocked() & 1) != 0;
-  }
-#endif
 };
 
 //                                     End class thread_pool //

@@ -489,6 +489,8 @@ void liveness_manager(std::stop_token stop_token) {
   std::stop_callback stop_wakeup(stop_token,
                                  []() { liveness_sleep_cv.notify_all(); });
 
+  fdbfs_set_thread_name("liveness");
+
   while (!stop_token.stop_requested()) {
     // TODO fetch fdb_database_get_client_status
     // then inspect the "Healthy" flag. if we're not

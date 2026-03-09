@@ -146,6 +146,7 @@ void queue_lock_manipulation(fuse_req_t req, fuse_ino_t ino, uint64_t owner,
 
 void *lock_manager(void *ignore) {
   (void)ignore;
+  fdbfs_set_thread_name("locks");
   for (;;) {
     if (lock_manager_stop.load(std::memory_order_relaxed)) {
       break;

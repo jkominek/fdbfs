@@ -9,6 +9,7 @@
 #define FUSE_USE_VERSION 35
 #include <fuse_lowlevel.h>
 
+#include "util.h"
 using ByteRange = boost::icl::interval_set<off_t>::interval_type;
 
 struct LockConflict {

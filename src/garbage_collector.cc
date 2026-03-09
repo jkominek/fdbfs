@@ -197,6 +197,8 @@ static void process_gc_candidate(const std::vector<uint8_t> &garbage_key) {
 void garbage_scanner(std::stop_token stop_token) {
   std::stop_callback stop_wakeup(stop_token,
                                  []() { gc_sleep_cv.notify_all(); });
+  fdbfs_set_thread_name("garbage");
+
   auto [gc_start_key, gc_stop_key] = pack_garbage_subspace_range();
   std::vector<uint8_t> last_key = gc_start_key;
 #if DEBUG

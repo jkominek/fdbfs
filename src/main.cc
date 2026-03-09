@@ -185,6 +185,8 @@ int main(int argc, char *argv[]) {
   // give us some initial space.
   lookup_counts.reserve(128);
 
+  fdbfs_set_thread_name("main");
+
   if (fuse_parse_cmdline(&args, &opts) != 0)
     return 1;
 
