@@ -227,7 +227,8 @@ InflightCallbackT<ActionT> Inflight_link<ActionT>::issue() {
 
 extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent,
                            const char *newname) {
-  if (filename_length_check(req, newname)) {
+  if (filename_length_check(newname)) {
+    fuse_reply_err(req, ENAMETOOLONG);
     return;
   }
   auto *inflight = new Inflight_link<FuseInflightAction>(

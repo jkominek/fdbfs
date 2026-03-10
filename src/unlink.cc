@@ -324,7 +324,8 @@ InflightCallbackT<ActionT> Inflight_unlink_rmdir<ActionT>::issue() {
 }
 
 extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t ino, const char *name) {
-  if (filename_length_check(req, name)) {
+  if (filename_length_check(name)) {
+    fuse_reply_err(req, ENAMETOOLONG);
     return;
   }
   auto *inflight = new Inflight_unlink_rmdir<FuseInflightAction>(
@@ -333,7 +334,8 @@ extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t ino, const char *name) {
 }
 
 extern "C" void fdbfs_rmdir(fuse_req_t req, fuse_ino_t ino, const char *name) {
-  if (filename_length_check(req, name)) {
+  if (filename_length_check(name)) {
+    fuse_reply_err(req, ENAMETOOLONG);
     return;
   }
   auto *inflight = new Inflight_unlink_rmdir<FuseInflightAction>(

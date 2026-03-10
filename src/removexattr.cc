@@ -128,8 +128,10 @@ InflightCallbackT<ActionT> Inflight_removexattr<ActionT>::issue() {
 
 extern "C" void fdbfs_removexattr(fuse_req_t req, fuse_ino_t ino,
                                   const char *name) {
-  if (filename_length_check(req, name))
+  if (filename_length_check(name)) {
+    fuse_reply_err(req, ENAMETOOLONG);
     return;
+  }
 
   std::string sname(name);
   auto *inflight = new Inflight_removexattr<FuseInflightAction>(

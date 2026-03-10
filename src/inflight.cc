@@ -323,9 +323,7 @@ template <typename ActionT> void InflightT<ActionT>::start() {
 
   if (shut_it_down_forever) {
     // abort everything immediately
-    fuse_reply_err(req, ENOSYS);
-    cleanup();
-    delete this;
+    this->fail(ENOSYS, "fdbfs commanded to shutdown");
     return;
   }
 
@@ -455,7 +453,7 @@ template <typename ActionT> bool InflightT<ActionT>::run_current_callback() {
 
 template <typename ActionT>
 void InflightT<ActionT>::future_ready(FDBFuture *f) {
-  if (fuse_req_interrupted(req)) {
+  if (ActionT::request_interrupted(req)) {
     fail(EINTR, "fuse operation interrupted");
     return;
   }
@@ -636,14 +634,14 @@ template <typename ActionT> ActionT Inflight_markusedT<ActionT>::check_inode() {
 }
 
 template <typename ActionT> ActionT Inflight_markusedT<ActionT>::reply_entry() {
-  if (fuse_reply_entry(this->req, &entry) < 0) {
-    // if reply failed, kernel won't hold a reference for this lookup.
-    auto generation_to_clear = decrement_lookup_count(entry.ino, 1);
-    if (generation_to_clear.has_value()) {
-      best_effort_clear_inode_use_record(entry.ino, *generation_to_clear);
-    }
-  }
-  return ActionT::Ignore();
+  return ActionT::ImmediateEntry(
+      entry, [entry = this->entry](InflightT<ActionT> *) {
+        // if reply failed, kernel won't hold a reference for this lookup.
+        auto generation_to_clear = decrement_lookup_count(entry.ino, 1);
+        if (generation_to_clear.has_value()) {
+          best_effort_clear_inode_use_record(entry.ino, *generation_to_clear);
+        }
+      });
 }
 
 template class Inflight_markusedT<FuseInflightAction>;

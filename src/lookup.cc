@@ -150,7 +150,8 @@ InflightCallbackT<ActionT> Inflight_lookup<ActionT>::issue() {
 
 extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent,
                              const char *name) {
-  if (filename_length_check(req, name)) {
+  if (filename_length_check(name)) {
+    fuse_reply_err(req, ENAMETOOLONG);
     return;
   }
   std::string sname(name);

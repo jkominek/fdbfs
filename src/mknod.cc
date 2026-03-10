@@ -154,8 +154,7 @@ ActionT Inflight_mknod<ActionT>::postverification() {
   else
     inode.set_size(0);
   inode.set_rdev(rdev);
-  // TODO need to eliminate this fuse dependency
-  const fuse_ctx *ctx = fuse_req_ctx(this->req);
+  const fuse_ctx *ctx = ActionT::request_ctx(this->req);
   inode.set_uid(ctx->uid);
   inode.set_gid(ctx->gid);
 
@@ -269,7 +268,8 @@ InflightCallbackT<ActionT> Inflight_mknod<ActionT>::issue() {
 
 extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name,
                             mode_t mode, dev_t rdev) {
-  if (filename_length_check(req, name)) {
+  if (filename_length_check(name)) {
+    fuse_reply_err(req, ENAMETOOLONG);
     return;
   }
   filetype deduced_type;
@@ -305,7 +305,8 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name,
 
 extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
                             mode_t mode) {
-  if (filename_length_check(req, name)) {
+  if (filename_length_check(name)) {
+    fuse_reply_err(req, ENAMETOOLONG);
     return;
   }
   auto *inflight = new Inflight_mknod<FuseInflightAction>(
@@ -317,8 +318,8 @@ extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
 extern "C" void fdbfs_symlink(fuse_req_t req, const char *target,
                               fuse_ino_t parent, const char *name) {
   // TODO eliminate magic number for symlink target length
-  if (filename_length_check(req, target, 1024) ||
-      filename_length_check(req, name)) {
+  if (filename_length_check(target, 1024) || filename_length_check(name)) {
+    fuse_reply_err(req, ENAMETOOLONG);
     return;
   }
   auto *inflight = new Inflight_mknod<FuseInflightAction>(

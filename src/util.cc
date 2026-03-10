@@ -661,12 +661,8 @@ range_keys offset_size_to_range_keys(fuse_ino_t ino, size_t off, size_t size) {
   return pack_fileblock_span_range(ino, start_block, stop_block);
 }
 
-bool filename_length_check(fuse_req_t req, const char *name, size_t maxlength) {
-  if (strnlen(name, maxlength + 1) > maxlength) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return true;
-  }
-  return false;
+bool filename_length_check(const char *name, size_t maxlength) {
+  return strnlen(name, maxlength + 1) > maxlength;
 }
 
 void update_atime(INodeRecord *inode, const struct timespec *tv) {
@@ -863,6 +859,24 @@ std::expected<void, int> set_fileblock(FDBTransaction *transaction,
   if (key.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
     return std::unexpected(EOVERFLOW);
   const int key_size = static_cast<int>(key.size());
+  if (key.size() != static_cast<size_t>(fileblock_key_length))
+    return std::unexpected(EINVAL);
+  if ((key.size() <
+       (key_prefix.size() + 1 + sizeof(fuse_ino_t) + sizeof(uint64_t))) ||
+      !std::equal(key_prefix.begin(), key_prefix.end(), key.begin()) ||
+      (key[key_prefix.size()] != DATA_PREFIX))
+    return std::unexpected(EINVAL);
+
+  // Remove all physical key variants for this logical block (raw/compressed),
+  // then write back exactly one selected encoding below.
+  fuse_ino_t ino_be = 0;
+  uint64_t block_be = 0;
+  bcopy(key.data() + key_prefix.size() + 1, &ino_be, sizeof(fuse_ino_t));
+  bcopy(key.data() + key_prefix.size() + 1 + sizeof(fuse_ino_t), &block_be,
+        sizeof(uint64_t));
+  fdbfs_transaction_clear_range(
+      transaction,
+      pack_fileblock_single_range(be64toh(ino_be), be64toh(block_be)));
 
   auto encoded = encode_logical_payload(block);
   if (!encoded) {
@@ -871,8 +885,6 @@ std::expected<void, int> set_fileblock(FDBTransaction *transaction,
 
   if (encoded->bytes.empty()) {
     // storage model allows for sparsity; interprets missing blocks as nulls.
-    // clear any stale data for this block key.
-    fdb_transaction_clear(transaction, key.data(), key_size);
     return {};
   }
 

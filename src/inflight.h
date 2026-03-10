@@ -214,6 +214,12 @@ public:
     static const bool enabled = (getenv("FDBFS_TRACE_ERRORS") != nullptr);
     return enabled;
   }
+  static bool request_interrupted(fuse_req_t req) {
+    return fuse_req_interrupted(req);
+  }
+  static const fuse_ctx *request_ctx(fuse_req_t req) {
+    return fuse_req_ctx(req);
+  }
   static void trace_errno_error(const char *kind, int err, const char *why,
                                 const std::source_location &loc) {
     if (!trace_errors_enabled())
@@ -309,6 +315,16 @@ public:
         fuse_reply_entry(i->req, &e);
       }
     });
+  }
+  static Self ImmediateEntry(
+      struct fuse_entry_param e,
+      std::function<void(InflightT<Self> *)> on_failure = {}) {
+    return Self(true, false, false,
+                [e, on_failure = std::move(on_failure)](InflightT<Self> *i) {
+                  if (fuse_reply_entry(i->req, &e) < 0 && on_failure) {
+                    on_failure(i);
+                  }
+                });
   }
   static Self Attr(struct stat attr) {
     return Self(true, false, false, [attr](InflightT<Self> *i) {

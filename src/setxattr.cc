@@ -163,8 +163,10 @@ InflightCallbackT<ActionT> Inflight_setxattr<ActionT>::issue() {
 
 extern "C" void fdbfs_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
                                const char *value, size_t size, int flags) {
-  if (filename_length_check(req, name))
+  if (filename_length_check(name)) {
+    fuse_reply_err(req, ENAMETOOLONG);
     return;
+  }
 
   SetXattrBehavior behavior = CreateOrReplace;
   if (flags == XATTR_CREATE)

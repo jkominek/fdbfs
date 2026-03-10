@@ -155,7 +155,7 @@ pack_local_oplog_span_range(uint64_t start_op_id, uint64_t stop_op_id);
 [[nodiscard]] extern ByteRange offset_size_to_byte_range(off_t, size_t);
 
 [[nodiscard]] extern bool
-filename_length_check(fuse_req_t, const char *,
+filename_length_check(const char *,
                       size_t maxlength = MAXFILENAMELEN);
 
 extern void update_atime(INodeRecord *, const struct timespec *);
