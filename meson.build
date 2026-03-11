@@ -13,7 +13,12 @@ deps = [
   dependency('nlohmann_json'),
 ]
 
-project_includes = include_directories('src', 'thirdparty/concurrentqueue')
+project_includes = include_directories(
+  'src',
+  'src/generic',
+  'src/fuse',
+  'thirdparty/concurrentqueue'
+)
 
 project_source_files = []
 generated = []
@@ -32,7 +37,8 @@ fs_exe = executable('fs', project_source_files, generated,
 catch2_dep = dependency('catch2-with-main', version : '>=3.4.0', required : true)
 
 pure_helpers_sources = files(
-  'src/util.cc',
+  'src/generic/util.cc',
+  'tests/test_support.cc',
   'tests/test_pure_helpers.cc',
   'tests/test_support.cc'
 )
