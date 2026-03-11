@@ -16,7 +16,7 @@
 
 struct ReaddirPlusEntry {
   std::string name;
-  fuse_ino_t ino;
+  DirectoryEntry dirent;
 };
 
 template <typename ActionT>
@@ -24,8 +24,7 @@ struct AttemptState_readdirplus : public AttemptStateT<ActionT> {
   unique_future range_fetch;
   std::vector<ReaddirPlusEntry> entries;
   std::vector<unique_future> inode_fetches;
-  std::vector<uint8_t> reply_buf;
-  int reply_size = 0;
+  std::optional<typename ActionT::DirentCollector> reply_collector;
 };
 
 template <typename ActionT>
@@ -41,7 +40,8 @@ public:
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_readdirplus(fuse_req_t, fuse_ino_t, size_t, off_t,
+  Inflight_readdirplus(fuse_req_t, fuse_ino_t,
+                       typename ActionT::DirentCollectorSpec, off_t,
                        unique_transaction);
   InflightCallbackT<ActionT> issue();
 
@@ -51,32 +51,29 @@ private:
   ActionT reply_buffer();
 
   const fuse_ino_t ino;
-  const size_t size;
+  const typename ActionT::DirentCollectorSpec collector_spec;
   const off_t off;
 };
 
 template <typename ActionT>
 Inflight_readdirplus<ActionT>::Inflight_readdirplus(
-    fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+    fuse_req_t req, fuse_ino_t ino,
+    typename ActionT::DirentCollectorSpec collector_spec, off_t off,
     unique_transaction transaction)
-    : Base(req, std::move(transaction)), ino(ino), size(size),
+    : Base(req, std::move(transaction)), ino(ino),
+      collector_spec(std::move(collector_spec)),
       off(off) {}
 
 template <typename ActionT>
 InflightCallbackT<ActionT> Inflight_readdirplus<ActionT>::issue() {
   const auto [start, stop] = pack_dentry_subspace_range(ino);
 
-  struct fuse_entry_param dummy{};
-  size_t estimated_entry_size =
-      fuse_add_direntry_plus(req, nullptr, 0, "12345678", &dummy, 1);
-  if (estimated_entry_size == 0) {
-    estimated_entry_size = 1;
-  }
-  const size_t estimated_count =
-      std::max<size_t>(1, size / estimated_entry_size);
+  auto collector = ActionT::make_dirent_collector(req, off, collector_spec);
+  const size_t estimated_count = collector.estimate_remaining_entries();
   // limit ourselves to pulling 128 entries at once, since that's a decent
   // amount of potential traffic.
-  const int limit = static_cast<int>(std::min<size_t>(128, estimated_count));
+  const int limit =
+      static_cast<int>(std::max<size_t>(1, std::min<size_t>(128, estimated_count)));
   const int offset = static_cast<int>(off);
 
   wait_on_future(
@@ -132,7 +129,7 @@ ActionT Inflight_readdirplus<ActionT>::dirent_callback() {
         .name = std::string(reinterpret_cast<const char *>(kv.key) +
                                 dirent_prefix_length,
                             keylen),
-        .ino = dirent.inode(),
+        .dirent = dirent,
     };
     a().entries.emplace_back(std::move(entry));
 
@@ -156,9 +153,7 @@ ActionT Inflight_readdirplus<ActionT>::callback() {
     return ActionT::Abort(EIO);
   }
 
-  std::vector<uint8_t> buf(size);
-  size_t consumed_buffer = 0;
-  size_t remaining_buffer = size;
+  auto collector = ActionT::make_dirent_collector(req, off, collector_spec);
 
   std::vector<std::pair<fuse_ino_t, uint64_t>> use_records;
   use_records.reserve(a().entries.size());
@@ -183,36 +178,27 @@ ActionT Inflight_readdirplus<ActionT>::callback() {
     if (!inode.ParseFromArray(val, vallen) || !inode.IsInitialized()) {
       return ActionT::Abort(EIO);
     }
-    if (inode.inode() != a().entries[i].ino) {
+    if (inode.inode() != a().entries[i].dirent.inode()) {
       return ActionT::Abort(EIO);
     }
 
-    struct fuse_entry_param e{};
-    e.ino = a().entries[i].ino;
-    e.generation = 1;
-    pack_inode_record_into_stat(inode, e.attr);
-    e.attr_timeout = 0.01;
-    e.entry_timeout = 0.01;
-
-    const size_t used = fuse_add_direntry_plus(
-        req, reinterpret_cast<char *>(buf.data() + consumed_buffer),
-        remaining_buffer, a().entries[i].name.c_str(), &e,
-        off + static_cast<off_t>(i) + 1);
-    if (used > remaining_buffer) {
+    auto add_result =
+        collector.try_add(a().entries[i].name, a().entries[i].dirent, &inode);
+    if (!add_result.has_value()) {
+      if (add_result.error() == DirentAddError::InvalidInput) {
+        return ActionT::Abort(EIO);
+      }
       break;
     }
 
-    consumed_buffer += used;
-    remaining_buffer -= used;
-
-    auto generation = increment_lookup_count(e.ino);
+    auto generation = increment_lookup_count(a().entries[i].dirent.inode());
     if (generation.has_value()) {
-      use_records.emplace_back(e.ino, *generation);
+      use_records.emplace_back(a().entries[i].dirent.inode(), *generation);
     }
   }
 
   if (use_records.empty()) {
-    return ActionT::Buf(std::move(buf), static_cast<int>(consumed_buffer));
+    return std::move(collector).finish();
   }
 
   for (const auto &[record_ino, generation] : use_records) {
@@ -223,20 +209,24 @@ ActionT Inflight_readdirplus<ActionT>::callback() {
                               sizeof(generation_le), FDB_MUTATION_TYPE_MAX);
   }
 
-  a().reply_buf = std::move(buf);
-  a().reply_size = static_cast<int>(consumed_buffer);
+  a().reply_collector.emplace(std::move(collector));
   return commit(std::bind(&Inflight_readdirplus<ActionT>::reply_buffer, this));
 }
 
 template <typename ActionT>
 ActionT Inflight_readdirplus<ActionT>::reply_buffer() {
-  return ActionT::Buf(std::move(a().reply_buf), a().reply_size);
+  if (!a().reply_collector.has_value()) {
+    return ActionT::Abort(EIO);
+  }
+  return std::move(*(a().reply_collector)).finish();
 }
 
 extern "C" void fdbfs_readdirplus(fuse_req_t req, fuse_ino_t ino, size_t size,
                                   off_t off, struct fuse_file_info *fi) {
   (void)fi;
+  auto collector_spec =
+      FuseInflightAction::make_dirent_collector_spec(size, true);
   auto *inflight = new Inflight_readdirplus<FuseInflightAction>(
-      req, ino, size, off, make_transaction());
+      req, ino, collector_spec, off, make_transaction());
   inflight->start();
 }

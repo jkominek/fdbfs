@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -15,6 +16,7 @@
 #include <queue>
 #include <set>
 #include <source_location>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -71,6 +73,13 @@ using OpLogResultVariant =
 claim_local_oplog_cleanup_span();
 
 template <typename ActionT> using InflightCallbackT = std::function<ActionT()>;
+
+enum class DirentAddError {
+  NoSpace,
+  InvalidInput,
+};
+
+using DirentAddResult = std::expected<void, DirentAddError>;
 
 template <typename ActionT> struct AttemptStateT {
   std::optional<InflightCallbackT<ActionT>> cb;
@@ -209,6 +218,115 @@ private:
 class FuseInflightAction {
 public:
   using Self = FuseInflightAction;
+  struct DirentCollectorSpec {
+    size_t max_bytes;
+    bool plus_mode;
+  };
+
+  class DirentCollector {
+  public:
+    DirentCollector(fuse_req_t req, off_t start_off,
+                    const DirentCollectorSpec &spec)
+        : req(req), plus_mode(spec.plus_mode), next_offset(start_off + 1),
+          buf(spec.max_bytes) {}
+
+    [[nodiscard]] size_t estimate_remaining_entries() const {
+      const size_t remaining = buf.size() - consumed;
+      if (remaining == 0) {
+        return 0;
+      }
+
+      if (plus_mode) {
+        struct fuse_entry_param dummy{};
+        size_t estimated_entry_size =
+            fuse_add_direntry_plus(req, nullptr, 0, "12345678", &dummy, 1);
+        if (estimated_entry_size == 0) {
+          estimated_entry_size = 1;
+        }
+        return std::max<size_t>(1, remaining / estimated_entry_size);
+      }
+
+      struct stat dummy_attr{};
+      size_t estimated_entry_size =
+          fuse_add_direntry(req, nullptr, 0, "12345678", &dummy_attr, 1);
+      if (estimated_entry_size == 0) {
+        estimated_entry_size = 1;
+      }
+      return std::max<size_t>(1, remaining / estimated_entry_size);
+    }
+
+    [[nodiscard]] DirentAddResult
+    try_add(std::string_view name, const DirectoryEntry &entry,
+            const INodeRecord *inode = nullptr) {
+      const size_t remaining = buf.size() - consumed;
+      if (remaining == 0) {
+        return std::unexpected(DirentAddError::NoSpace);
+      }
+
+      const std::string name_copy(name);
+
+      if (plus_mode) {
+        if (inode == nullptr) {
+          return std::unexpected(DirentAddError::InvalidInput);
+        }
+        struct fuse_entry_param e{};
+        e.ino = entry.inode();
+        e.generation = 1;
+        pack_inode_record_into_stat(*inode, e.attr);
+        e.attr_timeout = 0.01;
+        e.entry_timeout = 0.01;
+
+        const size_t used = fuse_add_direntry_plus(
+            req, reinterpret_cast<char *>(buf.data() + consumed), remaining,
+            name_copy.c_str(), &e, next_offset);
+        if (used > remaining) {
+          return std::unexpected(DirentAddError::NoSpace);
+        }
+        consumed += used;
+        next_offset += 1;
+        return {};
+      }
+
+      struct stat attr{};
+      attr.st_ino = entry.inode();
+      attr.st_mode = entry.type();
+
+      const size_t used = fuse_add_direntry(
+          req, reinterpret_cast<char *>(buf.data() + consumed), remaining,
+          name_copy.c_str(), &attr, next_offset);
+      if (used > remaining) {
+        return std::unexpected(DirentAddError::NoSpace);
+      }
+      consumed += used;
+      next_offset += 1;
+      return {};
+    }
+
+    [[nodiscard]] Self finish() && {
+      buf.resize(consumed);
+      return Self::Buf(std::move(buf));
+    }
+
+  private:
+    fuse_req_t req;
+    bool plus_mode;
+    off_t next_offset;
+    std::vector<uint8_t> buf;
+    size_t consumed = 0;
+  };
+
+  static DirentCollectorSpec
+  make_dirent_collector_spec(size_t max_bytes, bool plus_mode = false) {
+    return DirentCollectorSpec{
+        .max_bytes = max_bytes,
+        .plus_mode = plus_mode,
+    };
+  }
+
+  static DirentCollector make_dirent_collector(
+      fuse_req_t req, off_t start_off, const DirentCollectorSpec &spec) {
+    return DirentCollector(req, start_off, spec);
+  }
 
   static bool trace_errors_enabled() {
     static const bool enabled = (getenv("FDBFS_TRACE_ERRORS") != nullptr);

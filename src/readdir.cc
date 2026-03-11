@@ -41,25 +41,28 @@ public:
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_readdir(fuse_req_t, fuse_ino_t, size_t, off_t, unique_transaction);
+  Inflight_readdir(fuse_req_t, fuse_ino_t,
+                   typename ActionT::DirentCollectorSpec, off_t,
+                   unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
   const fuse_ino_t ino;
-  const size_t size;
+  const typename ActionT::DirentCollectorSpec collector_spec;
   const off_t off;
 
   ActionT callback();
 };
 
 template <typename ActionT>
-Inflight_readdir<ActionT>::Inflight_readdir(fuse_req_t req, fuse_ino_t ino,
-                                            size_t size, off_t off,
-                                            unique_transaction transaction)
-    : Base(req, std::move(transaction)), ino(ino), size(size), off(off) {}
+Inflight_readdir<ActionT>::Inflight_readdir(
+    fuse_req_t req, fuse_ino_t ino,
+    typename ActionT::DirentCollectorSpec collector_spec, off_t off,
+    unique_transaction transaction)
+    : Base(req, std::move(transaction)), ino(ino),
+      collector_spec(std::move(collector_spec)), off(off) {}
 
-template <typename ActionT>
-ActionT Inflight_readdir<ActionT>::callback() {
+template <typename ActionT> ActionT Inflight_readdir<ActionT>::callback() {
   const FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
@@ -70,9 +73,7 @@ ActionT Inflight_readdir<ActionT>::callback() {
   if (err)
     return ActionT::FDBError(err);
 
-  std::vector<uint8_t> buf(size);
-  size_t consumed_buffer = 0;
-  size_t remaining_buffer = size;
+  auto collector = ActionT::make_dirent_collector(req, off, collector_spec);
 
   for (int i = 0; i < kvcount; i++) {
     FDBKeyValue kv = kvs[i];
@@ -86,54 +87,33 @@ ActionT Inflight_readdir<ActionT>::callback() {
       // internal error
       return ActionT::Abort(EIO);
     }
-    char name[MAXFILENAMELEN + 1];
-    bcopy(((uint8_t *)kv.key) + dirent_prefix_length, name, keylen);
-    name[keylen] = '\0'; // null terminate
+    std::string_view name(
+        reinterpret_cast<const char *>(kv.key) + dirent_prefix_length, keylen);
 
-    struct stat attr;
-    {
-      DirectoryEntry dirent;
-      dirent.ParseFromArray(kv.value, kv.value_length);
+    DirectoryEntry dirent;
+    dirent.ParseFromArray(kv.value, kv.value_length);
 
-      if (!dirent.IsInitialized()) {
-        return ActionT::Abort(EIO);
-      }
-      attr.st_ino = dirent.inode();
-      attr.st_mode = dirent.type();
+    if (!dirent.IsInitialized()) {
+      return ActionT::Abort(EIO);
     }
 
-    size_t used = fuse_add_direntry(
-        req, reinterpret_cast<char *>(buf.data() + consumed_buffer),
-        remaining_buffer, name, &attr, off + i + 1);
-    if (used > remaining_buffer) {
+    if (!collector.try_add(name, dirent).has_value()) {
       // ran out of space. last one failed. we're done.
       break;
     }
-
-    consumed_buffer += used;
-    remaining_buffer -= used;
   }
 
-  buf.resize(consumed_buffer);
-  return ActionT::Buf(buf);
+  return std::move(collector).finish();
 }
 
 template <typename ActionT>
 InflightCallbackT<ActionT> Inflight_readdir<ActionT>::issue() {
   const auto [start, stop] = pack_dentry_subspace_range(ino);
 
-  // Estimate how many entries can fit in the caller-provided buffer.
-  // We use an 8-byte representative filename to avoid wildly
-  // overestimating the count for typical names.
-  struct stat dummy_attr{};
-  size_t estimated_entry_size =
-      fuse_add_direntry(req, nullptr, 0, "12345678", &dummy_attr, off + 1);
-  if (estimated_entry_size == 0) {
-    estimated_entry_size = 1;
-  }
-  const size_t estimated_count =
-      std::max<size_t>(1, size / estimated_entry_size);
-  const int limit = static_cast<int>(estimated_count);
+  auto collector = ActionT::make_dirent_collector(req, off, collector_spec);
+  const size_t estimated_count = collector.estimate_remaining_entries();
+  int limit = static_cast<int>(estimated_count);
+  limit = std::max<size_t>(8, limit);
 
   // well this is tricky. how large a range should we request?
   wait_on_future(
@@ -160,9 +140,10 @@ extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
   // early, here.
 
   // let's not read much more than 64k in a go.
+  auto collector_spec = FuseInflightAction::make_dirent_collector_spec(
+      std::min(size, static_cast<size_t>(1 << 16)));
   auto *inflight = new Inflight_readdir<FuseInflightAction>(
-      req, ino, std::min(size, static_cast<size_t>(1 << 16)), off,
-      make_transaction());
+      req, ino, collector_spec, off, make_transaction());
 
   inflight->start();
 }
