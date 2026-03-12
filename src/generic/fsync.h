@@ -1,9 +1,6 @@
 #ifndef __FSYNC_H__
 #define __FSYNC_H__
 
-#define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
-
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -27,15 +24,14 @@ public:
   // inode space, but, eh.
   static constexpr size_t shards = 256;
 
-  using ReplyFn = std::function<void(fuse_req_t req, int err)>;
+  using CompletionFn = std::function<void(int err)>;
 
   struct Token {
     fdbfs_ino_t ino{};
     std::shared_ptr<Gen> gen;
   };
 
-  explicit FsyncBarrierTable(ReplyFn reply_fn)
-      : reply_fn_(std::move(reply_fn)) {}
+  explicit FsyncBarrierTable() = default;
 
   // Called at the conceptual start of an inode-affecting operation.
   Token begin_op(fdbfs_ino_t ino) {
@@ -78,12 +74,9 @@ public:
 
   // Nonblocking fsync registration. Returns immediately.
   // - ino: inode to fsync
-  // - req: opaque request handle you will later reply to
-  // - optional: if you want, you can pass a custom reply fn per call; otherwise
-  //   use the one provided in the constructor.
-  void fsync_async(fdbfs_ino_t ino, fuse_req_t req,
-                   ReplyFn reply_override = nullptr) {
-    ReplyFn reply = reply_override ? std::move(reply_override) : reply_fn_;
+  // - on_done: completion callback to run once the barrier has drained.
+  void fsync_async(fdbfs_ino_t ino, CompletionFn on_done) {
+    assert(on_done);
     ShardState &st = get_shard_state(ino);
 
     // Fast path: if current generation has no joined ops, reply immediately.
@@ -95,7 +88,7 @@ public:
         // No joined ops in the current generation at the moment of fsync
         // arrival. Operations that start after this are not required to be
         // waited for.
-        reply(req, 0);
+        on_done(0);
         return;
       }
     }
@@ -123,8 +116,8 @@ public:
       //
       // NOTE if we're concerned about being spammed with fsyncs for some
       // reason,
-      old->on_drain = [reply, req, neu]() mutable {
-        reply(req, 0);
+      old->on_drain = [on_done, neu]() mutable {
+        on_done(0);
 
         // Release this fsync's hold on the next generation.
         uint64_t prev = neu->state.fetch_sub(1, std::memory_order_acq_rel);
@@ -166,7 +159,6 @@ private:
     std::shared_ptr<Gen> current = std::make_shared<Gen>();
   };
 
-  ReplyFn reply_fn_;
   ShardState shards_[shards];
 
   // grab the ShardState which corresponds to this inode.
@@ -187,10 +179,6 @@ private:
   }
 };
 
-// not sure there's much point in passing this reply function in to the
-// constructor, could maybe just hardcode it?
-inline FsyncBarrierTable g_fsync_barrier_table([](fuse_req_t req, int err) {
-  fuse_reply_err(req, err);
-});
+inline FsyncBarrierTable g_fsync_barrier_table;
 
 #endif // __FSYNC_H__

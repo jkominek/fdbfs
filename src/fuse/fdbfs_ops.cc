@@ -498,14 +498,16 @@ extern "C" void fdbfs_fsync(fuse_req_t req, fuse_ino_t ino, int datasync,
                             struct fuse_file_info *fi) {
   (void)datasync;
   (void)fi;
-  g_fsync_barrier_table.fsync_async(to_fdbfs_ino(ino), req);
+  g_fsync_barrier_table.fsync_async(to_fdbfs_ino(ino),
+                                    [req](int err) { fuse_reply_err(req, err); });
 }
 
 extern "C" void fdbfs_fsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync,
                                struct fuse_file_info *fi) {
   (void)datasync;
   (void)fi;
-  g_fsync_barrier_table.fsync_async(to_fdbfs_ino(ino), req);
+  g_fsync_barrier_table.fsync_async(to_fdbfs_ino(ino),
+                                    [req](int err) { fuse_reply_err(req, err); });
 }
 
 // ==== release ====
