@@ -191,13 +191,7 @@ ActionT Inflight_mknod<ActionT>::postverification() {
   }
 
   return commit([&]() {
-    struct fuse_entry_param e{};
-    e.ino = a().ino;
-    e.generation = 1;
-    e.attr = a().attr;
-    e.attr_timeout = 0.01;
-    e.entry_timeout = 0.01;
-    return ActionT::Entry(e);
+    return ActionT::Entry(a().attr);
   });
 }
 
@@ -210,13 +204,9 @@ ActionT Inflight_mknod<ActionT>::oplog_recovery(const OpLogRecord &record) {
     return ActionT::Abort(EIO);
   }
 
-  struct fuse_entry_param e{};
-  e.ino = record.entry().ino();
-  e.generation = record.entry().generation();
-  unpack_stat_record_into_stat(record.entry().attr(), e.attr);
-  e.attr_timeout = record.entry().attr_timeout();
-  e.entry_timeout = record.entry().entry_timeout();
-  return ActionT::Entry(e);
+  struct stat attr{};
+  unpack_stat_record_into_stat(record.entry().attr(), attr);
+  return ActionT::Entry(attr);
 }
 
 template <typename ActionT>

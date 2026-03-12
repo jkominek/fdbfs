@@ -97,7 +97,7 @@ public:
   unique_transaction transaction;
 
   // always need this so that our error processing code
-  // can throw errors back to fuse.
+  // can throw errors back to the calling layer.
   req_t req;
   bool suppress_errors = false;
 
@@ -195,7 +195,7 @@ class Inflight_markusedT
     : public InflightWithAttemptT<AttemptState_markusedT<ActionT>,
                                   InflightPolicyIdempotentWrite, ActionT> {
 public:
-  Inflight_markusedT(typename ActionT::req_t, uint64_t, struct fuse_entry_param,
+  Inflight_markusedT(typename ActionT::req_t, uint64_t, struct stat,
                      unique_transaction);
   InflightCallbackT<ActionT> issue();
 
@@ -204,7 +204,7 @@ private:
   ActionT reply_entry();
 
   const uint64_t generation;
-  const struct fuse_entry_param entry;
+  const struct stat entry_attr;
 };
 
 #include "inflight.tpp"

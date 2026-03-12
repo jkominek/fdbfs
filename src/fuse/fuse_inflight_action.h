@@ -209,27 +209,39 @@ public:
     return Self(true, false, false,
                 [err](InflightT<Self> *i) { fuse_reply_err(i->req, err); });
   }
-  static Self Entry(struct fuse_entry_param e) {
-    return Self(true, false, false, [e](InflightT<Self> *i) {
+  static Self Entry(struct stat attr) {
+    return Self(true, false, false, [attr](InflightT<Self> *i) {
       auto generation =
-          increment_lookup_count(static_cast<fdbfs_ino_t>(e.ino));
+          increment_lookup_count(static_cast<fdbfs_ino_t>(attr.st_ino));
       if (generation.has_value()) {
         // first lookup for this inode in local kernel cache; publish
         // a use record before replying to fuse.
-        (new Inflight_markusedT<Self>(i->req, *generation, e,
+        (new Inflight_markusedT<Self>(i->req, *generation, attr,
                                       make_transaction()))
             ->start();
       } else {
         // already known locally; no new use record needed.
+        struct fuse_entry_param e{};
+        e.ino = static_cast<fuse_ino_t>(attr.st_ino);
+        e.generation = 1;
+        e.attr = attr;
+        e.attr_timeout = 0.01;
+        e.entry_timeout = 0.01;
         fuse_reply_entry(i->req, &e);
       }
     });
   }
   static Self ImmediateEntry(
-      struct fuse_entry_param e,
+      struct stat attr,
       std::function<void(InflightT<Self> *)> on_failure = {}) {
     return Self(true, false, false,
-                [e, on_failure = std::move(on_failure)](InflightT<Self> *i) {
+                [attr, on_failure = std::move(on_failure)](InflightT<Self> *i) {
+                  struct fuse_entry_param e{};
+                  e.ino = static_cast<fuse_ino_t>(attr.st_ino);
+                  e.generation = 1;
+                  e.attr = attr;
+                  e.attr_timeout = 0.01;
+                  e.entry_timeout = 0.01;
                   if (fuse_reply_entry(i->req, &e) < 0 && on_failure) {
                     on_failure(i);
                   }

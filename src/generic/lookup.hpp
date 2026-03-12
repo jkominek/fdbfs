@@ -92,15 +92,9 @@ ActionT Inflight_lookup<ActionT>::process_inode() {
     return ActionT::Abort(EIO);
   }
 
-  struct fuse_entry_param e{};
-  e.ino = a().target;
-  // TODO technically we need to be smarter about generations
-  e.generation = 1;
-  pack_inode_record_into_stat(inode, e.attr);
-  e.attr_timeout = 0.01;
-  e.entry_timeout = 0.01;
-
-  return ActionT::Entry(e);
+  struct stat attr{};
+  pack_inode_record_into_stat(inode, attr);
+  return ActionT::Entry(attr);
 }
 
 template <typename ActionT>

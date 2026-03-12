@@ -94,13 +94,9 @@ ActionT Inflight_link<ActionT>::oplog_recovery(const OpLogRecord &record) {
     return ActionT::Abort(EIO);
   }
 
-  struct fuse_entry_param e{};
-  e.ino = record.entry().ino();
-  e.generation = record.entry().generation();
-  unpack_stat_record_into_stat(record.entry().attr(), e.attr);
-  e.attr_timeout = record.entry().attr_timeout();
-  e.entry_timeout = record.entry().entry_timeout();
-  return ActionT::Entry(e);
+  struct stat attr{};
+  unpack_stat_record_into_stat(record.entry().attr(), attr);
+  return ActionT::Entry(attr);
 }
 
 template <typename ActionT>
@@ -186,13 +182,9 @@ ActionT Inflight_link<ActionT>::check() {
   }
 
   return commit([&]() {
-    struct fuse_entry_param e{};
-    e.ino = ino;
-    e.generation = 1;
-    pack_inode_record_into_stat(a().inode, e.attr);
-    e.attr_timeout = 0.01;
-    e.entry_timeout = 0.01;
-    return ActionT::Entry(e);
+    struct stat attr{};
+    pack_inode_record_into_stat(a().inode, attr);
+    return ActionT::Entry(attr);
   });
 }
 
