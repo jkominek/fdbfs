@@ -33,11 +33,12 @@ class Inflight_statfs
 public:
   using Base = InflightWithAttemptT<AttemptState_statfs<ActionT>,
                                     InflightPolicyReadOnly, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_statfs(fuse_req_t, unique_transaction);
+  Inflight_statfs(req_t, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
@@ -45,7 +46,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_statfs<ActionT>::Inflight_statfs(fuse_req_t req,
+Inflight_statfs<ActionT>::Inflight_statfs(req_t req,
                                           unique_transaction transaction)
     : Base(req, std::move(transaction)) {}
 

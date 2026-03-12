@@ -7,6 +7,7 @@
 class FuseInflightAction {
 public:
   using Self = FuseInflightAction;
+  using req_t = fuse_req_t;
   struct DirentCollectorSpec {
     size_t max_bytes;
     bool plus_mode;
@@ -14,7 +15,7 @@ public:
 
   class DirentCollector {
   public:
-    DirentCollector(fuse_req_t req, off_t start_off,
+    DirentCollector(req_t req, off_t start_off,
                     const DirentCollectorSpec &spec)
         : req(req), plus_mode(spec.plus_mode), next_offset(start_off + 1),
           buf(spec.max_bytes) {}
@@ -97,7 +98,7 @@ public:
     }
 
   private:
-    fuse_req_t req;
+    req_t req;
     bool plus_mode;
     off_t next_offset;
     std::vector<uint8_t> buf;
@@ -113,7 +114,7 @@ public:
   }
 
   static DirentCollector make_dirent_collector(
-      fuse_req_t req, off_t start_off, const DirentCollectorSpec &spec) {
+      req_t req, off_t start_off, const DirentCollectorSpec &spec) {
     return DirentCollector(req, start_off, spec);
   }
 
@@ -121,10 +122,10 @@ public:
     static const bool enabled = (getenv("FDBFS_TRACE_ERRORS") != nullptr);
     return enabled;
   }
-  static bool request_interrupted(fuse_req_t req) {
+  static bool request_interrupted(req_t req) {
     return fuse_req_interrupted(req);
   }
-  static const fuse_ctx *request_ctx(fuse_req_t req) {
+  static const fuse_ctx *request_ctx(req_t req) {
     return fuse_req_ctx(req);
   }
   static void trace_errno_error(const char *kind, int err, const char *why,

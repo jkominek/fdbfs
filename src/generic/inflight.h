@@ -80,6 +80,8 @@ template <typename ActionT> struct AttemptStateT {
 
 template <typename ActionT> class InflightT {
 public:
+  using req_t = typename ActionT::req_t;
+
   // issuer is what we'll have to run if the future fails.
   // it'll expect the transaction to have been reset
   // (which is guaranteed by fdb)
@@ -96,7 +98,7 @@ public:
 
   // always need this so that our error processing code
   // can throw errors back to fuse.
-  fuse_req_t req;
+  req_t req;
   bool suppress_errors = false;
 
   void start();
@@ -115,7 +117,7 @@ public:
 
 protected:
   // constructor
-  InflightT(fuse_req_t, const InflightRuntimePolicy &, unique_transaction);
+  InflightT(req_t, const InflightRuntimePolicy &, unique_transaction);
 
   // Per-attempt transaction configuration hook. Called from start() before any
   // reads/writes (including oplog checks).
@@ -158,13 +160,15 @@ private:
 template <typename AttemptT, typename Policy, typename ActionT>
 class InflightWithAttemptT : public InflightT<ActionT> {
 public:
+  using req_t = typename ActionT::req_t;
+
   static constexpr InflightRuntimePolicy runtime_policy{
       .read_write = Policy::read_write,
       .read_version = Policy::read_version,
       .uses_oplog = Policy::uses_oplog,
   };
 
-  InflightWithAttemptT(fuse_req_t req, unique_transaction transaction)
+  InflightWithAttemptT(req_t req, unique_transaction transaction)
       : InflightT<ActionT>(req, runtime_policy, std::move(transaction)) {
     this->reset_attempt_state();
   }
@@ -191,7 +195,7 @@ class Inflight_markusedT
     : public InflightWithAttemptT<AttemptState_markusedT<ActionT>,
                                   InflightPolicyIdempotentWrite, ActionT> {
 public:
-  Inflight_markusedT(fuse_req_t, uint64_t, struct fuse_entry_param,
+  Inflight_markusedT(typename ActionT::req_t, uint64_t, struct fuse_entry_param,
                      unique_transaction);
   InflightCallbackT<ActionT> issue();
 

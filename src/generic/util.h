@@ -26,9 +26,9 @@
 // for mode_t
 #include <sys/types.h>
 
+#include <cstdint>
 #include <expected>
 #include <functional>
-#include <cstdint>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -83,7 +83,8 @@ struct LookupState {
 extern std::unordered_map<fdbfs_ino_t, LookupState> lookup_counts;
 extern std::mutex lookup_counts_mutex;
 
-[[nodiscard]] extern std::optional<uint64_t> increment_lookup_count(fdbfs_ino_t);
+[[nodiscard]] extern std::optional<uint64_t>
+    increment_lookup_count(fdbfs_ino_t);
 [[nodiscard]] extern std::optional<uint64_t> decrement_lookup_count(fdbfs_ino_t,
                                                                     uint64_t);
 [[nodiscard]] extern bool lookup_count_nonzero(fdbfs_ino_t);

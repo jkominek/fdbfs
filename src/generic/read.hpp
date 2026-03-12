@@ -50,11 +50,12 @@ class Inflight_read
 public:
   using Base = InflightWithAttemptT<AttemptState_read<ActionT>,
                                     InflightPolicyReadOnly, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_read(fuse_req_t, fdbfs_ino_t, size_t, off_t, unique_transaction);
+  Inflight_read(req_t, fdbfs_ino_t, size_t, off_t, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
@@ -66,7 +67,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_read<ActionT>::Inflight_read(fuse_req_t req, fdbfs_ino_t ino,
+Inflight_read<ActionT>::Inflight_read(req_t req, fdbfs_ino_t ino,
                                       size_t size, off_t off,
                                       unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino),

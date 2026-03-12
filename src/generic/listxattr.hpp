@@ -51,11 +51,12 @@ class Inflight_listxattr
 public:
   using Base = InflightWithAttemptT<AttemptState_listxattr<ActionT>,
                                     InflightPolicyReadOnly, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_listxattr(fuse_req_t, fdbfs_ino_t, size_t, unique_transaction);
+  Inflight_listxattr(req_t, fdbfs_ino_t, size_t, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
@@ -65,7 +66,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_listxattr<ActionT>::Inflight_listxattr(fuse_req_t req, fdbfs_ino_t ino,
+Inflight_listxattr<ActionT>::Inflight_listxattr(req_t req, fdbfs_ino_t ino,
                                                 size_t maxsize,
                                                 unique_transaction transaction)
     : Base(req, std::move(transaction)),
@@ -155,11 +156,12 @@ class Inflight_listxattr_count
 public:
   using Base = InflightWithAttemptT<AttemptState_listxattr_count<ActionT>,
                                     InflightPolicyReadOnly, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_listxattr_count(fuse_req_t, fdbfs_ino_t, unique_transaction);
+  Inflight_listxattr_count(req_t, fdbfs_ino_t, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
@@ -169,7 +171,7 @@ private:
 
 template <typename ActionT>
 Inflight_listxattr_count<ActionT>::Inflight_listxattr_count(
-    fuse_req_t req, fdbfs_ino_t ino, unique_transaction transaction)
+    req_t req, fdbfs_ino_t ino, unique_transaction transaction)
     : Base(req, std::move(transaction)),
       ino(ino) {}
 

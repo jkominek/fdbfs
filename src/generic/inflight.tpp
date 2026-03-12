@@ -41,7 +41,7 @@
 
 // allocate an inflight struct and fill and out some basics.
 template <typename ActionT>
-InflightT<ActionT>::InflightT(fuse_req_t req,
+InflightT<ActionT>::InflightT(typename ActionT::req_t req,
                               const InflightRuntimePolicy &runtime_policy,
                               unique_transaction provided)
     : transaction(std::move(provided)), req(req), policy(&runtime_policy) {
@@ -482,7 +482,7 @@ void InflightT<ActionT>::error_checker(FDBFuture *f, void *p) {
 // Inflight_markusedT
 
 template <typename ActionT>
-Inflight_markusedT<ActionT>::Inflight_markusedT(fuse_req_t req,
+Inflight_markusedT<ActionT>::Inflight_markusedT(typename ActionT::req_t req,
                                                 uint64_t generation,
                                                 struct fuse_entry_param entry,
                                                 unique_transaction transaction)

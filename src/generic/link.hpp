@@ -39,6 +39,7 @@ class Inflight_link
 public:
   using Base = InflightWithAttemptT<AttemptState_link<ActionT>,
                                     InflightPolicyWrite, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::commit;
   using Base::track_inode_for_fsync;
@@ -46,7 +47,7 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_link(fuse_req_t, fdbfs_ino_t, fdbfs_ino_t, std::string,
+  Inflight_link(req_t, fdbfs_ino_t, fdbfs_ino_t, std::string,
                 unique_transaction);
   InflightCallbackT<ActionT> issue();
 
@@ -61,7 +62,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_link<ActionT>::Inflight_link(fuse_req_t req, fdbfs_ino_t ino,
+Inflight_link<ActionT>::Inflight_link(req_t req, fdbfs_ino_t ino,
                                       fdbfs_ino_t newparent, std::string newname,
                                       unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino),

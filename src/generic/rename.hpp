@@ -45,6 +45,7 @@ class Inflight_rename
 public:
   using Base = InflightWithAttemptT<AttemptState_rename<ActionT>,
                                     InflightPolicyWrite, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::commit;
   using Base::track_inode_for_fsync;
@@ -52,7 +53,7 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_rename(fuse_req_t, fdbfs_ino_t, std::string, fdbfs_ino_t, std::string,
+  Inflight_rename(req_t, fdbfs_ino_t, std::string, fdbfs_ino_t, std::string,
                   int, unique_transaction transaction);
   InflightCallbackT<ActionT> issue();
 
@@ -72,7 +73,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_rename<ActionT>::Inflight_rename(fuse_req_t req, fdbfs_ino_t oldparent,
+Inflight_rename<ActionT>::Inflight_rename(req_t req, fdbfs_ino_t oldparent,
                                  std::string oldname, fdbfs_ino_t newparent,
                                  std::string newname, int flags,
                                  unique_transaction transaction)

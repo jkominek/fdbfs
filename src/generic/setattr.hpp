@@ -40,6 +40,7 @@ class Inflight_setattr
 public:
   using Base = InflightWithAttemptT<AttemptState_setattr<ActionT>,
                                     InflightPolicyWrite, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::commit;
   using Base::track_inode_for_fsync;
@@ -53,7 +54,7 @@ public:
   };
   using SuccessReply = std::variant<SuccessReplyAttr, SuccessReplyOpen>;
 
-  Inflight_setattr(fuse_req_t, fdbfs_ino_t, struct stat, int, unique_transaction,
+  Inflight_setattr(req_t, fdbfs_ino_t, struct stat, int, unique_transaction,
                    SuccessReply = SuccessReplyAttr{});
   InflightCallbackT<ActionT> issue();
 
@@ -72,7 +73,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_setattr<ActionT>::Inflight_setattr(fuse_req_t req, fdbfs_ino_t ino,
+Inflight_setattr<ActionT>::Inflight_setattr(req_t req, fdbfs_ino_t ino,
                                             struct stat attr, int to_set,
                                             unique_transaction transaction,
                                             SuccessReply success_reply)

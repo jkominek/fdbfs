@@ -53,6 +53,7 @@ class Inflight_unlink_rmdir
 public:
   using Base = InflightWithAttemptT<AttemptState_unlink_rmdir<ActionT>,
                                     InflightPolicyWrite, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::commit;
   using Base::track_inode_for_fsync;
@@ -60,7 +61,7 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_unlink_rmdir(fuse_req_t, fdbfs_ino_t, std::string, Op,
+  Inflight_unlink_rmdir(req_t, fdbfs_ino_t, std::string, Op,
                         unique_transaction);
   InflightCallbackT<ActionT> issue();
 
@@ -83,7 +84,7 @@ private:
 
 template <typename ActionT>
 Inflight_unlink_rmdir<ActionT>::Inflight_unlink_rmdir(
-    fuse_req_t req, fdbfs_ino_t parent, std::string name, Op op,
+    req_t req, fdbfs_ino_t parent, std::string name, Op op,
     unique_transaction transaction)
     : Base(req, std::move(transaction)), parent(parent),
       name(std::move(name)), dirent_key(pack_dentry_key(parent, this->name)),

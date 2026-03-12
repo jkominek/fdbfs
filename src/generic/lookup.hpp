@@ -46,11 +46,12 @@ class Inflight_lookup
 public:
   using Base = InflightWithAttemptT<AttemptState_lookup<ActionT>,
                                     InflightPolicyReadOnly, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_lookup(fuse_req_t, fdbfs_ino_t, std::string, unique_transaction);
+  Inflight_lookup(req_t, fdbfs_ino_t, std::string, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
@@ -63,7 +64,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_lookup<ActionT>::Inflight_lookup(fuse_req_t req, fdbfs_ino_t parent,
+Inflight_lookup<ActionT>::Inflight_lookup(req_t req, fdbfs_ino_t parent,
                                           std::string name,
                                           unique_transaction transaction)
     : Base(req, std::move(transaction)), parent(parent), name(std::move(name)) {

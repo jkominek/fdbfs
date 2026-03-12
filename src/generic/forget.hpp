@@ -30,11 +30,12 @@ class Inflight_forget
 public:
   using Base = InflightWithAttemptT<AttemptState_forget<ActionT>,
                                     InflightPolicyIdempotentWrite, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_forget(fuse_req_t, std::vector<ForgetEntry>, unique_transaction);
+  Inflight_forget(req_t, std::vector<ForgetEntry>, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
@@ -42,7 +43,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_forget<ActionT>::Inflight_forget(fuse_req_t req,
+Inflight_forget<ActionT>::Inflight_forget(req_t req,
                                           std::vector<ForgetEntry> entries,
                                           unique_transaction transaction)
     : Base(req, std::move(transaction)), entries(std::move(entries)) {}

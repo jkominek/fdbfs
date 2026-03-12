@@ -35,11 +35,12 @@ class Inflight_readlink
 public:
   using Base = InflightWithAttemptT<AttemptState_readlink<ActionT>,
                                     InflightPolicyReadOnly, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_readlink(fuse_req_t, fdbfs_ino_t, unique_transaction);
+  Inflight_readlink(req_t, fdbfs_ino_t, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
@@ -48,7 +49,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_readlink<ActionT>::Inflight_readlink(fuse_req_t req, fdbfs_ino_t ino,
+Inflight_readlink<ActionT>::Inflight_readlink(req_t req, fdbfs_ino_t ino,
                                               unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino) {}
 

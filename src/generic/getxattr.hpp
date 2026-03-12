@@ -35,11 +35,12 @@ class Inflight_getxattr
 public:
   using Base = InflightWithAttemptT<AttemptState_getxattr<ActionT>,
                                     InflightPolicyReadOnly, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_getxattr(fuse_req_t, fdbfs_ino_t, std::string, size_t,
+  Inflight_getxattr(req_t, fdbfs_ino_t, std::string, size_t,
                     unique_transaction);
   InflightCallbackT<ActionT> issue();
 
@@ -53,7 +54,7 @@ private:
 
 template <typename ActionT>
 Inflight_getxattr<ActionT>::Inflight_getxattr(
-    fuse_req_t req, fdbfs_ino_t ino, std::string name, size_t maxsize,
+    req_t req, fdbfs_ino_t ino, std::string name, size_t maxsize,
     unique_transaction transaction)
     : Base(req, std::move(transaction)),
       ino(ino), name(name), maxsize(maxsize) {}

@@ -33,13 +33,14 @@ class Inflight_readdirplus
 public:
   using Base = InflightWithAttemptT<AttemptState_readdirplus<ActionT>,
                                     InflightPolicyReadOnly, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::commit;
   using Base::req;
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_readdirplus(fuse_req_t, fdbfs_ino_t,
+  Inflight_readdirplus(req_t, fdbfs_ino_t,
                        typename ActionT::DirentCollectorSpec, off_t,
                        unique_transaction);
   InflightCallbackT<ActionT> issue();
@@ -56,7 +57,7 @@ private:
 
 template <typename ActionT>
 Inflight_readdirplus<ActionT>::Inflight_readdirplus(
-    fuse_req_t req, fdbfs_ino_t ino,
+    req_t req, fdbfs_ino_t ino,
     typename ActionT::DirentCollectorSpec collector_spec, off_t off,
     unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino),

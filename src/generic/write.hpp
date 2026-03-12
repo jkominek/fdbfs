@@ -95,6 +95,8 @@ template <typename ActionT>
 class Inflight_write
     : public InflightWithAttemptT<AttemptState_write<ActionT>,
                                   InflightPolicyWrite, ActionT> {
+  using req_t = ActionT::req_t;
+
 public:
   using Base = InflightWithAttemptT<AttemptState_write<ActionT>,
                                     InflightPolicyWrite, ActionT>;
@@ -105,7 +107,7 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_write(fuse_req_t, fdbfs_ino_t, std::vector<uint8_t>, off_t,
+  Inflight_write(req_t, fdbfs_ino_t, std::vector<uint8_t>, off_t,
                  unique_transaction);
   InflightCallbackT<ActionT> issue();
 
@@ -121,11 +123,11 @@ private:
 };
 
 template <typename ActionT>
-Inflight_write<ActionT>::Inflight_write(fuse_req_t req, fdbfs_ino_t ino,
-                               std::vector<uint8_t> buffer, off_t off,
-                               unique_transaction transaction)
-    : Base(req, std::move(transaction)), ino(ino),
-      buffer(std::move(buffer)), off(off) {
+Inflight_write<ActionT>::Inflight_write(req_t req, fdbfs_ino_t ino,
+                                        std::vector<uint8_t> buffer, off_t off,
+                                        unique_transaction transaction)
+    : Base(req, std::move(transaction)), ino(ino), buffer(std::move(buffer)),
+      off(off) {
   track_inode_for_fsync(ino);
 }
 
@@ -154,8 +156,7 @@ ActionT Inflight_write<ActionT>::oplog_recovery(const OpLogRecord &record) {
   return ActionT::Write(static_cast<size_t>(record.write().size()));
 }
 
-template <typename ActionT>
-ActionT Inflight_write<ActionT>::check() {
+template <typename ActionT> ActionT Inflight_write<ActionT>::check() {
   fdb_bool_t present;
   fdb_error_t err;
 

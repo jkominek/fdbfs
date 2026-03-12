@@ -34,6 +34,7 @@ class Inflight_removexattr
 public:
   using Base = InflightWithAttemptT<AttemptState_removexattr<ActionT>,
                                     InflightPolicyWrite, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::commit;
   using Base::track_inode_for_fsync;
@@ -41,7 +42,7 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_removexattr(fuse_req_t, fdbfs_ino_t, std::string, unique_transaction);
+  Inflight_removexattr(req_t, fdbfs_ino_t, std::string, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
@@ -56,7 +57,7 @@ private:
 
 template <typename ActionT>
 Inflight_removexattr<ActionT>::Inflight_removexattr(
-    fuse_req_t req, fdbfs_ino_t ino, std::string name,
+    req_t req, fdbfs_ino_t ino, std::string name,
     unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino), name(std::move(name)) {
   track_inode_for_fsync(ino);

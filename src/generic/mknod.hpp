@@ -43,6 +43,7 @@ class Inflight_mknod
 public:
   using Base = InflightWithAttemptT<AttemptState_mknod<ActionT>,
                                     InflightPolicyWrite, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::commit;
   using Base::track_inode_for_fsync;
@@ -50,7 +51,7 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_mknod(fuse_req_t, fdbfs_ino_t, std::string, mode_t, filetype, dev_t,
+  Inflight_mknod(req_t, fdbfs_ino_t, std::string, mode_t, filetype, dev_t,
                  unique_transaction, std::optional<std::string>);
   InflightCallbackT<ActionT> issue();
 
@@ -68,7 +69,7 @@ private:
 
 template <typename ActionT>
 Inflight_mknod<ActionT>::Inflight_mknod(
-    fuse_req_t req, fdbfs_ino_t parent, std::string name, mode_t mode,
+    req_t req, fdbfs_ino_t parent, std::string name, mode_t mode,
     filetype type, dev_t rdev, unique_transaction transaction,
     std::optional<std::string> symlink_target_opt)
     : Base(req, std::move(transaction)), parent(parent), name(std::move(name)),

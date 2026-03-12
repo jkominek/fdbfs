@@ -43,6 +43,7 @@ class Inflight_setxattr
 public:
   using Base = InflightWithAttemptT<AttemptState_setxattr<ActionT>,
                                     InflightPolicyWrite, ActionT>;
+  using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::commit;
   using Base::track_inode_for_fsync;
@@ -50,7 +51,7 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_setxattr(fuse_req_t, fdbfs_ino_t, std::string, std::vector<uint8_t>,
+  Inflight_setxattr(req_t, fdbfs_ino_t, std::string, std::vector<uint8_t>,
                     SetXattrBehavior, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
@@ -67,7 +68,7 @@ private:
 
 template <typename ActionT>
 Inflight_setxattr<ActionT>::Inflight_setxattr(
-    fuse_req_t req, fdbfs_ino_t ino, std::string name,
+    req_t req, fdbfs_ino_t ino, std::string name,
     std::vector<uint8_t> xattr_value, SetXattrBehavior behavior,
     unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino),
