@@ -12,12 +12,13 @@
 
 #include "fdbfs_ops.h"
 
-#include "generic/filehandle.h"
+#include "filehandle.h"
+#include "fuse_inflight_action.h"
+#include "util_fuse.h"
 #include "generic/forget.hpp"
 #include "generic/fsync.h"
 #include "generic/getattr.hpp"
 #include "generic/getxattr.hpp"
-#include "generic/inflight.h"
 #include "generic/link.hpp"
 #include "generic/listxattr.hpp"
 #include "generic/lookup.hpp"

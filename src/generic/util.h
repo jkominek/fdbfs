@@ -80,12 +80,6 @@ extern std::mutex lookup_counts_mutex;
                                                                     uint64_t);
 [[nodiscard]] extern bool lookup_count_nonzero(fuse_ino_t);
 
-struct fdbfs_filehandle;
-[[nodiscard]] extern std::shared_ptr<struct fdbfs_filehandle>
-extract_fdbfs_filehandle(struct fuse_file_info *);
-extern void free_fdbfs_filehandle_slot(struct fuse_file_info *);
-extern int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
-                                  struct fuse_file_info *fi);
 extern void best_effort_clear_inode_use_record(fuse_ino_t ino,
                                                uint64_t generation);
 extern void fdbfs_set_thread_name(const char *fmt, ...);

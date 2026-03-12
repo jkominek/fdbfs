@@ -1,5 +1,4 @@
 
-#define FUSE_USE_VERSION 35
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -14,7 +13,6 @@
 #include <algorithm>
 #include <limits>
 
-#include "filehandle.h"
 #include "inflight.h"
 #include "util.h"
 

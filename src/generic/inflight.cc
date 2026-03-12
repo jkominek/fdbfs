@@ -20,6 +20,7 @@
 #include <memory>
 #include <stdexcept>
 
+#include "fuse/fuse_inflight_action.h"
 #include "inflight.h"
 #include "liveness.h"
 #include "util.h"
