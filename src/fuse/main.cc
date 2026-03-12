@@ -262,7 +262,7 @@ int main(int argc, char *argv[]) {
     goto shutdown_fdb;
   }
 
-  if (start_liveness(se)) {
+  if (start_liveness([se]() { fuse_session_exit(se); })) {
     err = 1;
     goto shutdown_fdb;
   }

@@ -1,6 +1,4 @@
 
-#define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -42,7 +40,9 @@
 
 std::vector<uint8_t> pid;
 ProcessTableEntry pt_entry;
-struct fuse_session *fuse_session;
+// Expected to request shutdown of the outer event loop (e.g. fuse_session_exit)
+// when liveness determines we should fail closed.
+std::function<void()> shutdown_system;
 std::jthread liveness_thread;
 std::atomic<bool> terminate = true;
 bool liveness_started = false;
@@ -111,11 +111,9 @@ static void fail_closed_due_to_liveness_failure() {
   // kill everything in-flight
   shut_it_down();
 
-  // stop processing filesystem calls immediately.
-  // the fuse loop won't notice this until the next
-  // filesystem operation comes in.
-  if (fuse_session != nullptr) {
-    fuse_session_exit(fuse_session);
+  // ask outer code to stop servicing new requests.
+  if (shutdown_system) {
+    shutdown_system();
   }
 }
 
@@ -494,7 +492,7 @@ void liveness_manager(std::stop_token stop_token) {
   while (!stop_token.stop_requested()) {
     // TODO fetch fdb_database_get_client_status
     // then inspect the "Healthy" flag. if we're not
-    // healthy, start blocking FUSE operations until
+    // healthy, start blocking filesystem operations until
     // we are
     {
       std::unique_lock<std::mutex> lock(liveness_sleep_mutex);
@@ -510,7 +508,7 @@ void liveness_manager(std::stop_token stop_token) {
 
     // TODO track time since last successly pt entry
     // if we exceed even 50% of whatever we're configured
-    // as for the reaping time, start blocking FUSE ops
+    // as for the reaping time, start blocking filesystem ops
     // until we can restore our pt entry successfully
     if (!send_pt_entry(false)) {
       fail_closed_due_to_liveness_failure();
@@ -521,12 +519,15 @@ void liveness_manager(std::stop_token stop_token) {
   }
 }
 
+// shutdown_cb will be called if the database tells us we're dead.
+// it is possible it will be called multiple times.
 // returns false if liveness is started by the time the function returns
-bool start_liveness(struct fuse_session *se) {
+bool start_liveness(std::function<void()> shutdown_cb) {
   if (liveness_started) {
     return false;
   }
 
+  shutdown_system = std::move(shutdown_cb);
   pid.clear();
 
   // fill PID_LENGTH bytes from the kernel RNG.
@@ -545,10 +546,6 @@ bool start_liveness(struct fuse_session *se) {
     bytes_read += static_cast<size_t>(n);
   }
 
-  // we make main pass this in so it isn't floating around
-  // in every namespace.
-  fuse_session = se;
-
   pt_entry.set_pid(pid.data(), pid.size());
   pt_entry.set_liveness_counter(0);
   update_pt_entry_time();
@@ -558,7 +555,6 @@ bool start_liveness(struct fuse_session *se) {
 
   if (!send_pt_entry(true)) {
     pt_entry.Clear();
-    fuse_session = NULL;
     pid.clear();
     return true;
   }
@@ -571,7 +567,6 @@ bool start_liveness(struct fuse_session *se) {
     liveness_thread = std::jthread(liveness_manager);
   } catch (const std::system_error &) {
     terminate.store(true, std::memory_order_relaxed);
-    fuse_session = NULL;
     pid.clear();
     return true;
   }
@@ -631,5 +626,4 @@ void terminate_liveness() {
 
   pid.clear();
   pt_entry.Clear();
-  fuse_session = NULL;
 }
