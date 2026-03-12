@@ -122,19 +122,15 @@ std::optional<LockConflict> query_lock_conflict(fdbfs_ino_t ino, uint64_t owner,
   return std::nullopt;
 }
 
-void queue_lock_manipulation(fuse_req_t req, fdbfs_ino_t ino, uint64_t owner,
-                             pid_t pid, bool blocking, short locktype,
-                             ByteRange range) {
+void queue_lock_manipulation(
+    fdbfs_ino_t ino, uint64_t owner, pid_t pid, bool blocking, short locktype,
+    ByteRange range, std::function<void(std::expected<void, int>)> complete) {
   {
     std::scoped_lock guard(inode_locks_mutex, inodes_to_process_mutex);
     // NOTE we need to ensure that 'complete' remains a non-blocking, constant
     // time thing, as we'll be calling it inside of a lock.
-    LockRequest lockreq(
-        owner, pid,
-        [req](std::expected<void, int> outcome) {
-          fuse_reply_err(req, outcome ? 0 : outcome.error());
-        },
-        blocking, locktype, range);
+    LockRequest lockreq(owner, pid, std::move(complete), blocking, locktype,
+                        range);
     inode_locks[ino].lock_requests.push_back(std::move(lockreq));
     inodes_to_process.insert(ino);
 

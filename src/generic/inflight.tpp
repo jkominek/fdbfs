@@ -348,7 +348,7 @@ template <typename ActionT> bool InflightT<ActionT>::run_current_callback() {
 template <typename ActionT>
 void InflightT<ActionT>::future_ready(FDBFuture *f) {
   if (ActionT::request_interrupted(req)) {
-    fail(EINTR, "fuse operation interrupted");
+    fail(EINTR, "filesystem operation interrupted");
     return;
   }
 

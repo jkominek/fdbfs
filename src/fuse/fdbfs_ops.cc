@@ -480,8 +480,11 @@ extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
     auto lock_owner = fi->lock_owner;
     barrier_callback = [req, ino, lock_owner]() {
       ByteRange range(0, std::numeric_limits<off_t>::max());
-      queue_lock_manipulation(req, to_fdbfs_ino(ino), lock_owner, 0, 0, F_UNLCK,
-                              range);
+      queue_lock_manipulation(
+          to_fdbfs_ino(ino), lock_owner, 0, 0, F_UNLCK, range,
+          [req](std::expected<void, int> outcome) {
+            fuse_reply_err(req, outcome ? 0 : outcome.error());
+          });
     };
   } else {
     barrier_callback = [req]() { fuse_reply_err(req, 0); };
@@ -590,8 +593,11 @@ extern "C" void fdbfs_setlk(fuse_req_t req, fuse_ino_t ino,
     return;
   }
 
-  queue_lock_manipulation(req, to_fdbfs_ino(ino), fi->lock_owner, lock->l_pid,
-                          sleep != 0, lock->l_type, range.value());
+  queue_lock_manipulation(
+      to_fdbfs_ino(ino), fi->lock_owner, lock->l_pid, sleep != 0, lock->l_type,
+      range.value(), [req](std::expected<void, int> outcome) {
+        fuse_reply_err(req, outcome ? 0 : outcome.error());
+      });
 }
 
 #if 0
