@@ -1,6 +1,5 @@
 
 #define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -12,7 +11,6 @@
 #include <string.h>
 #include <sys/xattr.h>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -124,17 +122,4 @@ InflightCallbackT<ActionT> Inflight_removexattr<ActionT>::issue() {
   }
 
   return std::bind(&Inflight_removexattr<ActionT>::process, this);
-}
-
-extern "C" void fdbfs_removexattr(fuse_req_t req, fuse_ino_t ino,
-                                  const char *name) {
-  if (filename_length_check(name)) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return;
-  }
-
-  std::string sname(name);
-  auto *inflight = new Inflight_removexattr<FuseInflightAction>(
-      req, ino, sname, make_transaction());
-  inflight->start();
 }

@@ -1,6 +1,5 @@
 
 #define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -13,7 +12,6 @@
 
 #include <iostream>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -91,12 +89,4 @@ InflightCallbackT<ActionT> Inflight_getattr<ActionT>::issue() {
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
       a().inode_fetch);
   return std::bind(&Inflight_getattr<ActionT>::callback, this);
-}
-
-extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
-                              struct fuse_file_info *fi) {
-  // get the file attributes of an inode
-  auto *inflight =
-      new Inflight_getattr<FuseInflightAction>(req, ino, make_transaction());
-  inflight->start();
 }

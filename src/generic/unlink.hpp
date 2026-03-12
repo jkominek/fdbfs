@@ -1,6 +1,5 @@
 
 #define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -11,7 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 #include "util_unlink.h"
@@ -321,24 +319,4 @@ InflightCallbackT<ActionT> Inflight_unlink_rmdir<ActionT>::issue() {
                                      dirent_key.size(), 0),
                  a().dirent_lookup);
   return std::bind(&Inflight_unlink_rmdir<ActionT>::postlookup, this);
-}
-
-extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t ino, const char *name) {
-  if (filename_length_check(name)) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return;
-  }
-  auto *inflight = new Inflight_unlink_rmdir<FuseInflightAction>(
-      req, ino, name, Op::Unlink, make_transaction());
-  inflight->start();
-}
-
-extern "C" void fdbfs_rmdir(fuse_req_t req, fuse_ino_t ino, const char *name) {
-  if (filename_length_check(name)) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return;
-  }
-  auto *inflight = new Inflight_unlink_rmdir<FuseInflightAction>(
-      req, ino, name, Op::Rmdir, make_transaction());
-  inflight->start();
 }

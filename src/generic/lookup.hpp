@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 #include "values.pb.h"
@@ -146,16 +145,4 @@ InflightCallbackT<ActionT> Inflight_lookup<ActionT>::issue() {
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 1),
       a().dirent_fetch);
   return std::bind(&Inflight_lookup<ActionT>::lookup_inode, this);
-}
-
-extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent,
-                             const char *name) {
-  if (filename_length_check(name)) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return;
-  }
-  std::string sname(name);
-  auto *inflight =
-      new Inflight_lookup<FuseInflightAction>(req, parent, sname, make_transaction());
-  inflight->start();
 }

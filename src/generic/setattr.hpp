@@ -1,6 +1,5 @@
 
 #define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -12,7 +11,6 @@
 #include <string.h>
 #include <variant>
 
-#include "fdbfs_ops.h"
 #include "filehandle.h"
 #include "inflight.h"
 #include "util.h"
@@ -320,49 +318,4 @@ InflightCallbackT<ActionT> Inflight_setattr<ActionT>::issue() {
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
       a().inode_fetch);
   return std::bind(&Inflight_setattr<ActionT>::callback, this);
-}
-
-extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
-                              int to_set, struct fuse_file_info *fi) {
-  auto *inflight = new Inflight_setattr<FuseInflightAction>(
-      req, ino, *attr, to_set, make_transaction());
-  if ((to_set & FUSE_SET_ATTR_SIZE) && (fi != nullptr)) {
-    if (attr->st_size < 0) {
-      // admittedly unlikely we'll get a negative value from the kernel
-      delete inflight;
-      fuse_reply_err(req, EINVAL);
-      return;
-    }
-    // we're doing a truncate on an open file, so we have to be serialized
-    auto fh = extract_fdbfs_filehandle(fi);
-    if (!fh) {
-      delete inflight;
-      fuse_reply_err(req, EBADF);
-      return;
-    }
-    auto &serializer = fh->serializer;
-    if (!serializer.enqueue_inflight(
-            inflight, ByteRange::closed(attr->st_size,
-                                        std::numeric_limits<off_t>::max()))) {
-      delete inflight;
-      fuse_reply_err(req, EBADF);
-      return;
-    }
-  } else {
-    // the no-serialization path, so we just fire it up
-    inflight->start();
-  }
-}
-
-extern "C" void fdbfs_setattr_open_trunc(fuse_req_t req, fuse_ino_t ino,
-                                         struct fuse_file_info *fi) {
-  struct stat attr{};
-  attr.st_size = 0;
-  // we're being called by open, so our 'fi' doesn't have a filehandle
-  // in it, which is fine. we don't need to serialize this operation since
-  // the file doesn't exist until we return. so there's nothing to serialize.
-  auto *inflight = new Inflight_setattr<FuseInflightAction>(
-      req, ino, attr, FUSE_SET_ATTR_SIZE, make_transaction(),
-      Inflight_setattr<FuseInflightAction>::SuccessReplyOpen{*fi});
-  inflight->start();
 }

@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 #include "values.pb.h"
@@ -219,14 +218,4 @@ ActionT Inflight_readdirplus<ActionT>::reply_buffer() {
     return ActionT::Abort(EIO);
   }
   return std::move(*(a().reply_collector)).finish();
-}
-
-extern "C" void fdbfs_readdirplus(fuse_req_t req, fuse_ino_t ino, size_t size,
-                                  off_t off, struct fuse_file_info *fi) {
-  (void)fi;
-  auto collector_spec =
-      FuseInflightAction::make_dirent_collector_spec(size, true);
-  auto *inflight = new Inflight_readdirplus<FuseInflightAction>(
-      req, ino, collector_spec, off, make_transaction());
-  inflight->start();
 }

@@ -1,6 +1,5 @@
 
 #define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -15,7 +14,6 @@
 #include <algorithm>
 #include <limits>
 
-#include "fdbfs_ops.h"
 #include "filehandle.h"
 #include "inflight.h"
 #include "util.h"
@@ -209,35 +207,4 @@ InflightCallbackT<ActionT> Inflight_read<ActionT>::issue() {
           0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
       a().range_fetch);
   return std::bind(&Inflight_read<ActionT>::callback, this);
-}
-
-extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
-                           off_t off, struct fuse_file_info *fi) {
-  if (size == 0) {
-    fuse_reply_buf(req, nullptr, 0);
-    return;
-  }
-  if (off < 0) {
-    fuse_reply_err(req, EINVAL);
-    return;
-  }
-
-  auto fh = extract_fdbfs_filehandle(fi);
-  if (!fh) {
-    fuse_reply_err(req, EBADF);
-    return;
-  }
-
-  // given inode, figure out the appropriate key range, and
-  // start reading it, filling it into a buffer to be sent back
-  // with fuse_reply_buf
-  auto *inflight =
-      new Inflight_read<FuseInflightAction>(req, ino, size, off, make_transaction());
-  auto &serializer = fh->serializer;
-  if (!serializer.enqueue_inflight(inflight,
-                                   offset_size_to_byte_range(off, size))) {
-    delete inflight;
-    fuse_reply_err(req, EBADF);
-    return;
-  }
 }

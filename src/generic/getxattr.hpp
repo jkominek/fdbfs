@@ -1,6 +1,5 @@
 
 #define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -12,7 +11,6 @@
 #include <string.h>
 #include <sys/xattr.h>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -143,16 +141,4 @@ InflightCallbackT<ActionT> Inflight_getxattr<ActionT>::issue() {
   }
 
   return std::bind(&Inflight_getxattr<ActionT>::process, this);
-}
-
-extern "C" void fdbfs_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
-                               size_t size) {
-  if (filename_length_check(name)) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return;
-  }
-
-  auto *inflight = new Inflight_getxattr<FuseInflightAction>(
-      req, ino, name, size, make_transaction());
-  inflight->start();
 }

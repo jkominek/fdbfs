@@ -75,46 +75,8 @@ static struct fuse_lowlevel_ops fdbfs_oper = {
     .readdirplus = fdbfs_readdirplus,
 };
 
-void fdbfs_init(void *userdata, struct fuse_conn_info *conn) {
-  /*
-  printf("max_write %i\n", conn->max_write);
-  printf("max_read  %i\n", conn->max_read);
-  printf("max_readahead %i\n", conn->max_readahead);
-  printf("max_background %i\n", conn->max_background);
-  printf("congestion_threshold %i\n", conn->congestion_threshold);
-  printf("capable %x\n", conn->capable);
-  printf("want    %x\n", conn->want);
-  */
-  // transactions have to finish in under 5 seconds, so unless
-  // we get clever and start splitting our reads across transactions
-  // (which we're not currently set up for) then we need a limit
-  // on the size of reads
-  // 1. this is probably conservative
-  // 2. docs make it sound like this might also need to be set as
-  //    a command line option.
-  if (conn->max_read > 1024 * 1024)
-    conn->max_read = 1024 * 1024;
-  // per the docs, (write) transactions should be kept under 1MB.
-  // let's stay well below that.
-  if (conn->max_write > 128 * 1024)
-    conn->max_write = 128 * 1024;
-  // these largely deal with our relationship with the kernel, and
-  // could probably be rather large
-  conn->max_background = 256;
-  conn->congestion_threshold = 192;
-#if FUSE_VERSION >= 317
-  if (conn->capable_ext & FUSE_CAP_ASYNC_DIO) {
-    fuse_set_feature_flag(conn, FUSE_CAP_ASYNC_DIO);
-  }
-#endif
-}
-
 pthread_t network_thread;
 bool network_thread_created = false;
-
-void fdbfs_destroy(void *userdata) {
-  // no-op. main takes care of everything when the session loop ends.
-}
 
 /* Purely to get the FoundationDB network stuff running in a
  * background thread. Passing fdb_run_network straight to
@@ -134,7 +96,7 @@ struct fdbfs_options {
   int buggify;
 };
 
-#define FDBFS_OPT(t, p) { t, offsetof(struct fdbfs_options, p), 1 }
+#define FDBFS_OPT(t, p) {t, offsetof(struct fdbfs_options, p), 1}
 
 static const struct fuse_opt fdbfs_option_spec[] = {
     FDBFS_OPT("--key-prefix=%s", key_prefix),
@@ -142,6 +104,36 @@ static const struct fuse_opt fdbfs_option_spec[] = {
     FDBFS_OPT("--buggify", buggify),
     FUSE_OPT_END,
 };
+
+static void fdbfs_crash_signal_handler(int sig) {
+  const char *name = nullptr;
+  switch (sig) {
+  case SIGABRT:
+    name = "SIGABRT";
+    break;
+  case SIGSEGV:
+    name = "SIGSEGV";
+    break;
+  default:
+    name = "UNKNOWN";
+    break;
+  }
+
+  dprintf(STDERR_FILENO, "fdbfs fatal signal %d (%s)\n", sig, name);
+  void *frames[128];
+  const int n = backtrace(frames, static_cast<int>(std::size(frames)));
+  backtrace_symbols_fd(frames, n, STDERR_FILENO);
+  _exit(128 + sig);
+}
+
+static void install_crash_signal_handlers() {
+  struct sigaction sa{};
+  sa.sa_handler = fdbfs_crash_signal_handler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = SA_RESETHAND;
+  (void)sigaction(SIGABRT, &sa, nullptr);
+  (void)sigaction(SIGSEGV, &sa, nullptr);
+}
 
 /* main is a mess.
  * TODO structure main more clearly, perhaps break things out
@@ -154,6 +146,9 @@ int main(int argc, char *argv[]) {
   struct fdbfs_options fdbfs_opts = {.key_prefix = NULL, .buggify = 0};
   int err = -1;
   bool fdb_network_setup_done = false;
+
+  setvbuf(stderr, nullptr, _IONBF, 0);
+  install_crash_signal_handlers();
 
   GOOGLE_PROTOBUF_VERIFY_VERSION;
 
@@ -169,11 +164,10 @@ int main(int argc, char *argv[]) {
   }
 
   key_prefix.clear();
-  key_prefix.insert(
-      key_prefix.end(),
-      reinterpret_cast<const uint8_t *>(selected_key_prefix),
-      reinterpret_cast<const uint8_t *>(selected_key_prefix) +
-          strlen(selected_key_prefix));
+  key_prefix.insert(key_prefix.end(),
+                    reinterpret_cast<const uint8_t *>(selected_key_prefix),
+                    reinterpret_cast<const uint8_t *>(selected_key_prefix) +
+                        strlen(selected_key_prefix));
 
   inode_key_length = pack_inode_key(0).size();
   fileblock_prefix_length = inode_key_length;
@@ -198,8 +192,8 @@ int main(int argc, char *argv[]) {
     printf("fdbfs options:\n");
     printf("    --key-prefix=STR, -k STR   FoundationDB key prefix "
            "(default: FS)\n");
-    printf(
-        "    --buggify                  Enable FoundationDB client buggify\n\n");
+    printf("    --buggify                  Enable FoundationDB client "
+           "buggify\n\n");
     fuse_cmdline_help();
     fuse_lowlevel_help();
     err = 0;

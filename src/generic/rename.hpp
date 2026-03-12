@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 #include "util_unlink.h"
@@ -459,17 +458,4 @@ InflightCallbackT<ActionT> Inflight_rename<ActionT>::issue() {
   // for permissions checking.
 
   return std::bind(&Inflight_rename<ActionT>::check, this);
-}
-
-extern "C" void fdbfs_rename(fuse_req_t req, fuse_ino_t parent,
-                             const char *name, fuse_ino_t newparent,
-                             const char *newname, unsigned int flags) {
-  if (filename_length_check(name) || filename_length_check(newname)) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return;
-  }
-  auto *inflight = new Inflight_rename<FuseInflightAction>(
-      req, parent, std::string(name), newparent, std::string(newname), flags,
-      make_transaction());
-  inflight->start();
 }

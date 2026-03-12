@@ -8,7 +8,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -137,10 +136,4 @@ InflightCallbackT<ActionT> Inflight_statfs<ActionT>::issue() {
                      14, 1),
                  a().status_fetch);
   return std::bind(&Inflight_statfs<ActionT>::process_status, this);
-}
-
-extern "C" void fdbfs_statfs(fuse_req_t req, fuse_ino_t ino) {
-  auto *inflight =
-      new Inflight_statfs<FuseInflightAction>(req, make_transaction());
-  inflight->start();
 }

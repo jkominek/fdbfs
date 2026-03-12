@@ -1,6 +1,5 @@
 
 #define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -14,7 +13,6 @@
 
 #include <limits>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -159,25 +157,4 @@ InflightCallbackT<ActionT> Inflight_setxattr<ActionT>::issue() {
       a().xattr_node_fetch);
 
   return std::bind(&Inflight_setxattr<ActionT>::process, this);
-}
-
-extern "C" void fdbfs_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
-                               const char *value, size_t size, int flags) {
-  if (filename_length_check(name)) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return;
-  }
-
-  SetXattrBehavior behavior = CreateOrReplace;
-  if (flags == XATTR_CREATE)
-    behavior = CanCreate;
-  else if (flags == XATTR_REPLACE)
-    behavior = CanReplace;
-
-  std::string sname(name);
-  std::vector<uint8_t> vvalue(value, value + size);
-
-  auto *inflight = new Inflight_setxattr<FuseInflightAction>(
-      req, ino, sname, vvalue, behavior, make_transaction());
-  inflight->start();
 }

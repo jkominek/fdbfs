@@ -9,7 +9,6 @@
 
 #include <algorithm>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 #include "values.pb.h"
@@ -122,28 +121,4 @@ InflightCallbackT<ActionT> Inflight_readdir<ActionT>::issue() {
                                 limit, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
       a().range_fetch);
   return std::bind(&Inflight_readdir<ActionT>::callback, this);
-}
-
-extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
-                              off_t off, struct fuse_file_info *fi) {
-  // fuse will know we're out of entries because we'll return 0
-  // entries to a call here. but there's a decent chance we'll
-  // find out on the previous call that there wasn't anything left.
-  // could we fast path that case?
-  // perhaps fdbfs_readdir_callback when it sees it has reached
-  // the end, could set the final offset to all-1s, and we could
-  // detect that here and immediately return an empty result?
-  // or we could maintain a cache of how many entries we last
-  // saw in a given directory. that'd let us do a better job of
-  // fetching them, and if the cache entry is recent enough, and
-  // we're being asked to read past the end, we could maybe bail
-  // early, here.
-
-  // let's not read much more than 64k in a go.
-  auto collector_spec = FuseInflightAction::make_dirent_collector_spec(
-      std::min(size, static_cast<size_t>(1 << 16)));
-  auto *inflight = new Inflight_readdir<FuseInflightAction>(
-      req, ino, collector_spec, off, make_transaction());
-
-  inflight->start();
 }

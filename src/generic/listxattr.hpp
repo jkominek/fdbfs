@@ -1,6 +1,5 @@
 
 #define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -12,7 +11,6 @@
 #include <string.h>
 #include <sys/xattr.h>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -229,16 +227,4 @@ InflightCallbackT<ActionT> Inflight_listxattr_count<ActionT>::issue() {
   a().empty_xattr_name_length = start.size();
 
   return std::bind(&Inflight_listxattr_count<ActionT>::process, this);
-}
-
-extern "C" void fdbfs_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size) {
-  if (size == 0) {
-    auto *inflight = new Inflight_listxattr_count<FuseInflightAction>(
-        req, ino, make_transaction());
-    inflight->start();
-  } else {
-    auto *inflight = new Inflight_listxattr<FuseInflightAction>(
-        req, ino, size, make_transaction());
-    inflight->start();
-  }
 }

@@ -1,6 +1,5 @@
 
 #define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -11,7 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -68,39 +66,4 @@ InflightCallbackT<ActionT> Inflight_forget<ActionT>::issue() {
 
   wait_on_future(fdb_transaction_commit(transaction.get()), a().commit);
   return ActionT::None;
-}
-
-extern "C" void fdbfs_forget(fuse_req_t req, fuse_ino_t ino, uint64_t ncount) {
-  // we've only got to issue an fdb transaction if decrement says so
-  auto generation = decrement_lookup_count(ino, ncount);
-  if (generation.has_value()) {
-    std::vector<ForgetEntry> entries(1);
-    entries[0] = ForgetEntry{ino, *generation};
-    auto *inflight = new Inflight_forget<FuseInflightAction>(
-        req, std::move(entries), make_transaction());
-    inflight->start();
-  } else {
-    fuse_reply_none(req);
-  }
-}
-
-extern "C" void fdbfs_forget_multi(fuse_req_t req, size_t count,
-                                   struct fuse_forget_data *forgets) {
-  std::vector<ForgetEntry> entries;
-  entries.reserve(count);
-  for (size_t i = 0; i < count; i++) {
-    auto generation =
-        decrement_lookup_count(forgets[i].ino, forgets[i].nlookup);
-    if (generation.has_value()) {
-      entries.push_back(ForgetEntry{forgets[i].ino, *generation});
-    }
-  }
-  if (entries.size() > 0) {
-    // we've got to issue forgets
-    auto *inflight = new Inflight_forget<FuseInflightAction>(
-        req, std::move(entries), make_transaction());
-    inflight->start();
-  } else {
-    fuse_reply_none(req);
-  }
 }

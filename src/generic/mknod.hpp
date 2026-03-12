@@ -1,6 +1,5 @@
 
 #define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -13,7 +12,6 @@
 #include <string.h>
 #include <sys/random.h>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 #include "values.pb.h"
@@ -264,66 +262,4 @@ InflightCallbackT<ActionT> Inflight_mknod<ActionT>::issue() {
   }
 
   return std::bind(&Inflight_mknod<ActionT>::postverification, this);
-}
-
-extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name,
-                            mode_t mode, dev_t rdev) {
-  if (filename_length_check(name)) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return;
-  }
-  filetype deduced_type;
-  // validate mode value
-  switch (mode & S_IFMT) {
-  case S_IFSOCK:
-    deduced_type = ft_socket;
-    break;
-  case S_IFLNK:
-    deduced_type = ft_symlink;
-    break;
-  case S_IFREG:
-    deduced_type = ft_regular;
-    break;
-  case S_IFCHR:
-    deduced_type = ft_character;
-    break;
-  case S_IFIFO:
-    deduced_type = ft_fifo;
-    break;
-  default: {
-    // unsupported value. abort.
-    fuse_reply_err(req, EPERM);
-    return;
-  }
-  }
-
-  auto *inflight = new Inflight_mknod<FuseInflightAction>(
-      req, parent, name, mode & (~S_IFMT), deduced_type, rdev,
-      make_transaction(), std::nullopt);
-  inflight->start();
-}
-
-extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
-                            mode_t mode) {
-  if (filename_length_check(name)) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return;
-  }
-  auto *inflight = new Inflight_mknod<FuseInflightAction>(
-      req, parent, name, mode & (~S_IFMT), ft_directory, 0, make_transaction(),
-      std::nullopt);
-  inflight->start();
-}
-
-extern "C" void fdbfs_symlink(fuse_req_t req, const char *target,
-                              fuse_ino_t parent, const char *name) {
-  // TODO eliminate magic number for symlink target length
-  if (filename_length_check(target, 1024) || filename_length_check(name)) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return;
-  }
-  auto *inflight = new Inflight_mknod<FuseInflightAction>(
-      req, parent, name, 0777 & (~S_IFMT), ft_symlink, 0, make_transaction(),
-      std::string(target));
-  inflight->start();
 }

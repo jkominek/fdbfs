@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 #include "values.pb.h"
@@ -223,15 +222,4 @@ InflightCallbackT<ActionT> Inflight_link<ActionT>::issue() {
   }
 
   return std::bind(&Inflight_link<ActionT>::check, this);
-}
-
-extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent,
-                           const char *newname) {
-  if (filename_length_check(newname)) {
-    fuse_reply_err(req, ENAMETOOLONG);
-    return;
-  }
-  auto *inflight = new Inflight_link<FuseInflightAction>(
-      req, ino, newparent, std::string(newname), make_transaction());
-  inflight->start();
 }

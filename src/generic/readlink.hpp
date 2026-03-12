@@ -1,6 +1,5 @@
 
 #define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -11,7 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "fdbfs_ops.h"
 #include "inflight.h"
 #include "util.h"
 
@@ -90,10 +88,4 @@ InflightCallbackT<ActionT> Inflight_readlink<ActionT>::issue() {
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
       a().inode_fetch);
   return std::bind(&Inflight_readlink<ActionT>::callback, this);
-}
-
-extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino) {
-  auto *inflight =
-      new Inflight_readlink<FuseInflightAction>(req, ino, make_transaction());
-  inflight->start();
 }
