@@ -1,5 +1,5 @@
 #include "filehandle.h"
-#include "inflight.h"
+#include "fuse_inflight_action.h"
 
 #include <stdio.h>
 #include <stdlib.h>

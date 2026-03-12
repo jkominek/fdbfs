@@ -1,9 +1,3 @@
-
-#define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
-#define FDB_API_VERSION 730
-#include <foundationdb/fdb_c.h>
-
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -17,11 +11,8 @@
 #include <memory>
 #include <stdexcept>
 
-#include "fuse/fuse_inflight_action.h"
-#include "inflight.h"
 #include "liveness.h"
 #include "oplog.h"
-#include "util.h"
 
 /******************************************************
  * This encapsulates all of our retry logic
@@ -488,8 +479,6 @@ void InflightT<ActionT>::error_checker(FDBFuture *f, void *p) {
   pool.push_task([inflight, f]() { inflight->future_ready(f); });
 }
 
-template class InflightT<FuseInflightAction>;
-
 // Inflight_markusedT
 
 template <typename ActionT>
@@ -546,5 +535,3 @@ template <typename ActionT> ActionT Inflight_markusedT<ActionT>::reply_entry() {
         }
       });
 }
-
-template class Inflight_markusedT<FuseInflightAction>;

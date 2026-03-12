@@ -7,12 +7,12 @@ project_source_files += files([
     'fuse/main.cc',
     'fuse/fdbfs_ops.cc',
     'fuse/filehandle.cc',
+    'fuse/inflight_instantiations.cc',
     'fuse/util_fuse.cc',
     'generic/garbage_collector.cc',
     'generic/liveness.cc',
     'generic/util.cc',
     'generic/util_locks.cc',
     'generic/util_unlink.cc',
-    'generic/inflight.cc',
     'generic/oplog.cc',
 ])

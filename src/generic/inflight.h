@@ -203,4 +203,6 @@ private:
   const struct fuse_entry_param entry;
 };
 
+#include "inflight.tpp"
+
 #endif
