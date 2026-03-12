@@ -408,7 +408,9 @@ private:
     fdbfs_set_thread_name("worker");
     while (running.load(std::memory_order_relaxed)) {
       std::function<void()> task;
-      tasks.wait_dequeue(ctok, task);
+      if (!tasks.wait_dequeue_timed(ctok, task, std::chrono::seconds(1))) {
+        continue;
+      }
       task();
       tasks_total--;
     }
