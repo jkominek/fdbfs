@@ -46,13 +46,13 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_link(fuse_req_t, fuse_ino_t, fuse_ino_t, std::string,
+  Inflight_link(fuse_req_t, fdbfs_ino_t, fdbfs_ino_t, std::string,
                 unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
-  const fuse_ino_t ino;
-  const fuse_ino_t newparent;
+  const fdbfs_ino_t ino;
+  const fdbfs_ino_t newparent;
   const std::string newname;
 
   ActionT check();
@@ -61,8 +61,8 @@ private:
 };
 
 template <typename ActionT>
-Inflight_link<ActionT>::Inflight_link(fuse_req_t req, fuse_ino_t ino,
-                                      fuse_ino_t newparent, std::string newname,
+Inflight_link<ActionT>::Inflight_link(fuse_req_t req, fdbfs_ino_t ino,
+                                      fdbfs_ino_t newparent, std::string newname,
                                       unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino),
       newparent(newparent), newname(std::move(newname)) {

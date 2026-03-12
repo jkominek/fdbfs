@@ -51,8 +51,8 @@ static void process_gc_candidate(const std::vector<uint8_t> &garbage_key) {
   }
 
   // fetch the inode from the garbage key.
-  fuse_ino_t ino;
-  bcopy(garbage_key.data() + key_prefix.size() + 1, &ino, sizeof(fuse_ino_t));
+  fdbfs_ino_t ino;
+  bcopy(garbage_key.data() + key_prefix.size() + 1, &ino, sizeof(fdbfs_ino_t));
   ino = be64toh(ino);
   if (lookup_count_nonzero(ino)) {
     // we're still using the inode, don't bother checking the use records.

@@ -11,6 +11,8 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "util.h"
+
 // ---- Generation barrier manager ----
 class FsyncBarrierTable {
 private:
@@ -28,7 +30,7 @@ public:
   using ReplyFn = std::function<void(fuse_req_t req, int err)>;
 
   struct Token {
-    fuse_ino_t ino{};
+    fdbfs_ino_t ino{};
     std::shared_ptr<Gen> gen;
   };
 
@@ -36,7 +38,7 @@ public:
       : reply_fn_(std::move(reply_fn)) {}
 
   // Called at the conceptual start of an inode-affecting operation.
-  Token begin_op(fuse_ino_t ino) {
+  Token begin_op(fdbfs_ino_t ino) {
     ShardState &st = get_shard_state(ino);
 
     for (;;) {
@@ -79,7 +81,7 @@ public:
   // - req: opaque request handle you will later reply to
   // - optional: if you want, you can pass a custom reply fn per call; otherwise
   //   use the one provided in the constructor.
-  void fsync_async(fuse_ino_t ino, fuse_req_t req,
+  void fsync_async(fdbfs_ino_t ino, fuse_req_t req,
                    ReplyFn reply_override = nullptr) {
     ReplyFn reply = reply_override ? std::move(reply_override) : reply_fn_;
     ShardState &st = get_shard_state(ino);
@@ -170,7 +172,7 @@ private:
   // grab the ShardState which corresponds to this inode.
   // the number of inodes which map to a given shard determine
   // the coarseness of fsync
-  ShardState &get_shard_state(fuse_ino_t ino) {
+  ShardState &get_shard_state(fdbfs_ino_t ino) {
     return shards_[static_cast<size_t>(ino) & (shards - 1)];
   }
 

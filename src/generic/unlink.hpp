@@ -43,7 +43,7 @@ struct AttemptState_unlink_rmdir : public AttemptStateT<ActionT> {
   // fetches 0-1 of the directory entries in a directory
   unique_future directory_listing_fetch;
   // inode of the thing we're removing
-  fuse_ino_t ino = 0;
+  fdbfs_ino_t ino = 0;
 };
 
 template <typename ActionT>
@@ -60,7 +60,7 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_unlink_rmdir(fuse_req_t, fuse_ino_t, std::string, Op,
+  Inflight_unlink_rmdir(fuse_req_t, fdbfs_ino_t, std::string, Op,
                         unique_transaction);
   InflightCallbackT<ActionT> issue();
 
@@ -72,7 +72,7 @@ private:
   bool write_success_oplog_result();
 
   // parent directory
-  const fuse_ino_t parent;
+  const fdbfs_ino_t parent;
   // provided name and length
   const std::string name;
   // computed key of the dirent.
@@ -83,7 +83,7 @@ private:
 
 template <typename ActionT>
 Inflight_unlink_rmdir<ActionT>::Inflight_unlink_rmdir(
-    fuse_req_t req, fuse_ino_t parent, std::string name, Op op,
+    fuse_req_t req, fdbfs_ino_t parent, std::string name, Op op,
     unique_transaction transaction)
     : Base(req, std::move(transaction)), parent(parent),
       name(std::move(name)), dirent_key(pack_dentry_key(parent, this->name)),

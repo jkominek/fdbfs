@@ -54,19 +54,19 @@ public:
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_read(fuse_req_t, fuse_ino_t, size_t, off_t, unique_transaction);
+  Inflight_read(fuse_req_t, fdbfs_ino_t, size_t, off_t, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
   ActionT callback();
 
-  const fuse_ino_t ino;
+  const fdbfs_ino_t ino;
   const size_t requested_size; // size of the read
   const off_t off;             // offset into file
 };
 
 template <typename ActionT>
-Inflight_read<ActionT>::Inflight_read(fuse_req_t req, fuse_ino_t ino,
+Inflight_read<ActionT>::Inflight_read(fuse_req_t req, fdbfs_ino_t ino,
                                       size_t size, off_t off,
                                       unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino),

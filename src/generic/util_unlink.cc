@@ -18,7 +18,7 @@ std::expected<bool, int> keyvalue_range_is_empty(FDBFuture *future) {
 
 std::expected<UnlinkParsedInode, UnlinkParseError>
 parse_unlink_target_inode(FDBFuture *inode_metadata_future,
-                          fuse_ino_t expected_ino) {
+                          fdbfs_ino_t expected_ino) {
   const FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
@@ -66,14 +66,14 @@ parse_unlink_target_inode(FDBFuture *inode_metadata_future,
       continue;
     }
     if (kv.key_length <
-        inode_key_length + 1 + static_cast<int>(sizeof(fuse_ino_t))) {
+        inode_key_length + 1 + static_cast<int>(sizeof(fdbfs_ino_t))) {
       return std::unexpected(
           UnlinkParseError{.err = EIO, .why = "malformed use record key"});
     }
 
     // this one shouldn't be possible, and reflects either a bug in our code
     // or breakage in foundationdb
-    fuse_ino_t encoded_ino = 0;
+    fdbfs_ino_t encoded_ino = 0;
     memcpy(&encoded_ino, kv.key + key_prefix.size() + 1, sizeof(encoded_ino));
     encoded_ino = be64toh(encoded_ino);
     if (encoded_ino != expected_ino) {

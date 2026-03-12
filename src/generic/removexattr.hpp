@@ -41,11 +41,11 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_removexattr(fuse_req_t, fuse_ino_t, std::string, unique_transaction);
+  Inflight_removexattr(fuse_req_t, fdbfs_ino_t, std::string, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
-  const fuse_ino_t ino;
+  const fdbfs_ino_t ino;
   const std::string name;
 
   fdb_error_t configure_transaction() override;
@@ -56,7 +56,7 @@ private:
 
 template <typename ActionT>
 Inflight_removexattr<ActionT>::Inflight_removexattr(
-    fuse_req_t req, fuse_ino_t ino, std::string name,
+    fuse_req_t req, fdbfs_ino_t ino, std::string name,
     unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino), name(std::move(name)) {
   track_inode_for_fsync(ino);

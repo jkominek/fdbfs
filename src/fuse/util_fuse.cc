@@ -53,7 +53,7 @@ int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
       std::make_shared<struct fdbfs_filehandle>(ino, atime));
   *(extract_fdbfs_filehandle_slot(fi)) = slot;
 
-  auto generation = increment_lookup_count(ino);
+  auto generation = increment_lookup_count(static_cast<fdbfs_ino_t>(ino));
   // open should only arrive for an inode that was already looked up.
   assert(!generation.has_value());
 
@@ -61,7 +61,8 @@ int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
     // release won't be called if open failed.
     free_fdbfs_filehandle_slot(fi);
 
-    auto clear_generation = decrement_lookup_count(ino, 1);
+    auto clear_generation =
+        decrement_lookup_count(static_cast<fdbfs_ino_t>(ino), 1);
     // paired decrement should never drop to zero under the same invariant.
     assert(!clear_generation.has_value());
     return -1;

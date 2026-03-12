@@ -124,7 +124,7 @@ protected:
   void wait_on_future(FDBFuture *, unique_future &);
   [[nodiscard]] virtual std::unique_ptr<AttemptStateT<ActionT>>
   create_attempt_state() = 0;
-  void track_inode_for_fsync(fuse_ino_t ino);
+  void track_inode_for_fsync(fdbfs_ino_t ino);
   [[nodiscard]] virtual ActionT oplog_recovery(const OpLogRecord &);
   void reset_attempt_state();
   [[nodiscard]] bool should_check_oplog() const;
@@ -137,7 +137,7 @@ private:
   const InflightRuntimePolicy *policy;
   // single callback for completion, intended for use by FilehandleSerializer
   std::function<void()> on_done;
-  std::unordered_map<fuse_ino_t, FsyncBarrierTable::Token> fsync_tokens;
+  std::unordered_map<fdbfs_ino_t, FsyncBarrierTable::Token> fsync_tokens;
   bool commit_unknown_seen = false;
   std::optional<uint64_t> op_id;
   std::unique_ptr<AttemptStateT<ActionT>> attempt;

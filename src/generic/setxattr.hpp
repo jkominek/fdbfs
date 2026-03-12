@@ -50,12 +50,12 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_setxattr(fuse_req_t, fuse_ino_t, std::string, std::vector<uint8_t>,
+  Inflight_setxattr(fuse_req_t, fdbfs_ino_t, std::string, std::vector<uint8_t>,
                     SetXattrBehavior, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
-  const fuse_ino_t ino;
+  const fdbfs_ino_t ino;
   const std::string name;
   const std::vector<uint8_t> xattr_value;
   const SetXattrBehavior behavior;
@@ -67,7 +67,7 @@ private:
 
 template <typename ActionT>
 Inflight_setxattr<ActionT>::Inflight_setxattr(
-    fuse_req_t req, fuse_ino_t ino, std::string name,
+    fuse_req_t req, fdbfs_ino_t ino, std::string name,
     std::vector<uint8_t> xattr_value, SetXattrBehavior behavior,
     unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino),

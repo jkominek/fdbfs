@@ -43,16 +43,16 @@ public:
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_getattr(fuse_req_t, fuse_ino_t, unique_transaction);
+  Inflight_getattr(fuse_req_t, fdbfs_ino_t, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
-  const fuse_ino_t ino;
+  const fdbfs_ino_t ino;
   ActionT callback();
 };
 
 template <typename ActionT>
-Inflight_getattr<ActionT>::Inflight_getattr(fuse_req_t req, fuse_ino_t ino,
+Inflight_getattr<ActionT>::Inflight_getattr(fuse_req_t req, fdbfs_ino_t ino,
                                             unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino) {}
 

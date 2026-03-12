@@ -52,15 +52,15 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_rename(fuse_req_t, fuse_ino_t, std::string, fuse_ino_t, std::string,
+  Inflight_rename(fuse_req_t, fdbfs_ino_t, std::string, fdbfs_ino_t, std::string,
                   int, unique_transaction transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
-  const fuse_ino_t oldparent;
+  const fdbfs_ino_t oldparent;
   const std::string oldname;
 
-  const fuse_ino_t newparent;
+  const fdbfs_ino_t newparent;
   const std::string newname;
 
   const unsigned int flags;
@@ -72,8 +72,8 @@ private:
 };
 
 template <typename ActionT>
-Inflight_rename<ActionT>::Inflight_rename(fuse_req_t req, fuse_ino_t oldparent,
-                                 std::string oldname, fuse_ino_t newparent,
+Inflight_rename<ActionT>::Inflight_rename(fuse_req_t req, fdbfs_ino_t oldparent,
+                                 std::string oldname, fdbfs_ino_t newparent,
                                  std::string newname, int flags,
                                  unique_transaction transaction)
     : Base(req, std::move(transaction)), oldparent(oldparent),

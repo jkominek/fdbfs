@@ -30,7 +30,7 @@ keyvalue_range_is_empty(FDBFuture *future);
 
 [[nodiscard]] std::expected<UnlinkParsedInode, UnlinkParseError>
 parse_unlink_target_inode(FDBFuture *inode_metadata_future,
-                          fuse_ino_t expected_ino);
+                          fdbfs_ino_t expected_ino);
 
 [[nodiscard]] std::expected<void, int>
 apply_unlink_target_mutation(FDBTransaction *transaction, INodeRecord &inode,

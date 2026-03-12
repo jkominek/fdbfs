@@ -39,12 +39,12 @@ public:
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_getxattr(fuse_req_t, fuse_ino_t, std::string, size_t,
+  Inflight_getxattr(fuse_req_t, fdbfs_ino_t, std::string, size_t,
                     unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
-  const fuse_ino_t ino;
+  const fdbfs_ino_t ino;
   const std::string name;
   const size_t maxsize;
 
@@ -53,7 +53,7 @@ private:
 
 template <typename ActionT>
 Inflight_getxattr<ActionT>::Inflight_getxattr(
-    fuse_req_t req, fuse_ino_t ino, std::string name, size_t maxsize,
+    fuse_req_t req, fdbfs_ino_t ino, std::string name, size_t maxsize,
     unique_transaction transaction)
     : Base(req, std::move(transaction)),
       ino(ino), name(name), maxsize(maxsize) {}

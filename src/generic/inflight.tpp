@@ -71,7 +71,7 @@ template <typename ActionT> void InflightT<ActionT>::reset_attempt_state() {
 }
 
 template <typename ActionT>
-void InflightT<ActionT>::track_inode_for_fsync(fuse_ino_t ino) {
+void InflightT<ActionT>::track_inode_for_fsync(fdbfs_ino_t ino) {
   if (fsync_tokens.find(ino) != fsync_tokens.end()) {
     return;
   }
@@ -511,11 +511,11 @@ template <typename ActionT> ActionT Inflight_markusedT<ActionT>::check_inode() {
     return ActionT::FDBError(err);
 
   if (!present) {
-    (void)decrement_lookup_count(entry.ino, 1);
+    (void)decrement_lookup_count(static_cast<fdbfs_ino_t>(entry.ino), 1);
     return ActionT::Abort(EIO);
   }
 
-  auto use_key = pack_inode_use_key(entry.ino);
+  auto use_key = pack_inode_use_key(static_cast<fdbfs_ino_t>(entry.ino));
   const uint64_t generation_le = htole64(generation);
   fdb_transaction_atomic_op(this->transaction.get(), use_key.data(),
                             use_key.size(),
@@ -529,9 +529,11 @@ template <typename ActionT> ActionT Inflight_markusedT<ActionT>::reply_entry() {
   return ActionT::ImmediateEntry(
       entry, [entry = this->entry](InflightT<ActionT> *) {
         // if reply failed, kernel won't hold a reference for this lookup.
-        auto generation_to_clear = decrement_lookup_count(entry.ino, 1);
+        auto generation_to_clear =
+            decrement_lookup_count(static_cast<fdbfs_ino_t>(entry.ino), 1);
         if (generation_to_clear.has_value()) {
-          best_effort_clear_inode_use_record(entry.ino, *generation_to_clear);
+          best_effort_clear_inode_use_record(
+              static_cast<fdbfs_ino_t>(entry.ino), *generation_to_clear);
         }
       });
 }

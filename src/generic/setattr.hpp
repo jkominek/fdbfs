@@ -53,12 +53,12 @@ public:
   };
   using SuccessReply = std::variant<SuccessReplyAttr, SuccessReplyOpen>;
 
-  Inflight_setattr(fuse_req_t, fuse_ino_t, struct stat, int, unique_transaction,
+  Inflight_setattr(fuse_req_t, fdbfs_ino_t, struct stat, int, unique_transaction,
                    SuccessReply = SuccessReplyAttr{});
   InflightCallbackT<ActionT> issue();
 
 private:
-  const fuse_ino_t ino;
+  const fdbfs_ino_t ino;
   const struct stat attr{};
   const int to_set;
   const SuccessReply success_reply;
@@ -72,7 +72,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_setattr<ActionT>::Inflight_setattr(fuse_req_t req, fuse_ino_t ino,
+Inflight_setattr<ActionT>::Inflight_setattr(fuse_req_t req, fdbfs_ino_t ino,
                                             struct stat attr, int to_set,
                                             unique_transaction transaction,
                                             SuccessReply success_reply)

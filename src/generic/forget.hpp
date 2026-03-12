@@ -19,7 +19,7 @@
 template <typename ActionT>
 struct AttemptState_forget : public AttemptStateT<ActionT> {};
 struct ForgetEntry {
-  fuse_ino_t ino;
+  fdbfs_ino_t ino;
   uint64_t generation;
 };
 

@@ -52,9 +52,9 @@ public:
   std::list<LockRequest> lock_requests;
 };
 
-std::unordered_set<fuse_ino_t> inodes_to_process;
+std::unordered_set<fdbfs_ino_t> inodes_to_process;
 std::mutex inodes_to_process_mutex;
-std::unordered_map<fuse_ino_t, InodeLockRecord> inode_locks;
+std::unordered_map<fdbfs_ino_t, InodeLockRecord> inode_locks;
 std::shared_mutex inode_locks_mutex;
 
 std::atomic<bool> ready{false};
@@ -75,7 +75,7 @@ find_conflict_for_owner_lock(pid_t pid, short locktype,
   return std::nullopt;
 }
 
-std::optional<LockConflict> query_lock_conflict(fuse_ino_t ino, uint64_t owner,
+std::optional<LockConflict> query_lock_conflict(fdbfs_ino_t ino, uint64_t owner,
                                                 short locktype,
                                                 ByteRange range) {
   if (locktype == F_UNLCK) {
@@ -122,7 +122,7 @@ std::optional<LockConflict> query_lock_conflict(fuse_ino_t ino, uint64_t owner,
   return std::nullopt;
 }
 
-void queue_lock_manipulation(fuse_req_t req, fuse_ino_t ino, uint64_t owner,
+void queue_lock_manipulation(fuse_req_t req, fdbfs_ino_t ino, uint64_t owner,
                              pid_t pid, bool blocking, short locktype,
                              ByteRange range) {
   {
@@ -159,7 +159,7 @@ void *lock_manager(void *ignore) {
       break;
     }
 
-    std::unordered_set<fuse_ino_t> to_process;
+    std::unordered_set<fdbfs_ino_t> to_process;
     {
       std::scoped_lock lock(inodes_to_process_mutex);
       if (inodes_to_process.empty()) {
@@ -173,7 +173,7 @@ void *lock_manager(void *ignore) {
 
     {
       std::shared_lock lock(inode_locks_mutex);
-      for (fuse_ino_t ino : to_process) {
+      for (fdbfs_ino_t ino : to_process) {
         auto it = inode_locks.find(ino);
         if (it == inode_locks.end()) {
           continue;

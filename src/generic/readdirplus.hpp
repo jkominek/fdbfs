@@ -39,7 +39,7 @@ public:
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_readdirplus(fuse_req_t, fuse_ino_t,
+  Inflight_readdirplus(fuse_req_t, fdbfs_ino_t,
                        typename ActionT::DirentCollectorSpec, off_t,
                        unique_transaction);
   InflightCallbackT<ActionT> issue();
@@ -49,14 +49,14 @@ private:
   ActionT callback();
   ActionT reply_buffer();
 
-  const fuse_ino_t ino;
+  const fdbfs_ino_t ino;
   const typename ActionT::DirentCollectorSpec collector_spec;
   const off_t off;
 };
 
 template <typename ActionT>
 Inflight_readdirplus<ActionT>::Inflight_readdirplus(
-    fuse_req_t req, fuse_ino_t ino,
+    fuse_req_t req, fdbfs_ino_t ino,
     typename ActionT::DirentCollectorSpec collector_spec, off_t off,
     unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino),
@@ -154,7 +154,7 @@ ActionT Inflight_readdirplus<ActionT>::callback() {
 
   auto collector = ActionT::make_dirent_collector(req, off, collector_spec);
 
-  std::vector<std::pair<fuse_ino_t, uint64_t>> use_records;
+  std::vector<std::pair<fdbfs_ino_t, uint64_t>> use_records;
   use_records.reserve(a().entries.size());
 
   for (size_t i = 0; i < a().entries.size(); i++) {

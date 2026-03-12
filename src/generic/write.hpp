@@ -27,7 +27,7 @@
 
 namespace {
 
-std::expected<std::pair<fuse_ino_t, uint64_t>, int>
+std::expected<std::pair<fdbfs_ino_t, uint64_t>, int>
 decode_fileblock_identity(const FDBKeyValue &kv) {
   if (kv.key_length < fileblock_key_length) {
     return std::unexpected(EIO);
@@ -35,7 +35,7 @@ decode_fileblock_identity(const FDBKeyValue &kv) {
 
   const size_t key_prefix_size = key_prefix.size();
   if (static_cast<size_t>(kv.key_length) <
-      (key_prefix_size + 1 + sizeof(fuse_ino_t) + sizeof(uint64_t))) {
+      (key_prefix_size + 1 + sizeof(fdbfs_ino_t) + sizeof(uint64_t))) {
     return std::unexpected(EIO);
   }
   if (!std::equal(key_prefix.begin(), key_prefix.end(), kv.key)) {
@@ -45,10 +45,10 @@ decode_fileblock_identity(const FDBKeyValue &kv) {
     return std::unexpected(EIO);
   }
 
-  fuse_ino_t ino_be = 0;
+  fdbfs_ino_t ino_be = 0;
   uint64_t block_be = 0;
-  bcopy(kv.key + key_prefix_size + 1, &ino_be, sizeof(fuse_ino_t));
-  bcopy(kv.key + key_prefix_size + 1 + sizeof(fuse_ino_t), &block_be,
+  bcopy(kv.key + key_prefix_size + 1, &ino_be, sizeof(fdbfs_ino_t));
+  bcopy(kv.key + key_prefix_size + 1 + sizeof(fdbfs_ino_t), &block_be,
         sizeof(uint64_t));
   return std::make_pair(be64toh(ino_be), be64toh(block_be));
 }
@@ -105,12 +105,12 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_write(fuse_req_t, fuse_ino_t, std::vector<uint8_t>, off_t,
+  Inflight_write(fuse_req_t, fdbfs_ino_t, std::vector<uint8_t>, off_t,
                  unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
-  const fuse_ino_t ino;
+  const fdbfs_ino_t ino;
   const std::vector<uint8_t> buffer;
   const off_t off;
 
@@ -121,7 +121,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_write<ActionT>::Inflight_write(fuse_req_t req, fuse_ino_t ino,
+Inflight_write<ActionT>::Inflight_write(fuse_req_t req, fdbfs_ino_t ino,
                                std::vector<uint8_t> buffer, off_t off,
                                unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino),

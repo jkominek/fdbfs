@@ -34,7 +34,7 @@
  */
 template <typename ActionT>
 struct AttemptState_lookup : public AttemptStateT<ActionT> {
-  fuse_ino_t target = 0;
+  fdbfs_ino_t target = 0;
   unique_future dirent_fetch;
   unique_future inode_fetch;
 };
@@ -50,11 +50,11 @@ public:
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_lookup(fuse_req_t, fuse_ino_t, std::string, unique_transaction);
+  Inflight_lookup(fuse_req_t, fdbfs_ino_t, std::string, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
-  const fuse_ino_t parent;
+  const fdbfs_ino_t parent;
   const std::string name;
 
   // issue looks up the dirent and then...
@@ -63,7 +63,7 @@ private:
 };
 
 template <typename ActionT>
-Inflight_lookup<ActionT>::Inflight_lookup(fuse_req_t req, fuse_ino_t parent,
+Inflight_lookup<ActionT>::Inflight_lookup(fuse_req_t req, fdbfs_ino_t parent,
                                           std::string name,
                                           unique_transaction transaction)
     : Base(req, std::move(transaction)), parent(parent), name(std::move(name)) {

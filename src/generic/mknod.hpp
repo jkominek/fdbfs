@@ -32,7 +32,7 @@ struct AttemptState_mknod : public AttemptStateT<ActionT> {
   unique_future dirinode_fetch;
   unique_future inode_check;
   unique_future dirent_check;
-  fuse_ino_t ino = 0;
+  fdbfs_ino_t ino = 0;
   struct stat attr{};
 };
 
@@ -50,12 +50,12 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_mknod(fuse_req_t, fuse_ino_t, std::string, mode_t, filetype, dev_t,
+  Inflight_mknod(fuse_req_t, fdbfs_ino_t, std::string, mode_t, filetype, dev_t,
                  unique_transaction, std::optional<std::string>);
   InflightCallbackT<ActionT> issue();
 
 private:
-  const fuse_ino_t parent;
+  const fdbfs_ino_t parent;
   const std::string name;
   const filetype type;
   const mode_t mode;
@@ -68,7 +68,7 @@ private:
 
 template <typename ActionT>
 Inflight_mknod<ActionT>::Inflight_mknod(
-    fuse_req_t req, fuse_ino_t parent, std::string name, mode_t mode,
+    fuse_req_t req, fdbfs_ino_t parent, std::string name, mode_t mode,
     filetype type, dev_t rdev, unique_transaction transaction,
     std::optional<std::string> symlink_target_opt)
     : Base(req, std::move(transaction)), parent(parent), name(std::move(name)),

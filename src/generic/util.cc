@@ -74,7 +74,7 @@ void shut_it_down() {
   shut_it_down_forever = true;
 }
 
-void best_effort_clear_inode_use_record(fuse_ino_t ino, uint64_t generation) {
+void best_effort_clear_inode_use_record(fdbfs_ino_t ino, uint64_t generation) {
   auto result = run_sync_transaction<int>([ino, generation](FDBTransaction *t) {
     const auto key = pack_inode_use_key(ino);
     const uint64_t generation_le = htole64(generation);
@@ -102,13 +102,13 @@ void best_effort_clear_inode_use_record(fuse_ino_t ino, uint64_t generation) {
 // TODO if the FDB networking became multithreaded, or
 // we could otherwise process responses in a multithreaded
 // fashion, we'd need locking.
-std::unordered_map<fuse_ino_t, LookupState> lookup_counts;
+std::unordered_map<fdbfs_ino_t, LookupState> lookup_counts;
 std::mutex lookup_counts_mutex;
 uint64_t next_lookup_generation = 1;
 
 // if this returns a value, the caller is obligated to
 // publish a use record with the generation.
-std::optional<uint64_t> increment_lookup_count(fuse_ino_t ino) {
+std::optional<uint64_t> increment_lookup_count(fdbfs_ino_t ino) {
   std::lock_guard<std::mutex> guard(lookup_counts_mutex);
   auto it = lookup_counts.find(ino);
   if (it != lookup_counts.end()) {
@@ -131,7 +131,7 @@ std::optional<uint64_t> increment_lookup_count(fuse_ino_t ino) {
 
 // if this returns a value, the caller is obligated to
 // clear the inode-adjacent record iff generation matches.
-std::optional<uint64_t> decrement_lookup_count(fuse_ino_t ino, uint64_t count) {
+std::optional<uint64_t> decrement_lookup_count(fdbfs_ino_t ino, uint64_t count) {
   std::lock_guard<std::mutex> guard(lookup_counts_mutex);
   auto it = lookup_counts.find(ino);
   if (it == lookup_counts.end()) {
@@ -156,7 +156,7 @@ std::optional<uint64_t> decrement_lookup_count(fuse_ino_t ino, uint64_t count) {
   }
 }
 
-bool lookup_count_nonzero(fuse_ino_t ino) {
+bool lookup_count_nonzero(fdbfs_ino_t ino) {
   std::lock_guard<std::mutex> guard(lookup_counts_mutex);
   auto it = lookup_counts.find(ino);
   if (it == lookup_counts.end()) {
@@ -214,20 +214,20 @@ ByteRange offset_size_to_byte_range(off_t off, size_t size) {
 std::vector<uint8_t> key_prefix;
 
 int inode_key_length;
-std::vector<uint8_t> pack_inode_key(fuse_ino_t _ino, char prefix,
+std::vector<uint8_t> pack_inode_key(fdbfs_ino_t _ino, char prefix,
                                     const std::vector<uint8_t> &suffix) {
   auto key = key_prefix;
   key.push_back(prefix);
 
-  const fuse_ino_t ino = htobe64(_ino);
+  const fdbfs_ino_t ino = htobe64(_ino);
   const auto tmp = reinterpret_cast<const uint8_t *>(&ino);
-  key.insert(key.end(), tmp, tmp + sizeof(fuse_ino_t));
+  key.insert(key.end(), tmp, tmp + sizeof(fdbfs_ino_t));
 
   key.insert(key.end(), suffix.begin(), suffix.end());
   return key;
 }
 
-std::vector<uint8_t> pack_garbage_key(fuse_ino_t ino) {
+std::vector<uint8_t> pack_garbage_key(fdbfs_ino_t ino) {
   return pack_inode_key(ino, GARBAGE_PREFIX);
 }
 
@@ -253,7 +253,7 @@ std::vector<uint8_t> pack_oplog_key(const std::vector<uint8_t> &owner_pid,
   return key;
 }
 
-std::vector<uint8_t> pack_inode_use_key(fuse_ino_t ino) {
+std::vector<uint8_t> pack_inode_use_key(fdbfs_ino_t ino) {
   auto key = pack_inode_key(ino);
   key.push_back(INODE_USE_PREFIX);
   key.insert(key.end(), pid.begin(), pid.end());
@@ -262,7 +262,7 @@ std::vector<uint8_t> pack_inode_use_key(fuse_ino_t ino) {
 
 int fileblock_prefix_length;
 int fileblock_key_length;
-std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t _block,
+std::vector<uint8_t> pack_fileblock_key(fdbfs_ino_t ino, uint64_t _block,
                                         const std::vector<uint8_t> &suffix) {
   auto key = pack_inode_key(ino, DATA_PREFIX);
 
@@ -288,21 +288,21 @@ std::vector<uint8_t> pack_fileblock_key(fuse_ino_t ino, uint64_t _block,
 }
 
 int dirent_prefix_length;
-std::vector<uint8_t> pack_dentry_key(fuse_ino_t ino, const std::string &name) {
+std::vector<uint8_t> pack_dentry_key(fdbfs_ino_t ino, const std::string &name) {
   auto key = pack_inode_key(ino, DENTRY_PREFIX);
 
   key.insert(key.end(), name.begin(), name.end());
   return key;
 }
 
-std::vector<uint8_t> pack_xattr_key(fuse_ino_t ino, const std::string &name) {
+std::vector<uint8_t> pack_xattr_key(fdbfs_ino_t ino, const std::string &name) {
   auto key = pack_inode_key(ino, XATTR_NODE_PREFIX);
 
   key.insert(key.end(), name.begin(), name.end());
   return key;
 }
 
-std::vector<uint8_t> pack_xattr_data_key(fuse_ino_t ino,
+std::vector<uint8_t> pack_xattr_data_key(fdbfs_ino_t ino,
                                          const std::string &name) {
   auto key = pack_inode_key(ino, XATTR_DATA_PREFIX);
 
@@ -379,10 +379,10 @@ range_keys pack_garbage_subspace_range() {
 
 // metadata keys for one inode (metadata, lock, use records).
 // [ pack_inode_key(ino), pack_inode_key(ino + 1) ) with max-ino fallback.
-range_keys pack_inode_subspace_range(fuse_ino_t ino) {
+range_keys pack_inode_subspace_range(fdbfs_ino_t ino) {
   auto start = pack_inode_key(ino);
   std::vector<uint8_t> stop;
-  if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+  if (ino != std::numeric_limits<fdbfs_ino_t>::max()) {
     stop = pack_inode_key(ino + 1);
   } else {
     stop = key_prefix;
@@ -395,7 +395,7 @@ range_keys pack_inode_subspace_range(fuse_ino_t ino) {
 // all inode-use records for one inode (across all hosts/pids).
 // [ pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX}),
 //   pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX + 1}) ).
-range_keys pack_inode_use_subspace_range(fuse_ino_t ino) {
+range_keys pack_inode_use_subspace_range(fdbfs_ino_t ino) {
   auto start = pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX});
   auto stop = pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX + 1});
   assert(start < stop);
@@ -404,7 +404,7 @@ range_keys pack_inode_use_subspace_range(fuse_ino_t ino) {
 
 // inode metadata key and its adjacent use-record subspace.
 // [ pack_inode_key(ino), pack_inode_key(ino, INODE_PREFIX, {0x02}) ).
-range_keys pack_inode_metadata_and_use_range(fuse_ino_t ino) {
+range_keys pack_inode_metadata_and_use_range(fdbfs_ino_t ino) {
   auto start = pack_inode_key(ino);
   auto stop = pack_inode_key(ino, INODE_PREFIX, {0x02});
   assert(start < stop);
@@ -418,12 +418,12 @@ range_keys pack_inode_metadata_and_use_range(fuse_ino_t ino) {
 // all physical key variants for one logical file block.
 // [ pack_fileblock_key(ino, block), pack_fileblock_key(ino, block + 1) )
 // with max-block fallback into the next inode or next top-level subspace.
-range_keys pack_fileblock_single_range(fuse_ino_t ino, uint64_t block) {
+range_keys pack_fileblock_single_range(fdbfs_ino_t ino, uint64_t block) {
   auto start = pack_fileblock_key(ino, block);
   std::vector<uint8_t> stop;
   if (block != std::numeric_limits<uint64_t>::max()) {
     stop = pack_fileblock_key(ino, block + 1);
-  } else if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+  } else if (ino != std::numeric_limits<fdbfs_ino_t>::max()) {
     stop = pack_fileblock_key(ino + 1, 0);
   } else {
     stop = key_prefix;
@@ -436,13 +436,13 @@ range_keys pack_fileblock_single_range(fuse_ino_t ino, uint64_t block) {
 // all data blocks for one inode, from start_block through stop_block.
 // [ pack_fileblock_key(ino, start_block),
 //   pack_fileblock_key(ino, stop_block + 1) ) with max-block fallback.
-range_keys pack_fileblock_span_range(fuse_ino_t ino, uint64_t start_block,
+range_keys pack_fileblock_span_range(fdbfs_ino_t ino, uint64_t start_block,
                                      uint64_t stop_block) {
   auto start = pack_fileblock_key(ino, start_block);
   std::vector<uint8_t> stop;
   if (stop_block != std::numeric_limits<uint64_t>::max()) {
     stop = pack_fileblock_key(ino, stop_block + 1);
-  } else if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+  } else if (ino != std::numeric_limits<fdbfs_ino_t>::max()) {
     stop = pack_fileblock_key(ino + 1, 0);
   } else {
     stop = key_prefix;
@@ -455,10 +455,10 @@ range_keys pack_fileblock_span_range(fuse_ino_t ino, uint64_t start_block,
 // all directory-entry keys for one parent inode.
 // [ pack_inode_key(ino, DENTRY_PREFIX),
 //   pack_inode_key(ino + 1, DENTRY_PREFIX) ) with max-ino fallback.
-range_keys pack_dentry_subspace_range(fuse_ino_t ino) {
+range_keys pack_dentry_subspace_range(fdbfs_ino_t ino) {
   auto start = pack_inode_key(ino, DENTRY_PREFIX);
   std::vector<uint8_t> stop;
-  if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+  if (ino != std::numeric_limits<fdbfs_ino_t>::max()) {
     stop = pack_inode_key(ino + 1, DENTRY_PREFIX);
   } else {
     stop = key_prefix;
@@ -471,10 +471,10 @@ range_keys pack_dentry_subspace_range(fuse_ino_t ino) {
 // all xattr-node (name/value-pointer) keys for one inode.
 // [ pack_inode_key(ino, XATTR_NODE_PREFIX),
 //   pack_inode_key(ino + 1, XATTR_NODE_PREFIX) ) with max-ino fallback.
-range_keys pack_xattr_node_subspace_range(fuse_ino_t ino) {
+range_keys pack_xattr_node_subspace_range(fdbfs_ino_t ino) {
   auto start = pack_inode_key(ino, XATTR_NODE_PREFIX);
   std::vector<uint8_t> stop;
-  if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+  if (ino != std::numeric_limits<fdbfs_ino_t>::max()) {
     stop = pack_inode_key(ino + 1, XATTR_NODE_PREFIX);
   } else {
     stop = key_prefix;
@@ -487,10 +487,10 @@ range_keys pack_xattr_node_subspace_range(fuse_ino_t ino) {
 // all xattr-data payload keys for one inode.
 // [ pack_inode_key(ino, XATTR_DATA_PREFIX),
 //   pack_inode_key(ino + 1, XATTR_DATA_PREFIX) ) with max-ino fallback.
-range_keys pack_xattr_data_subspace_range(fuse_ino_t ino) {
+range_keys pack_xattr_data_subspace_range(fdbfs_ino_t ino) {
   auto start = pack_inode_key(ino, XATTR_DATA_PREFIX);
   std::vector<uint8_t> stop;
-  if (ino != std::numeric_limits<fuse_ino_t>::max()) {
+  if (ino != std::numeric_limits<fdbfs_ino_t>::max()) {
     stop = pack_inode_key(ino + 1, XATTR_DATA_PREFIX);
   } else {
     stop = key_prefix;
@@ -603,7 +603,7 @@ void unpack_stat_record_into_stat(const StatRecord &record, struct stat &attr) {
   attr.st_blocks = record.blocks();
 }
 
-range_keys offset_size_to_range_keys(fuse_ino_t ino, size_t off, size_t size) {
+range_keys offset_size_to_range_keys(fdbfs_ino_t ino, size_t off, size_t size) {
   uint64_t start_block = off >> BLOCKBITS;
   uint64_t stop_block = ((off + size - 1) >> BLOCKBITS);
   return pack_fileblock_span_range(ino, start_block, stop_block);
@@ -645,7 +645,7 @@ void update_directory_times(FDBTransaction *transaction, INodeRecord &inode) {
   (void)fdb_set_protobuf(transaction, pack_inode_key(inode.inode()), inode);
 }
 
-void erase_inode(FDBTransaction *transaction, fuse_ino_t ino) {
+void erase_inode(FDBTransaction *transaction, fdbfs_ino_t ino) {
   // inode data
   fdbfs_transaction_clear_range(transaction, pack_inode_subspace_range(ino));
 
@@ -810,17 +810,17 @@ std::expected<void, int> set_fileblock(FDBTransaction *transaction,
   if (key.size() != static_cast<size_t>(fileblock_key_length))
     return std::unexpected(EINVAL);
   if ((key.size() <
-       (key_prefix.size() + 1 + sizeof(fuse_ino_t) + sizeof(uint64_t))) ||
+       (key_prefix.size() + 1 + sizeof(fdbfs_ino_t) + sizeof(uint64_t))) ||
       !std::equal(key_prefix.begin(), key_prefix.end(), key.begin()) ||
       (key[key_prefix.size()] != DATA_PREFIX))
     return std::unexpected(EINVAL);
 
   // Remove all physical key variants for this logical block (raw/compressed),
   // then write back exactly one selected encoding below.
-  fuse_ino_t ino_be = 0;
+  fdbfs_ino_t ino_be = 0;
   uint64_t block_be = 0;
-  bcopy(key.data() + key_prefix.size() + 1, &ino_be, sizeof(fuse_ino_t));
-  bcopy(key.data() + key_prefix.size() + 1 + sizeof(fuse_ino_t), &block_be,
+  bcopy(key.data() + key_prefix.size() + 1, &ino_be, sizeof(fdbfs_ino_t));
+  bcopy(key.data() + key_prefix.size() + 1 + sizeof(fdbfs_ino_t), &block_be,
         sizeof(uint64_t));
   fdbfs_transaction_clear_range(
       transaction,

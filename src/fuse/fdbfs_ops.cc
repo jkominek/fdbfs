@@ -38,6 +38,12 @@
 #include "generic/util_locks.h"
 #include "generic/write.hpp"
 
+namespace {
+[[nodiscard]] inline fdbfs_ino_t to_fdbfs_ino(fuse_ino_t ino) {
+  return static_cast<fdbfs_ino_t>(ino);
+}
+} // namespace
+
 extern "C" void fdbfs_init(void *userdata, struct fuse_conn_info *conn) {
   (void)userdata;
   // transactions have to finish in under 5 seconds, so unless
@@ -72,8 +78,8 @@ extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent,
     return;
   }
   std::string sname(name);
-  auto *inflight = new Inflight_lookup<FuseInflightAction>(req, parent, sname,
-                                                           make_transaction());
+  auto *inflight = new Inflight_lookup<FuseInflightAction>(
+      req, to_fdbfs_ino(parent), sname, make_transaction());
   inflight->start();
 }
 
@@ -81,8 +87,8 @@ extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent,
 extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
                               struct fuse_file_info *fi) {
   // get the file attributes of an inode
-  auto *inflight =
-      new Inflight_getattr<FuseInflightAction>(req, ino, make_transaction());
+  auto *inflight = new Inflight_getattr<FuseInflightAction>(
+      req, to_fdbfs_ino(ino), make_transaction());
   inflight->start();
 }
 
@@ -93,7 +99,7 @@ extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
   auto collector_spec = FuseInflightAction::make_dirent_collector_spec(
       std::min(size, static_cast<size_t>(1 << 16)));
   auto *inflight = new Inflight_readdir<FuseInflightAction>(
-      req, ino, collector_spec, off, make_transaction());
+      req, to_fdbfs_ino(ino), collector_spec, off, make_transaction());
 
   inflight->start();
 }
@@ -105,7 +111,7 @@ extern "C" void fdbfs_readdirplus(fuse_req_t req, fuse_ino_t ino, size_t size,
   auto collector_spec =
       FuseInflightAction::make_dirent_collector_spec(size, true);
   auto *inflight = new Inflight_readdirplus<FuseInflightAction>(
-      req, ino, collector_spec, off, make_transaction());
+      req, to_fdbfs_ino(ino), collector_spec, off, make_transaction());
   inflight->start();
 }
 
@@ -146,8 +152,8 @@ extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
   // given inode, figure out the appropriate key range, and
   // start reading it, filling it into a buffer to be sent back
   // with fuse_reply_buf
-  auto *inflight = new Inflight_read<FuseInflightAction>(req, ino, size, off,
-                                                         make_transaction());
+  auto *inflight = new Inflight_read<FuseInflightAction>(
+      req, to_fdbfs_ino(ino), size, off, make_transaction());
   auto &serializer = fh->serializer;
   if (!serializer.enqueue_inflight(inflight,
                                    offset_size_to_byte_range(off, size))) {
@@ -190,7 +196,7 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name,
   }
 
   auto *inflight = new Inflight_mknod<FuseInflightAction>(
-      req, parent, name, mode & (~S_IFMT), deduced_type, rdev,
+      req, to_fdbfs_ino(parent), name, mode & (~S_IFMT), deduced_type, rdev,
       make_transaction(), std::nullopt);
   inflight->start();
 }
@@ -202,8 +208,8 @@ extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
     return;
   }
   auto *inflight = new Inflight_mknod<FuseInflightAction>(
-      req, parent, name, mode & (~S_IFMT), ft_directory, 0, make_transaction(),
-      std::nullopt);
+      req, to_fdbfs_ino(parent), name, mode & (~S_IFMT), ft_directory, 0,
+      make_transaction(), std::nullopt);
   inflight->start();
 }
 
@@ -215,8 +221,8 @@ extern "C" void fdbfs_symlink(fuse_req_t req, const char *target,
     return;
   }
   auto *inflight = new Inflight_mknod<FuseInflightAction>(
-      req, parent, name, 0777 & (~S_IFMT), ft_symlink, 0, make_transaction(),
-      std::string(target));
+      req, to_fdbfs_ino(parent), name, 0777 & (~S_IFMT), ft_symlink, 0,
+      make_transaction(), std::string(target));
   inflight->start();
 }
 
@@ -227,7 +233,7 @@ extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t ino, const char *name) {
     return;
   }
   auto *inflight = new Inflight_unlink_rmdir<FuseInflightAction>(
-      req, ino, name, Op::Unlink, make_transaction());
+      req, to_fdbfs_ino(ino), name, Op::Unlink, make_transaction());
   inflight->start();
 }
 
@@ -237,7 +243,7 @@ extern "C" void fdbfs_rmdir(fuse_req_t req, fuse_ino_t ino, const char *name) {
     return;
   }
   auto *inflight = new Inflight_unlink_rmdir<FuseInflightAction>(
-      req, ino, name, Op::Rmdir, make_transaction());
+      req, to_fdbfs_ino(ino), name, Op::Rmdir, make_transaction());
   inflight->start();
 }
 
@@ -249,14 +255,16 @@ extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent,
     return;
   }
   auto *inflight = new Inflight_link<FuseInflightAction>(
-      req, ino, newparent, std::string(newname), make_transaction());
+      req, to_fdbfs_ino(ino), to_fdbfs_ino(newparent), std::string(newname),
+      make_transaction());
   inflight->start();
 }
 
 // ==== readlink ====
 extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino) {
   auto *inflight =
-      new Inflight_readlink<FuseInflightAction>(req, ino, make_transaction());
+      new Inflight_readlink<FuseInflightAction>(req, to_fdbfs_ino(ino),
+                                                make_transaction());
   inflight->start();
 }
 
@@ -264,7 +272,7 @@ extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino) {
 extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
                               int to_set, struct fuse_file_info *fi) {
   auto *inflight = new Inflight_setattr<FuseInflightAction>(
-      req, ino, *attr, to_set, make_transaction());
+      req, to_fdbfs_ino(ino), *attr, to_set, make_transaction());
   if ((to_set & FUSE_SET_ATTR_SIZE) && (fi != nullptr)) {
     if (attr->st_size < 0) {
       // admittedly unlikely we'll get a negative value from the kernel
@@ -301,7 +309,7 @@ extern "C" void fdbfs_setattr_open_trunc(fuse_req_t req, fuse_ino_t ino,
   // in it, which is fine. we don't need to serialize this operation since
   // the file doesn't exist until we return. so there's nothing to serialize.
   auto *inflight = new Inflight_setattr<FuseInflightAction>(
-      req, ino, attr, FUSE_SET_ATTR_SIZE, make_transaction(),
+      req, to_fdbfs_ino(ino), attr, FUSE_SET_ATTR_SIZE, make_transaction(),
       Inflight_setattr<FuseInflightAction>::SuccessReplyOpen{*fi});
   inflight->start();
 }
@@ -315,8 +323,8 @@ extern "C" void fdbfs_rename(fuse_req_t req, fuse_ino_t parent,
     return;
   }
   auto *inflight = new Inflight_rename<FuseInflightAction>(
-      req, parent, std::string(name), newparent, std::string(newname), flags,
-      make_transaction());
+      req, to_fdbfs_ino(parent), std::string(name), to_fdbfs_ino(newparent),
+      std::string(newname), flags, make_transaction());
   inflight->start();
 }
 
@@ -340,8 +348,8 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
   }
 
   std::vector<uint8_t> buffer(buf, buf + size);
-  auto *inflight = new Inflight_write<FuseInflightAction>(req, ino, buffer, off,
-                                                          make_transaction());
+  auto *inflight = new Inflight_write<FuseInflightAction>(
+      req, to_fdbfs_ino(ino), buffer, off, make_transaction());
 
   auto &serializer = fh->serializer;
   if (!serializer.enqueue_inflight(inflight,
@@ -355,10 +363,10 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 // ==== forget ====
 extern "C" void fdbfs_forget(fuse_req_t req, fuse_ino_t ino, uint64_t ncount) {
   // we've only got to issue an fdb transaction if decrement says so
-  auto generation = decrement_lookup_count(ino, ncount);
+  auto generation = decrement_lookup_count(to_fdbfs_ino(ino), ncount);
   if (generation.has_value()) {
     std::vector<ForgetEntry> entries(1);
-    entries[0] = ForgetEntry{ino, *generation};
+    entries[0] = ForgetEntry{to_fdbfs_ino(ino), *generation};
     auto *inflight = new Inflight_forget<FuseInflightAction>(
         req, std::move(entries), make_transaction());
     inflight->start();
@@ -373,9 +381,9 @@ extern "C" void fdbfs_forget_multi(fuse_req_t req, size_t count,
   entries.reserve(count);
   for (size_t i = 0; i < count; i++) {
     auto generation =
-        decrement_lookup_count(forgets[i].ino, forgets[i].nlookup);
+        decrement_lookup_count(to_fdbfs_ino(forgets[i].ino), forgets[i].nlookup);
     if (generation.has_value()) {
-      entries.push_back(ForgetEntry{forgets[i].ino, *generation});
+      entries.push_back(ForgetEntry{to_fdbfs_ino(forgets[i].ino), *generation});
     }
   }
   if (entries.size() > 0) {
@@ -404,7 +412,7 @@ extern "C" void fdbfs_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
   }
 
   auto *inflight = new Inflight_getxattr<FuseInflightAction>(
-      req, ino, name, size, make_transaction());
+      req, to_fdbfs_ino(ino), name, size, make_transaction());
   inflight->start();
 }
 
@@ -426,7 +434,7 @@ extern "C" void fdbfs_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
   std::vector<uint8_t> vvalue(value, value + size);
 
   auto *inflight = new Inflight_setxattr<FuseInflightAction>(
-      req, ino, sname, vvalue, behavior, make_transaction());
+      req, to_fdbfs_ino(ino), sname, vvalue, behavior, make_transaction());
   inflight->start();
 }
 
@@ -440,7 +448,7 @@ extern "C" void fdbfs_removexattr(fuse_req_t req, fuse_ino_t ino,
 
   std::string sname(name);
   auto *inflight = new Inflight_removexattr<FuseInflightAction>(
-      req, ino, sname, make_transaction());
+      req, to_fdbfs_ino(ino), sname, make_transaction());
   inflight->start();
 }
 
@@ -448,11 +456,11 @@ extern "C" void fdbfs_removexattr(fuse_req_t req, fuse_ino_t ino,
 extern "C" void fdbfs_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size) {
   if (size == 0) {
     auto *inflight = new Inflight_listxattr_count<FuseInflightAction>(
-        req, ino, make_transaction());
+        req, to_fdbfs_ino(ino), make_transaction());
     inflight->start();
   } else {
     auto *inflight = new Inflight_listxattr<FuseInflightAction>(
-        req, ino, size, make_transaction());
+        req, to_fdbfs_ino(ino), size, make_transaction());
     inflight->start();
   }
 }
@@ -472,7 +480,8 @@ extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
     auto lock_owner = fi->lock_owner;
     barrier_callback = [req, ino, lock_owner]() {
       ByteRange range(0, std::numeric_limits<off_t>::max());
-      queue_lock_manipulation(req, ino, lock_owner, 0, 0, F_UNLCK, range);
+      queue_lock_manipulation(req, to_fdbfs_ino(ino), lock_owner, 0, 0, F_UNLCK,
+                              range);
     };
   } else {
     barrier_callback = [req]() { fuse_reply_err(req, 0); };
@@ -489,14 +498,14 @@ extern "C" void fdbfs_fsync(fuse_req_t req, fuse_ino_t ino, int datasync,
                             struct fuse_file_info *fi) {
   (void)datasync;
   (void)fi;
-  g_fsync_barrier_table.fsync_async(ino, req);
+  g_fsync_barrier_table.fsync_async(to_fdbfs_ino(ino), req);
 }
 
 extern "C" void fdbfs_fsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync,
                                struct fuse_file_info *fi) {
   (void)datasync;
   (void)fi;
-  g_fsync_barrier_table.fsync_async(ino, req);
+  g_fsync_barrier_table.fsync_async(to_fdbfs_ino(ino), req);
 }
 
 // ==== release ====
@@ -510,9 +519,9 @@ extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
 
   if (!fh->serializer.enqueue_barrier(
           [req, ino, fh]() {
-            auto generation = decrement_lookup_count(ino, 1);
+            auto generation = decrement_lookup_count(to_fdbfs_ino(ino), 1);
             if (generation.has_value()) {
-              best_effort_clear_inode_use_record(ino, *generation);
+              best_effort_clear_inode_use_record(to_fdbfs_ino(ino), *generation);
             }
             fuse_reply_err(req, 0);
           },
@@ -534,7 +543,8 @@ extern "C" void fdbfs_getlk(fuse_req_t req, fuse_ino_t ino,
   }
 
   auto conflict =
-      query_lock_conflict(ino, fi->lock_owner, lock->l_type, range.value());
+      query_lock_conflict(to_fdbfs_ino(ino), fi->lock_owner, lock->l_type,
+                          range.value());
   if (!conflict.has_value()) {
     lock->l_type = F_UNLCK;
     lock->l_whence = SEEK_SET;
@@ -578,8 +588,8 @@ extern "C" void fdbfs_setlk(fuse_req_t req, fuse_ino_t ino,
     return;
   }
 
-  queue_lock_manipulation(req, ino, fi->lock_owner, lock->l_pid, sleep != 0,
-                          lock->l_type, range.value());
+  queue_lock_manipulation(req, to_fdbfs_ino(ino), fi->lock_owner, lock->l_pid,
+                          sleep != 0, lock->l_type, range.value());
 }
 
 #if 0

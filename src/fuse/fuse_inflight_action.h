@@ -210,7 +210,8 @@ public:
   }
   static Self Entry(struct fuse_entry_param e) {
     return Self(true, false, false, [e](InflightT<Self> *i) {
-      auto generation = increment_lookup_count(e.ino);
+      auto generation =
+          increment_lookup_count(static_cast<fdbfs_ino_t>(e.ino));
       if (generation.has_value()) {
         // first lookup for this inode in local kernel cache; publish
         // a use record before replying to fuse.

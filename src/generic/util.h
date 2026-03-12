@@ -28,6 +28,7 @@
 
 #include <expected>
 #include <functional>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -60,6 +61,7 @@ extern thread_pool pool;
 
 #define PID_LENGTH 16
 
+using fdbfs_ino_t = uint64_t;
 using ByteRange = boost::icl::discrete_interval<off_t>;
 
 // will be filled out before operation begins
@@ -78,36 +80,36 @@ struct LookupState {
   uint64_t count;
   uint64_t generation;
 };
-extern std::unordered_map<fuse_ino_t, LookupState> lookup_counts;
+extern std::unordered_map<fdbfs_ino_t, LookupState> lookup_counts;
 extern std::mutex lookup_counts_mutex;
 
-[[nodiscard]] extern std::optional<uint64_t> increment_lookup_count(fuse_ino_t);
-[[nodiscard]] extern std::optional<uint64_t> decrement_lookup_count(fuse_ino_t,
+[[nodiscard]] extern std::optional<uint64_t> increment_lookup_count(fdbfs_ino_t);
+[[nodiscard]] extern std::optional<uint64_t> decrement_lookup_count(fdbfs_ino_t,
                                                                     uint64_t);
-[[nodiscard]] extern bool lookup_count_nonzero(fuse_ino_t);
+[[nodiscard]] extern bool lookup_count_nonzero(fdbfs_ino_t);
 
-extern void best_effort_clear_inode_use_record(fuse_ino_t ino,
+extern void best_effort_clear_inode_use_record(fdbfs_ino_t ino,
                                                uint64_t generation);
 extern void fdbfs_set_thread_name(const char *fmt, ...);
 
 [[nodiscard]] extern std::vector<uint8_t>
-pack_inode_key(fuse_ino_t, char = INODE_PREFIX,
+pack_inode_key(fdbfs_ino_t, char = INODE_PREFIX,
                const std::vector<uint8_t> &suffix = {});
-[[nodiscard]] extern std::vector<uint8_t> pack_garbage_key(fuse_ino_t);
+[[nodiscard]] extern std::vector<uint8_t> pack_garbage_key(fdbfs_ino_t);
 [[nodiscard]] extern std::vector<uint8_t>
 pack_pid_key(std::vector<uint8_t>, const std::vector<uint8_t> &suffix = {});
 [[nodiscard]] extern std::vector<uint8_t>
 pack_oplog_key(const std::vector<uint8_t> &owner_pid, uint64_t op_id);
-[[nodiscard]] extern std::vector<uint8_t> pack_inode_use_key(fuse_ino_t);
+[[nodiscard]] extern std::vector<uint8_t> pack_inode_use_key(fdbfs_ino_t);
 [[nodiscard]] extern std::vector<uint8_t>
-pack_fileblock_key(fuse_ino_t, uint64_t,
+pack_fileblock_key(fdbfs_ino_t, uint64_t,
                    const std::vector<uint8_t> &suffix = {});
-[[nodiscard]] extern std::vector<uint8_t> pack_dentry_key(fuse_ino_t,
+[[nodiscard]] extern std::vector<uint8_t> pack_dentry_key(fdbfs_ino_t,
                                                           const std::string &);
 [[nodiscard]] extern std::vector<uint8_t>
-pack_xattr_key(fuse_ino_t ino, const std::string &name = {});
+pack_xattr_key(fdbfs_ino_t ino, const std::string &name = {});
 [[nodiscard]] extern std::vector<uint8_t>
-pack_xattr_data_key(fuse_ino_t ino, const std::string &name = {});
+pack_xattr_data_key(fdbfs_ino_t ino, const std::string &name = {});
 extern void print_key(std::vector<uint8_t>);
 extern void pack_inode_record_into_stat(const INodeRecord &inode,
                                         struct stat &attr);
@@ -141,17 +143,17 @@ pack_oplog_subspace_range(const std::vector<uint8_t> &owner_pid);
 [[nodiscard]] extern range_keys
 pack_local_oplog_span_range(uint64_t start_op_id, uint64_t stop_op_id);
 [[nodiscard]] extern range_keys pack_garbage_subspace_range();
-[[nodiscard]] extern range_keys pack_inode_subspace_range(fuse_ino_t);
-[[nodiscard]] extern range_keys pack_inode_use_subspace_range(fuse_ino_t);
-[[nodiscard]] extern range_keys pack_inode_metadata_and_use_range(fuse_ino_t);
-[[nodiscard]] extern range_keys pack_fileblock_single_range(fuse_ino_t,
+[[nodiscard]] extern range_keys pack_inode_subspace_range(fdbfs_ino_t);
+[[nodiscard]] extern range_keys pack_inode_use_subspace_range(fdbfs_ino_t);
+[[nodiscard]] extern range_keys pack_inode_metadata_and_use_range(fdbfs_ino_t);
+[[nodiscard]] extern range_keys pack_fileblock_single_range(fdbfs_ino_t,
                                                             uint64_t);
-[[nodiscard]] extern range_keys pack_fileblock_span_range(fuse_ino_t, uint64_t,
+[[nodiscard]] extern range_keys pack_fileblock_span_range(fdbfs_ino_t, uint64_t,
                                                           uint64_t);
-[[nodiscard]] extern range_keys pack_dentry_subspace_range(fuse_ino_t);
-[[nodiscard]] extern range_keys pack_xattr_node_subspace_range(fuse_ino_t);
-[[nodiscard]] extern range_keys pack_xattr_data_subspace_range(fuse_ino_t);
-[[nodiscard]] range_keys offset_size_to_range_keys(fuse_ino_t, size_t, size_t);
+[[nodiscard]] extern range_keys pack_dentry_subspace_range(fdbfs_ino_t);
+[[nodiscard]] extern range_keys pack_xattr_node_subspace_range(fdbfs_ino_t);
+[[nodiscard]] extern range_keys pack_xattr_data_subspace_range(fdbfs_ino_t);
+[[nodiscard]] range_keys offset_size_to_range_keys(fdbfs_ino_t, size_t, size_t);
 [[nodiscard]] extern ByteRange offset_size_to_byte_range(off_t, size_t);
 
 [[nodiscard]] extern bool
@@ -162,7 +164,7 @@ extern void update_mtime(INodeRecord *, const struct timespec *);
 extern void update_ctime(INodeRecord *, const struct timespec *);
 extern void update_directory_times(FDBTransaction *, INodeRecord &);
 
-extern void erase_inode(FDBTransaction *, fuse_ino_t);
+extern void erase_inode(FDBTransaction *, fdbfs_ino_t);
 
 struct EncodedLogicalPayload {
   XAttrEncoding encoding;
