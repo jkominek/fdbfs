@@ -152,9 +152,9 @@ ActionT Inflight_mknod<ActionT>::postverification() {
   else
     inode.set_size(0);
   inode.set_rdev(rdev);
-  const fuse_ctx *ctx = ActionT::request_ctx(this->req);
-  inode.set_uid(ctx->uid);
-  inode.set_gid(ctx->gid);
+  const fdbfs_request_ctx ctx = ActionT::request_ctx(this->req);
+  inode.set_uid(ctx.uid);
+  inode.set_gid(ctx.gid);
 
   struct timespec tp;
   clock_gettime(CLOCK_REALTIME, &tp);

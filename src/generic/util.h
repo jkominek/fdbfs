@@ -63,6 +63,12 @@ extern thread_pool pool;
 
 using fdbfs_ino_t = uint64_t;
 using ByteRange = boost::icl::discrete_interval<off_t>;
+struct fdbfs_request_ctx {
+  uid_t uid;
+  gid_t gid;
+  pid_t pid;
+  mode_t umask;
+};
 
 // will be filled out before operation begins
 extern FDBDatabase *database;

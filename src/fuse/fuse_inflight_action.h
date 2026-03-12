@@ -15,8 +15,7 @@ public:
 
   class DirentCollector {
   public:
-    DirentCollector(req_t req, off_t start_off,
-                    const DirentCollectorSpec &spec)
+    DirentCollector(req_t req, off_t start_off, const DirentCollectorSpec &spec)
         : req(req), plus_mode(spec.plus_mode), next_offset(start_off + 1),
           buf(spec.max_bytes) {}
 
@@ -45,9 +44,9 @@ public:
       return std::max<size_t>(1, remaining / estimated_entry_size);
     }
 
-    [[nodiscard]] DirentAddResult
-    try_add(std::string_view name, const DirectoryEntry &entry,
-            const INodeRecord *inode = nullptr) {
+    [[nodiscard]] DirentAddResult try_add(std::string_view name,
+                                          const DirectoryEntry &entry,
+                                          const INodeRecord *inode = nullptr) {
       const size_t remaining = buf.size() - consumed;
       if (remaining == 0) {
         return std::unexpected(DirentAddError::NoSpace);
@@ -113,8 +112,9 @@ public:
     };
   }
 
-  static DirentCollector make_dirent_collector(
-      req_t req, off_t start_off, const DirentCollectorSpec &spec) {
+  static DirentCollector
+  make_dirent_collector(req_t req, off_t start_off,
+                        const DirentCollectorSpec &spec) {
     return DirentCollector(req, start_off, spec);
   }
 
@@ -125,8 +125,14 @@ public:
   static bool request_interrupted(req_t req) {
     return fuse_req_interrupted(req);
   }
-  static const fuse_ctx *request_ctx(req_t req) {
-    return fuse_req_ctx(req);
+  static fdbfs_request_ctx request_ctx(req_t req) {
+    const fuse_ctx *ctx = fuse_req_ctx(req);
+    return fdbfs_request_ctx{
+        .uid = ctx->uid,
+        .gid = ctx->gid,
+        .pid = ctx->pid,
+        .umask = ctx->umask,
+    };
   }
   static void trace_errno_error(const char *kind, int err, const char *why,
                                 const std::source_location &loc) {
@@ -231,9 +237,9 @@ public:
       }
     });
   }
-  static Self ImmediateEntry(
-      struct stat attr,
-      std::function<void(InflightT<Self> *)> on_failure = {}) {
+  static Self
+  ImmediateEntry(struct stat attr,
+                 std::function<void(InflightT<Self> *)> on_failure = {}) {
     return Self(true, false, false,
                 [attr, on_failure = std::move(on_failure)](InflightT<Self> *i) {
                   struct fuse_entry_param e{};
