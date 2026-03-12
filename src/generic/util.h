@@ -40,7 +40,11 @@
 #include <boost/icl/interval_set.hpp>
 #include <boost/icl/split_interval_map.hpp>
 
+#include "thread_pool.hpp"
 #include "values.pb.h"
+
+// Pool used for processing our callbacks
+extern thread_pool pool;
 
 #define INODE_PREFIX 'i'
 #define INODE_USE_PREFIX 0x01
@@ -68,6 +72,8 @@ extern int fileblock_prefix_length;
 extern int fileblock_key_length;
 extern int inode_key_length;
 extern int dirent_prefix_length;
+extern bool shut_it_down_forever;
+extern void shut_it_down();
 struct LookupState {
   uint64_t count;
   uint64_t generation;
@@ -149,8 +155,7 @@ pack_local_oplog_span_range(uint64_t start_op_id, uint64_t stop_op_id);
 [[nodiscard]] extern ByteRange offset_size_to_byte_range(off_t, size_t);
 
 [[nodiscard]] extern bool
-filename_length_check(const char *,
-                      size_t maxlength = MAXFILENAMELEN);
+filename_length_check(const char *, size_t maxlength = MAXFILENAMELEN);
 
 extern void update_atime(INodeRecord *, const struct timespec *);
 extern void update_mtime(INodeRecord *, const struct timespec *);

@@ -22,6 +22,8 @@
 
 #include "values.pb.h"
 
+thread_pool pool;
+
 namespace {
 
 bool trace_errors_enabled() {
@@ -60,6 +62,16 @@ unique_future wrap_future(FDBFuture *f) {
   unique_future uf;
   uf.reset(f);
   return uf;
+}
+
+bool shut_it_down_forever = false;
+
+void shut_it_down() {
+  // all the future handlers will ENOTCONN when they're
+  // invoked. we could do this a little bit faster if
+  // we kept a set (or something) of all of the inflights,
+  // so we could just go down the list and delete them all.
+  shut_it_down_forever = true;
 }
 
 void best_effort_clear_inode_use_record(fuse_ino_t ino, uint64_t generation) {

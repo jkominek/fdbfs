@@ -46,8 +46,7 @@
 #include <utility>     // std::move
 
 #include <blockingconcurrentqueue.h>
-
-#include "util.h"
+extern void fdbfs_set_thread_name(const char *fmt, ...);
 
 // =============================================================================================
 // //

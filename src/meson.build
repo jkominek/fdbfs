@@ -14,4 +14,5 @@ project_source_files += files([
     'generic/util_locks.cc',
     'generic/util_unlink.cc',
     'generic/inflight.cc',
+    'generic/oplog.cc',
 ])

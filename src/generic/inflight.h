@@ -4,11 +4,11 @@
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <algorithm>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -27,14 +27,6 @@
 
 #include "fsync.h"
 #include "util.h"
-
-#include "thread_pool.hpp"
-
-// Pool used for processing our callbacks
-extern thread_pool pool;
-
-// Halt all inflights and prevent new ones from starting.
-extern void shut_it_down();
 
 // Yes: write op that needs oplog protection for maybe-committed retries.
 // IdempotentWrite: write op that can be safely retried without oplog check.
@@ -68,9 +60,6 @@ using OpLogResultVariant =
     std::variant<OpLogResultOK, OpLogResultEntry, OpLogResultAttr,
                  OpLogResultOpen, OpLogResultBuf, OpLogResultReadlink,
                  OpLogResultWrite, OpLogResultStatfs, OpLogResultXattrSize>;
-
-[[nodiscard]] extern std::optional<std::pair<uint64_t, uint64_t>>
-claim_local_oplog_cleanup_span();
 
 template <typename ActionT> using InflightCallbackT = std::function<ActionT()>;
 
@@ -164,7 +153,6 @@ private:
 #if DEBUG
   struct timespec clockstart;
 #endif
-
 };
 
 template <typename AttemptT, typename Policy, typename ActionT>

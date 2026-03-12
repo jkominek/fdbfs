@@ -16,8 +16,8 @@
 #include <string.h>
 #include <thread>
 
-#include "inflight.h"
 #include "liveness.h"
+#include "oplog.h"
 #include "util.h"
 
 /*************************************************************
