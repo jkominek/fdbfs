@@ -42,6 +42,35 @@ namespace {
 [[nodiscard]] inline fdbfs_ino_t to_fdbfs_ino(fuse_ino_t ino) {
   return static_cast<fdbfs_ino_t>(ino);
 }
+
+[[nodiscard]] inline SetAttrMask from_fuse_setattr_mask(int to_set) {
+  uint32_t bits = 0;
+  auto map_bit = [&](int fuse_flag, SetAttrBit bit) {
+    if (to_set & fuse_flag) {
+      bits |= static_cast<uint32_t>(bit);
+    }
+  };
+
+  map_bit(FUSE_SET_ATTR_MODE, SetAttrBit::Mode);
+  map_bit(FUSE_SET_ATTR_UID, SetAttrBit::Uid);
+  map_bit(FUSE_SET_ATTR_GID, SetAttrBit::Gid);
+  map_bit(FUSE_SET_ATTR_SIZE, SetAttrBit::Size);
+  map_bit(FUSE_SET_ATTR_ATIME, SetAttrBit::Atime);
+  map_bit(FUSE_SET_ATTR_MTIME, SetAttrBit::Mtime);
+  map_bit(FUSE_SET_ATTR_ATIME_NOW, SetAttrBit::AtimeNow);
+  map_bit(FUSE_SET_ATTR_MTIME_NOW, SetAttrBit::MtimeNow);
+  map_bit(FUSE_SET_ATTR_FORCE, SetAttrBit::Force);
+  map_bit(FUSE_SET_ATTR_CTIME, SetAttrBit::Ctime);
+  map_bit(FUSE_SET_ATTR_KILL_SUID, SetAttrBit::KillSuid);
+  map_bit(FUSE_SET_ATTR_KILL_SGID, SetAttrBit::KillSgid);
+  map_bit(FUSE_SET_ATTR_FILE, SetAttrBit::File);
+  map_bit(FUSE_SET_ATTR_KILL_PRIV, SetAttrBit::KillPriv);
+  map_bit(FUSE_SET_ATTR_OPEN, SetAttrBit::Open);
+  map_bit(FUSE_SET_ATTR_TIMES_SET, SetAttrBit::TimesSet);
+  map_bit(FUSE_SET_ATTR_TOUCH, SetAttrBit::Touch);
+
+  return SetAttrMask::from_raw(bits);
+}
 } // namespace
 
 extern "C" void fdbfs_init(void *userdata, struct fuse_conn_info *conn) {
@@ -271,9 +300,10 @@ extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino) {
 // ==== setattr ====
 extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
                               int to_set, struct fuse_file_info *fi) {
+  const SetAttrMask set_attr_mask = from_fuse_setattr_mask(to_set);
   auto *inflight = new Inflight_setattr<FuseInflightAction>(
-      req, to_fdbfs_ino(ino), *attr, to_set, make_transaction());
-  if ((to_set & FUSE_SET_ATTR_SIZE) && (fi != nullptr)) {
+      req, to_fdbfs_ino(ino), *attr, set_attr_mask, make_transaction());
+  if (set_attr_mask.has(SetAttrBit::Size) && (fi != nullptr)) {
     if (attr->st_size < 0) {
       // admittedly unlikely we'll get a negative value from the kernel
       delete inflight;
@@ -309,8 +339,9 @@ extern "C" void fdbfs_setattr_open_trunc(fuse_req_t req, fuse_ino_t ino,
   // in it, which is fine. we don't need to serialize this operation since
   // the file doesn't exist until we return. so there's nothing to serialize.
   auto *inflight = new Inflight_setattr<FuseInflightAction>(
-      req, to_fdbfs_ino(ino), attr, FUSE_SET_ATTR_SIZE, make_transaction(),
-      Inflight_setattr<FuseInflightAction>::SuccessReplyOpen{*fi});
+      req, to_fdbfs_ino(ino), attr, SetAttrMask(SetAttrBit::Size),
+      make_transaction(),
+      Inflight_setattr<FuseInflightAction>::SuccessReplyOpen{fi->flags});
   inflight->start();
 }
 

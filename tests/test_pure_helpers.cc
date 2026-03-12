@@ -42,14 +42,14 @@ std::vector<std::vector<uint8_t>> prefix_cases() {
   return out;
 }
 
-std::vector<fuse_ino_t> inode_cases() {
-  std::vector<fuse_ino_t> out = {
+std::vector<fdbfs_ino_t> inode_cases() {
+  std::vector<fdbfs_ino_t> out = {
       0ULL,
       1ULL,
       0x0102030405060708ULL,
       0x1111222233334444ULL,
-      std::numeric_limits<fuse_ino_t>::max() - 1,
-      std::numeric_limits<fuse_ino_t>::max(),
+      std::numeric_limits<fdbfs_ino_t>::max() - 1,
+      std::numeric_limits<fdbfs_ino_t>::max(),
   };
   std::sort(out.begin(), out.end());
   out.erase(std::unique(out.begin(), out.end()), out.end());
@@ -120,7 +120,7 @@ TEST_CASE("prefix_range_end ordering and tightness", "[pure][helpers][range]") {
     key_prefix = prefix;
 
     for (size_t i = 0; i + 1 < inodes.size(); i++) {
-      if (inodes[i] == std::numeric_limits<fuse_ino_t>::max()) {
+      if (inodes[i] == std::numeric_limits<fdbfs_ino_t>::max()) {
         continue;
       }
       const auto k = pack_inode_key(inodes[i]);
@@ -156,8 +156,8 @@ TEST_CASE("pack helpers: monotonic numeric ordering", "[pure][helpers][pack]") {
     key_prefix = prefix;
 
     for (size_t i = 0; i + 1 < inodes.size(); i++) {
-      const fuse_ino_t a = inodes[i];
-      const fuse_ino_t b = inodes[i + 1];
+      const fdbfs_ino_t a = inodes[i];
+      const fdbfs_ino_t b = inodes[i + 1];
       REQUIRE(a < b);
 
       CHECK(pack_inode_key(a) < pack_inode_key(b));
@@ -179,7 +179,7 @@ TEST_CASE("pack helpers: monotonic numeric ordering", "[pure][helpers][pack]") {
       CHECK(pack_inode_use_key(b) > pack_inode_use_key(a));
     }
 
-    const fuse_ino_t ino = 1;
+    const fdbfs_ino_t ino = 1;
     for (size_t i = 0; i + 1 < blocks.size(); i++) {
       const uint64_t a = blocks[i];
       const uint64_t b = blocks[i + 1];
@@ -234,7 +234,7 @@ TEST_CASE("pack range helpers: start-stop and containment", "[pure][helpers][ran
     CHECK(range_contains(oplog_span, pack_oplog_key(pid, 4)));
     CHECK(!range_contains(oplog_span, pack_oplog_key(pid, 5)));
 
-    for (fuse_ino_t ino : inodes) {
+    for (fdbfs_ino_t ino : inodes) {
       const auto inode_r = pack_inode_subspace_range(ino);
       CHECK(inode_r.first < inode_r.second);
       CHECK(range_contains(inode_r, pack_inode_key(ino)));
@@ -279,8 +279,8 @@ TEST_CASE("pack ranges: ordering and non-overlap properties",
     key_prefix = prefix;
 
     for (size_t i = 0; i + 1 < inodes.size(); i++) {
-      const fuse_ino_t a = inodes[i];
-      const fuse_ino_t b = inodes[i + 1];
+      const fdbfs_ino_t a = inodes[i];
+      const fdbfs_ino_t b = inodes[i + 1];
       REQUIRE(a < b);
 
       const auto ia = pack_inode_subspace_range(a);
@@ -308,9 +308,9 @@ TEST_CASE("pack ranges: ordering and non-overlap properties",
     std::mt19937_64 rng(0x7c00de5ULL);
     std::uniform_int_distribution<uint64_t> ino_dist(
         2ULL, std::numeric_limits<uint64_t>::max() - 2ULL);
-    std::vector<fuse_ino_t> random_inodes;
+    std::vector<fdbfs_ino_t> random_inodes;
     for (int i = 0; i < 24; i++) {
-      random_inodes.push_back(static_cast<fuse_ino_t>(ino_dist(rng)));
+      random_inodes.push_back(static_cast<fdbfs_ino_t>(ino_dist(rng)));
     }
     std::sort(random_inodes.begin(), random_inodes.end());
     random_inodes.erase(std::unique(random_inodes.begin(), random_inodes.end()),
@@ -319,7 +319,7 @@ TEST_CASE("pack ranges: ordering and non-overlap properties",
     auto check_nonoverlap_by_ino = [&](auto make_range) {
       std::vector<range_keys> ranges;
       ranges.reserve(random_inodes.size());
-      for (fuse_ino_t ino : random_inodes) {
+      for (fdbfs_ino_t ino : random_inodes) {
         ranges.push_back(make_range(ino));
       }
       for (size_t i = 0; i < ranges.size(); i++) {
@@ -330,25 +330,25 @@ TEST_CASE("pack ranges: ordering and non-overlap properties",
     };
 
     check_nonoverlap_by_ino(
-        [&](fuse_ino_t ino) { return pack_inode_subspace_range(ino); });
+        [&](fdbfs_ino_t ino) { return pack_inode_subspace_range(ino); });
     check_nonoverlap_by_ino(
-        [&](fuse_ino_t ino) { return pack_fileblock_span_range(ino, 0, UINT64_MAX); });
+        [&](fdbfs_ino_t ino) { return pack_fileblock_span_range(ino, 0, UINT64_MAX); });
     check_nonoverlap_by_ino(
-        [&](fuse_ino_t ino) { return pack_dentry_subspace_range(ino); });
+        [&](fdbfs_ino_t ino) { return pack_dentry_subspace_range(ino); });
     check_nonoverlap_by_ino(
-        [&](fuse_ino_t ino) { return pack_xattr_node_subspace_range(ino); });
+        [&](fdbfs_ino_t ino) { return pack_xattr_node_subspace_range(ino); });
     check_nonoverlap_by_ino(
-        [&](fuse_ino_t ino) { return pack_xattr_data_subspace_range(ino); });
+        [&](fdbfs_ino_t ino) { return pack_xattr_data_subspace_range(ino); });
 
     // Cross-family non-overlap checks for selected inodes.
-    const std::vector<fuse_ino_t> selected_inodes = {
+    const std::vector<fdbfs_ino_t> selected_inodes = {
         0ULL,
         1ULL,
         0x0102030405060708ULL,
-        std::numeric_limits<fuse_ino_t>::max() - 1,
-        std::numeric_limits<fuse_ino_t>::max(),
+        std::numeric_limits<fdbfs_ino_t>::max() - 1,
+        std::numeric_limits<fdbfs_ino_t>::max(),
     };
-    for (const fuse_ino_t ino : selected_inodes) {
+    for (const fdbfs_ino_t ino : selected_inodes) {
       INFO("cross_family_ino=" << ino);
       const std::vector<range_keys> family_ranges = {
           pack_inode_subspace_range(ino),

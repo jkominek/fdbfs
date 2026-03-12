@@ -13,6 +13,46 @@
 #include "inflight.h"
 #include "util.h"
 
+enum class SetAttrBit : uint32_t {
+  Mode = (1u << 0),
+  Uid = (1u << 1),
+  Gid = (1u << 2),
+  Size = (1u << 3),
+  Atime = (1u << 4),
+  Mtime = (1u << 5),
+  AtimeNow = (1u << 7),
+  MtimeNow = (1u << 8),
+  Force = (1u << 9),
+  Ctime = (1u << 10),
+  KillSuid = (1u << 11),
+  KillSgid = (1u << 12),
+  File = (1u << 13),
+  KillPriv = (1u << 14),
+  Open = (1u << 15),
+  TimesSet = (1u << 16),
+  Touch = (1u << 17),
+};
+
+class SetAttrMask {
+public:
+  constexpr SetAttrMask() = default;
+  constexpr explicit SetAttrMask(SetAttrBit bit)
+      : bits_(static_cast<uint32_t>(bit)) {}
+  constexpr explicit SetAttrMask(uint32_t bits) : bits_(bits) {}
+
+  [[nodiscard]] static constexpr SetAttrMask from_raw(uint32_t bits) {
+    return SetAttrMask(bits);
+  }
+
+  [[nodiscard]] constexpr uint32_t raw() const { return bits_; }
+  [[nodiscard]] constexpr bool has(SetAttrBit bit) const {
+    return (bits_ & static_cast<uint32_t>(bit)) != 0;
+  }
+
+private:
+  uint32_t bits_ = 0;
+};
+
 /*************************************************************
  * setattr
  *************************************************************
@@ -50,18 +90,19 @@ public:
 
   struct SuccessReplyAttr {};
   struct SuccessReplyOpen {
-    struct fuse_file_info fi;
+    int flags;
   };
   using SuccessReply = std::variant<SuccessReplyAttr, SuccessReplyOpen>;
 
-  Inflight_setattr(req_t, fdbfs_ino_t, struct stat, int, unique_transaction,
+  Inflight_setattr(req_t, fdbfs_ino_t, struct stat, SetAttrMask,
+                   unique_transaction,
                    SuccessReply = SuccessReplyAttr{});
   InflightCallbackT<ActionT> issue();
 
 private:
   const fdbfs_ino_t ino;
   const struct stat attr{};
-  const int to_set;
+  const SetAttrMask to_set;
   const SuccessReply success_reply;
 
   fdb_error_t configure_transaction() override;
@@ -74,7 +115,8 @@ private:
 
 template <typename ActionT>
 Inflight_setattr<ActionT>::Inflight_setattr(req_t req, fdbfs_ino_t ino,
-                                            struct stat attr, int to_set,
+                                            struct stat attr,
+                                            SetAttrMask to_set,
                                             unique_transaction transaction,
                                             SuccessReply success_reply)
     : Base(req, std::move(transaction)), ino(ino), attr(attr),
@@ -92,9 +134,7 @@ template <typename ActionT>
 ActionT Inflight_setattr<ActionT>::commit_cb() {
   auto open_reply = std::get_if<SuccessReplyOpen>(&success_reply);
   if (open_reply != nullptr) {
-    // we copy fi because success_reply is const
-    struct fuse_file_info fi = open_reply->fi;
-    return ActionT::Open(ino, fi);
+    return ActionT::Open(ino, open_reply->flags);
   }
   struct stat newattr{};
   pack_inode_record_into_stat(a().inode, newattr);
@@ -107,10 +147,10 @@ bool Inflight_setattr<ActionT>::write_success_oplog_result() {
   if (open_reply != nullptr) {
     OpLogResultOpen result;
     result.set_ino(ino);
-    result.set_flags(open_reply->fi.flags);
-    result.set_direct_io(open_reply->fi.direct_io);
-    result.set_keep_cache(open_reply->fi.keep_cache);
-    result.set_nonseekable(open_reply->fi.nonseekable);
+    result.set_flags(open_reply->flags);
+    result.set_direct_io(false);
+    result.set_keep_cache(false);
+    result.set_nonseekable(false);
     return write_oplog_result(result);
   }
 
@@ -133,12 +173,7 @@ ActionT Inflight_setattr<ActionT>::oplog_recovery(const OpLogRecord &record) {
     return ActionT::Attr(attr);
   }
   case OpLogRecord::kOpen: {
-    struct fuse_file_info fi{};
-    fi.flags = record.open().flags();
-    fi.direct_io = record.open().direct_io();
-    fi.keep_cache = record.open().keep_cache();
-    fi.nonseekable = record.open().nonseekable();
-    return ActionT::Open(record.open().ino(), fi);
+    return ActionT::Open(record.open().ino(), record.open().flags());
   }
   default:
     return ActionT::Abort(EIO);
@@ -210,19 +245,19 @@ ActionT Inflight_setattr<ActionT>::callback() {
   // update inode!
 
   bool substantial_update = false;
-  if (to_set & FUSE_SET_ATTR_MODE) {
+  if (to_set.has(SetAttrBit::Mode)) {
     a().inode.set_mode(attr.st_mode & 07777);
     substantial_update = true;
   }
-  if (to_set & FUSE_SET_ATTR_UID) {
+  if (to_set.has(SetAttrBit::Uid)) {
     a().inode.set_uid(attr.st_uid);
     substantial_update = true;
   }
-  if (to_set & FUSE_SET_ATTR_GID) {
+  if (to_set.has(SetAttrBit::Gid)) {
     a().inode.set_gid(attr.st_gid);
     substantial_update = true;
   }
-  if (to_set & FUSE_SET_ATTR_SIZE) {
+  if (to_set.has(SetAttrBit::Size)) {
     if (static_cast<uint64_t>(attr.st_size) < a().inode.size()) {
       // they want to truncate the file. compute what blocks
       // need to be cleared.
@@ -254,30 +289,28 @@ ActionT Inflight_setattr<ActionT>::callback() {
       substantial_update = true;
     }
   }
-  if (to_set & FUSE_SET_ATTR_ATIME) {
+  if (to_set.has(SetAttrBit::Atime)) {
     a().inode.mutable_atime()->set_sec(attr.st_atim.tv_sec);
     a().inode.mutable_atime()->set_nsec(attr.st_atim.tv_nsec);
   }
-  if (to_set & FUSE_SET_ATTR_MTIME) {
+  if (to_set.has(SetAttrBit::Mtime)) {
     a().inode.mutable_mtime()->set_sec(attr.st_mtim.tv_sec);
     a().inode.mutable_mtime()->set_nsec(attr.st_mtim.tv_nsec);
   }
-#ifdef FUSE_SET_ATTR_CTIME
-  if (to_set & FUSE_SET_ATTR_CTIME) {
+  if (to_set.has(SetAttrBit::Ctime)) {
     a().inode.mutable_ctime()->set_sec(attr.st_ctim.tv_sec);
     a().inode.mutable_ctime()->set_nsec(attr.st_ctim.tv_nsec);
   }
-#endif
 
-  if ((to_set & FUSE_SET_ATTR_ATIME_NOW) ||
-      (to_set & FUSE_SET_ATTR_MTIME_NOW) || substantial_update) {
+  if (to_set.has(SetAttrBit::AtimeNow) || to_set.has(SetAttrBit::MtimeNow) ||
+      substantial_update) {
     struct timespec tp;
     clock_gettime(CLOCK_REALTIME, &tp);
-    if (to_set & FUSE_SET_ATTR_ATIME_NOW) {
+    if (to_set.has(SetAttrBit::AtimeNow)) {
       a().inode.mutable_atime()->set_sec(tp.tv_sec);
       a().inode.mutable_atime()->set_nsec(tp.tv_nsec);
     }
-    if ((to_set & FUSE_SET_ATTR_MTIME_NOW) || substantial_update) {
+    if (to_set.has(SetAttrBit::MtimeNow) || substantial_update) {
       a().inode.mutable_mtime()->set_sec(tp.tv_sec);
       a().inode.mutable_mtime()->set_nsec(tp.tv_nsec);
     }
@@ -287,7 +320,7 @@ ActionT Inflight_setattr<ActionT>::callback() {
     }
   }
 
-  if (substantial_update && !(to_set & FUSE_SET_ATTR_MODE) &&
+  if (substantial_update && !to_set.has(SetAttrBit::Mode) &&
       !(a().inode.has_type() && a().inode.type() == ft_directory)) {
     // strip setuid and setgid unless we just updated the mode,
     // or we're operating on a directory.

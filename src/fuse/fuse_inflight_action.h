@@ -258,9 +258,11 @@ public:
       fuse_reply_attr(i->req, &attr, 0.0);
     });
   }
-  static Self Open(fuse_ino_t ino, struct fuse_file_info fi) {
-    return Self(true, false, false, [ino, fi](InflightT<Self> *i) mutable {
-      (void)reply_open_with_handle(i->req, ino, &fi);
+  static Self Open(fdbfs_ino_t ino, int flags) {
+    return Self(true, false, false, [ino, flags](InflightT<Self> *i) mutable {
+      struct fuse_file_info fi{};
+      fi.flags = flags;
+      (void)reply_open_with_handle(i->req, static_cast<fuse_ino_t>(ino), &fi);
     });
   }
   static Self Buf(std::vector<uint8_t> buf, int actual_size = -1) {

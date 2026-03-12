@@ -1,8 +1,6 @@
 #ifndef __UTIL_H__
 #define __UTIL_H__
 
-#define FUSE_USE_VERSION 35
-#include <fuse_lowlevel.h>
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
@@ -25,6 +23,7 @@
 
 // for mode_t
 #include <sys/types.h>
+#include <sys/stat.h>
 
 #include <cstdint>
 #include <expected>
