@@ -17,6 +17,8 @@ project_includes = include_directories(
   'src',
   'src/generic',
   'src/fuse',
+  'tests',
+  'tests/fuse_integrated',
   'thirdparty/concurrentqueue'
 )
 
@@ -59,26 +61,26 @@ test(
 )
 
 test_sources = files(
-  'tests/test_dir_nlink.cc',
-  'tests/test_file_io.cc',
-  'tests/test_getattr.cc',
-  'tests/test_link.cc',
-  'tests/test_mkdir.cc',
-  'tests/test_mknod.cc',
-  'tests/test_mount.cc',
-  'tests/test_open.cc',
-  'tests/test_fsync.cc',
-  'tests/test_posix_locks.cc',
-  'tests/test_read.cc',
-  'tests/test_readdir.cc',
-  'tests/test_readlink.cc',
-  'tests/test_rename.cc',
-  'tests/test_rmdir.cc',
-  'tests/test_setattr.cc',
+  'tests/fuse_integrated/test_dir_nlink.cc',
+  'tests/fuse_integrated/test_file_io.cc',
+  'tests/fuse_integrated/test_getattr.cc',
+  'tests/fuse_integrated/test_link.cc',
+  'tests/fuse_integrated/test_mkdir.cc',
+  'tests/fuse_integrated/test_mknod.cc',
+  'tests/fuse_integrated/test_mount.cc',
+  'tests/fuse_integrated/test_open.cc',
+  'tests/fuse_integrated/test_fsync.cc',
+  'tests/fuse_integrated/test_posix_locks.cc',
+  'tests/fuse_integrated/test_read.cc',
+  'tests/fuse_integrated/test_readdir.cc',
+  'tests/fuse_integrated/test_readlink.cc',
+  'tests/fuse_integrated/test_rename.cc',
+  'tests/fuse_integrated/test_rmdir.cc',
+  'tests/fuse_integrated/test_setattr.cc',
   'tests/test_support.cc',
-  'tests/test_unlink.cc',
-  'tests/test_write.cc',
-  'tests/test_xattr.cc',
+  'tests/fuse_integrated/test_unlink.cc',
+  'tests/fuse_integrated/test_write.cc',
+  'tests/fuse_integrated/test_xattr.cc',
 )
 
 # If your tests need the same deps as the filesystem client libraries, add `deps` too.
@@ -109,7 +111,7 @@ test(
 #
 # Pass it via an environment variable so your tests don't depend on CWD assumptions.
 test(
-  'fdbfs_integration_empty',
+  'fdbfs_fuse_integrated_empty',
   test_exe,
   env : [
     'FDBFS_FS_EXE=' + fs_exe.full_path(),
@@ -121,7 +123,7 @@ test(
 )
 
 test(
-  'fdbfs_integration_seeded',
+  'fdbfs_fuse_integrated_seeded',
   test_exe,
   env : [
     'FDBFS_FS_EXE=' + fs_exe.full_path(),
