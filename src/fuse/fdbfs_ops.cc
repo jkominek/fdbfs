@@ -43,6 +43,8 @@ namespace {
   return static_cast<fdbfs_ino_t>(ino);
 }
 
+LockManagerService *g_lock_manager_service = nullptr;
+
 [[nodiscard]] inline SetAttrMask from_fuse_setattr_mask(int to_set) {
   uint32_t bits = 0;
   auto map_bit = [&](int fuse_flag, SetAttrBit bit) {
@@ -72,6 +74,10 @@ namespace {
   return SetAttrMask::from_raw(bits);
 }
 } // namespace
+
+void fdbfs_set_lock_manager_service(LockManagerService *service) {
+  g_lock_manager_service = service;
+}
 
 extern "C" void fdbfs_init(void *userdata, struct fuse_conn_info *conn) {
   (void)userdata;
@@ -510,8 +516,12 @@ extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
   if (fi->lock_owner) {
     auto lock_owner = fi->lock_owner;
     barrier_callback = [req, ino, lock_owner]() {
+      if (g_lock_manager_service == nullptr) {
+        fuse_reply_err(req, EIO);
+        return;
+      }
       ByteRange range(0, std::numeric_limits<off_t>::max());
-      queue_lock_manipulation(
+      g_lock_manager_service->queue_lock_manipulation(
           to_fdbfs_ino(ino), lock_owner, 0, 0, F_UNLCK, range,
           [req](std::expected<void, int> outcome) {
             fuse_reply_err(req, outcome ? 0 : outcome.error());
@@ -579,8 +589,11 @@ extern "C" void fdbfs_getlk(fuse_req_t req, fuse_ino_t ino,
   }
 
   auto conflict =
-      query_lock_conflict(to_fdbfs_ino(ino), fi->lock_owner, lock->l_type,
-                          range.value());
+      (g_lock_manager_service == nullptr)
+          ? std::nullopt
+          : g_lock_manager_service->query_lock_conflict(
+                to_fdbfs_ino(ino), fi->lock_owner, lock->l_type,
+                range.value());
   if (!conflict.has_value()) {
     lock->l_type = F_UNLCK;
     lock->l_whence = SEEK_SET;
@@ -624,7 +637,12 @@ extern "C" void fdbfs_setlk(fuse_req_t req, fuse_ino_t ino,
     return;
   }
 
-  queue_lock_manipulation(
+  if (g_lock_manager_service == nullptr) {
+    fuse_reply_err(req, EIO);
+    return;
+  }
+
+  g_lock_manager_service->queue_lock_manipulation(
       to_fdbfs_ino(ino), fi->lock_owner, lock->l_pid, sleep != 0, lock->l_type,
       range.value(), [req](std::expected<void, int> outcome) {
         fuse_reply_err(req, outcome ? 0 : outcome.error());

@@ -10,6 +10,7 @@ project_source_files += files([
     'fuse/inflight_instantiations.cc',
     'fuse/util_fuse.cc',
     'generic/garbage_collector.cc',
+    'generic/fdb_service.cc',
     'generic/liveness.cc',
     'generic/util.cc',
     'generic/util_locks.cc',

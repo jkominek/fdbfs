@@ -4,6 +4,8 @@
 #define FUSE_USE_VERSION 35
 #include <fuse_lowlevel.h>
 
+class LockManagerService;
+
 extern "C" void fdbfs_init(void *userdata, struct fuse_conn_info *conn);
 extern "C" void fdbfs_destroy(void *userdata);
 extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent,
@@ -67,5 +69,6 @@ extern "C" void fdbfs_setlk(fuse_req_t req, fuse_ino_t ino,
 
 extern "C" void fdbfs_setattr_open_trunc(fuse_req_t req, fuse_ino_t ino,
                                          struct fuse_file_info *fi);
+void fdbfs_set_lock_manager_service(LockManagerService *service);
 
 #endif

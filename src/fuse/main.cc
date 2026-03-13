@@ -18,18 +18,18 @@
 #include <unistd.h>
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
 #include "fdbfs_ops.h"
 #include "garbage_collector.h"
+#include "fdb_service.h"
 #include "liveness.h"
 #include "util.h"
 #include "util_locks.h"
 #include "values.pb.h"
 
-// will be filled out before operation begins
-FDBDatabase *database;
 uint8_t BLOCKBITS;
 uint32_t BLOCKSIZE; // 1<<BLOCKBITS
 
@@ -75,21 +75,64 @@ static struct fuse_lowlevel_ops fdbfs_oper = {
     .readdirplus = fdbfs_readdirplus,
 };
 
-pthread_t network_thread;
-bool network_thread_created = false;
+namespace {
 
-/* Purely to get the FoundationDB network stuff running in a
- * background thread. Passing fdb_run_network straight to
- * pthread_create kind of works, but let's pretend this will
- * be robust cross platform code someday.
- */
-void *network_runner(void *ignore) {
-  // TODO capture the return code and do something
-  if (fdb_run_network()) {
-    ;
+class FuseArgsGuard {
+public:
+  explicit FuseArgsGuard(struct fuse_args &args) : args_(args) {}
+  ~FuseArgsGuard() { fuse_opt_free_args(&args_); }
+
+private:
+  struct fuse_args &args_;
+};
+
+class FuseSessionService {
+public:
+  FuseSessionService(struct fuse_args &args, const char *mountpoint,
+                     const fuse_lowlevel_ops &ops, size_t ops_size) {
+    se_ = fuse_session_new(&args, &ops, ops_size, NULL);
+    if (se_ == NULL) {
+      throw std::runtime_error("fuse_session_new failed");
+    }
+
+    if (fuse_set_signal_handlers(se_) != 0) {
+      throw std::runtime_error("fuse_set_signal_handlers failed");
+    }
+    handlers_installed_ = true;
+
+    if (fuse_session_mount(se_, mountpoint) != 0) {
+      throw std::runtime_error("fuse_session_mount failed");
+    }
+    mounted_ = true;
   }
-  return NULL;
-}
+
+  ~FuseSessionService() {
+    if (mounted_) {
+      fuse_session_unmount(se_);
+    }
+    if (handlers_installed_) {
+      fuse_remove_signal_handlers(se_);
+    }
+    if (se_ != nullptr) {
+      fuse_session_destroy(se_);
+      se_ = nullptr;
+    }
+  }
+
+  FuseSessionService(const FuseSessionService &) = delete;
+  FuseSessionService &operator=(const FuseSessionService &) = delete;
+  FuseSessionService(FuseSessionService &&) = delete;
+  FuseSessionService &operator=(FuseSessionService &&) = delete;
+
+  [[nodiscard]] fuse_session *get() const { return se_; }
+
+private:
+  fuse_session *se_ = nullptr;
+  bool mounted_ = false;
+  bool handlers_installed_ = false;
+};
+
+} // namespace
 
 struct fdbfs_options {
   const char *key_prefix;
@@ -140,12 +183,12 @@ static void install_crash_signal_handlers() {
  */
 int main(int argc, char *argv[]) {
   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+  FuseArgsGuard args_guard(args);
   struct fuse_session *se;
   struct fuse_cmdline_opts opts;
   struct fuse_loop_config config;
   struct fdbfs_options fdbfs_opts = {.key_prefix = NULL, .buggify = 0};
-  int err = -1;
-  bool fdb_network_setup_done = false;
+  int err = 1;
 
   setvbuf(stderr, nullptr, _IONBF, 0);
   install_crash_signal_handlers();
@@ -159,8 +202,7 @@ int main(int argc, char *argv[]) {
       (fdbfs_opts.key_prefix == NULL) ? "FS" : fdbfs_opts.key_prefix;
   if (selected_key_prefix[0] == '\0') {
     fprintf(stderr, "fdbfs: --key-prefix must be non-empty\n");
-    err = 1;
-    goto shutdown_args;
+    return 1;
   }
 
   key_prefix.clear();
@@ -196,118 +238,51 @@ int main(int argc, char *argv[]) {
            "buggify\n\n");
     fuse_cmdline_help();
     fuse_lowlevel_help();
-    err = 0;
-    goto shutdown_args;
+    return 0;
   } else if (opts.show_version) {
     printf("FUSE library version %s\n", fuse_pkgversion());
     fuse_lowlevel_version();
-    err = 0;
-    goto shutdown_args;
+    return 0;
   }
 
   if (opts.mountpoint == NULL) {
     printf("usage: %s [options] <mountpoint>\n", argv[0]);
     printf("       %s --help\n", argv[0]);
+    return 1;
+  }
+  try {
+    fdbfs_set_lock_manager_service(nullptr);
+    FuseSessionService session(args, opts.mountpoint, fdbfs_oper,
+                               sizeof(fdbfs_oper));
+    se = session.get();
+
+    // This appears to lock things up
+    /*
+    if(fuse_daemonize(opts.foreground)) {
+      throw std::runtime_error("fuse_daemonize failed");
+    }
+    */
+
+    FdbService fdb_service(fdbfs_opts.buggify != 0);
+    LivenessService liveness([se]() { fuse_session_exit(se); });
+    GarbageCollectorService gc;
+    LockManagerService lock_manager;
+    fdbfs_set_lock_manager_service(&lock_manager);
+
+    if (opts.singlethread) {
+      err = fuse_session_loop(se);
+    } else {
+      config.clone_fd = opts.clone_fd;
+      config.max_idle_threads = opts.max_idle_threads;
+      err = fuse_session_loop_mt(se, &config);
+    }
+
+    fdbfs_set_lock_manager_service(nullptr);
+  } catch (const std::exception &e) {
+    fdbfs_set_lock_manager_service(nullptr);
+    fprintf(stderr, "fdbfs startup/shutdown error: %s\n", e.what());
     err = 1;
-    goto shutdown_args;
   }
-
-  se = fuse_session_new(&args, &fdbfs_oper, sizeof(fdbfs_oper), NULL);
-  if (se == NULL) {
-    err = 1;
-    goto shutdown_args;
-  }
-  if (fuse_set_signal_handlers(se) != 0) {
-    err = 1;
-    goto shutdown_session;
-  }
-  if (fuse_session_mount(se, opts.mountpoint) != 0) {
-    err = 1;
-    goto shutdown_handlers;
-  }
-
-  // This appears to lock things up
-  /*
-  if(fuse_daemonize(opts.foreground)) {
-    err = 1;
-    goto shutdown_handlers;
-  }
-  */
-
-  if (fdb_select_api_version(FDB_API_VERSION)) {
-    err = 1;
-    goto unmount_session;
-  }
-
-  if (fdbfs_opts.buggify &&
-      fdb_network_set_option(FDB_NET_OPTION_CLIENT_BUGGIFY_ENABLE, NULL, 0)) {
-    err = 1;
-    goto unmount_session;
-  }
-
-  if (fdb_setup_network()) {
-    err = 1;
-    goto shutdown_fdb;
-  }
-  fdb_network_setup_done = true;
-
-  if (pthread_create(&network_thread, NULL, network_runner, NULL)) {
-    err = 1;
-    goto shutdown_fdb;
-  }
-  network_thread_created = true;
-
-  if (fdb_create_database(NULL, &database)) {
-    database = NULL; // it failed, contents of the pointer are unspecified
-    goto shutdown_fdb;
-  }
-
-  if (start_liveness([se]() { fuse_session_exit(se); })) {
-    err = 1;
-    goto shutdown_fdb;
-  }
-
-  if (start_gc()) {
-    err = 1;
-    goto shutdown_liveness;
-  }
-
-  if (start_lock_manager()) {
-    err = 1;
-    goto shutdown_gc;
-  }
-
-  if (opts.singlethread) {
-    err = fuse_session_loop(se);
-  } else {
-    config.clone_fd = opts.clone_fd;
-    config.max_idle_threads = opts.max_idle_threads;
-    err = fuse_session_loop_mt(se, &config);
-  }
-
-  terminate_lock_manager();
-shutdown_gc:
-  terminate_gc();
-shutdown_liveness:
-  terminate_liveness();
-
-shutdown_fdb:
-  if (database)
-    fdb_database_destroy(database);
-
-  if (fdb_network_setup_done)
-    err = err || fdb_stop_network();
-  if (network_thread_created)
-    err = err || pthread_join(network_thread, NULL);
-
-unmount_session:
-  fuse_session_unmount(se);
-shutdown_handlers:
-  fuse_remove_signal_handlers(se);
-shutdown_session:
-  fuse_session_destroy(se);
-shutdown_args:
-  fuse_opt_free_args(&args);
 
   return err;
 }

@@ -7,11 +7,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <mutex>
+#include <stdexcept>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <thread>
 
+#include "garbage_collector.h"
 #include "liveness.h"
 #include "oplog.h"
 #include "util.h"
@@ -28,13 +30,10 @@
  * awhile, we should die.
  */
 
-std::jthread gc_thread;
-std::mutex gc_sleep_mutex;
-std::condition_variable gc_sleep_cv;
-
 constexpr int gc_scan_batch_limit = 64;
 
-static void process_gc_candidate(const std::vector<uint8_t> &garbage_key) {
+void GarbageCollectorService::process_gc_candidate(
+    const std::vector<uint8_t> &garbage_key) {
   // check for malformed keys in garbage key space
   if (garbage_key.size() != static_cast<size_t>(inode_key_length)) {
     // yeah length is wrong so it can't be a garbage key
@@ -190,9 +189,9 @@ static void process_gc_candidate(const std::vector<uint8_t> &garbage_key) {
   (void)wait_err;
 }
 
-void garbage_scanner(std::stop_token stop_token) {
+void GarbageCollectorService::garbage_scanner(std::stop_token stop_token) {
   std::stop_callback stop_wakeup(stop_token,
-                                 []() { gc_sleep_cv.notify_all(); });
+                                 [this]() { gc_sleep_cv.notify_all(); });
   fdbfs_set_thread_name("garbage");
 
   auto [gc_start_key, gc_stop_key] = pack_garbage_subspace_range();
@@ -266,24 +265,19 @@ void garbage_scanner(std::stop_token stop_token) {
 #endif
 }
 
-bool start_gc() {
-  if (gc_thread.joinable()) {
-    return false;
-  }
+GarbageCollectorService::GarbageCollectorService() {
   try {
-    gc_thread = std::jthread(garbage_scanner);
+    gc_thread =
+        std::jthread([this](std::stop_token st) { garbage_scanner(st); });
   } catch (const std::system_error &) {
-    return true;
+    throw std::runtime_error("garbage collector thread start failed");
   }
-  return false;
 }
 
-void terminate_gc() {
-  if (!gc_thread.joinable()) {
-    return;
+GarbageCollectorService::~GarbageCollectorService() {
+  if (gc_thread.joinable()) {
+    gc_thread.request_stop();
+    gc_sleep_cv.notify_all();
+    gc_thread.join();
   }
-
-  gc_thread.request_stop();
-  gc_sleep_cv.notify_all();
-  gc_thread.join();
 }

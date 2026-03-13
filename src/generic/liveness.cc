@@ -22,6 +22,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
@@ -40,14 +41,7 @@
 
 std::vector<uint8_t> pid;
 ProcessTableEntry pt_entry;
-// Expected to request shutdown of the outer event loop (e.g. fuse_session_exit)
-// when liveness determines we should fail closed.
-std::function<void()> shutdown_system;
-std::jthread liveness_thread;
-std::atomic<bool> terminate = true;
-bool liveness_started = false;
-std::mutex liveness_sleep_mutex;
-std::condition_variable liveness_sleep_cv;
+static LivenessService *active_liveness_service = nullptr;
 
 struct ObservedPidState {
   std::optional<ProcessTableEntry> entry;
@@ -96,7 +90,7 @@ static uint64_t elapsed_seconds(const struct timespec &start,
   return static_cast<uint64_t>(sec);
 }
 
-static void fail_closed_due_to_liveness_failure() {
+void LivenessService::request_shutdown_due_to_liveness_failure() {
   const bool already_terminating =
       terminate.exchange(true, std::memory_order_relaxed);
   if (already_terminating) {
@@ -432,8 +426,8 @@ PidLiveness classify_pid(const std::vector<uint8_t> &candidate_pid) {
   return PidLiveness::Unknown;
 }
 
-bool send_pt_entry(bool startup) {
-  std::function<bool(FDBTransaction *)> f = [startup](FDBTransaction *t) {
+bool LivenessService::send_pt_entry(bool startup) {
+  std::function<bool(FDBTransaction *)> f = [this, startup](FDBTransaction *t) {
     const auto key = pack_pid_key(pid);
     fdb_error_t err;
     if (!startup) {
@@ -456,7 +450,7 @@ bool send_pt_entry(bool startup) {
         // all our state is missing from the database now as
         // well, our use records have been removed, etc. we can't
         // continue.
-        fail_closed_due_to_liveness_failure();
+        request_shutdown_due_to_liveness_failure();
         return false;
       }
     }
@@ -475,7 +469,7 @@ bool send_pt_entry(bool startup) {
 
 constexpr auto liveness_refresh_interval = std::chrono::milliseconds(500);
 
-void update_pt_entry_time() {
+void LivenessService::update_pt_entry_time() {
   struct timespec tv;
   clock_gettime(CLOCK_REALTIME, &tv);
 
@@ -483,9 +477,9 @@ void update_pt_entry_time() {
   pt_entry.mutable_last_updated()->set_nsec(tv.tv_nsec);
 }
 
-void liveness_manager(std::stop_token stop_token) {
+void LivenessService::liveness_manager(std::stop_token stop_token) {
   std::stop_callback stop_wakeup(stop_token,
-                                 []() { liveness_sleep_cv.notify_all(); });
+                                 [this]() { liveness_sleep_cv.notify_all(); });
 
   fdbfs_set_thread_name("liveness");
 
@@ -511,7 +505,7 @@ void liveness_manager(std::stop_token stop_token) {
     // as for the reaping time, start blocking filesystem ops
     // until we can restore our pt entry successfully
     if (!send_pt_entry(false)) {
-      fail_closed_due_to_liveness_failure();
+      request_shutdown_due_to_liveness_failure();
       break;
     }
     refresh_observed_pid_table();
@@ -519,15 +513,13 @@ void liveness_manager(std::stop_token stop_token) {
   }
 }
 
-// shutdown_cb will be called if the database tells us we're dead.
-// it is possible it will be called multiple times.
-// returns false if liveness is started by the time the function returns
-bool start_liveness(std::function<void()> shutdown_cb) {
-  if (liveness_started) {
-    return false;
+LivenessService::LivenessService(std::function<void()> shutdown_cb)
+    : shutdown_system(std::move(shutdown_cb)) {
+  if (active_liveness_service != nullptr) {
+    throw std::runtime_error("liveness service already active");
   }
+  active_liveness_service = this;
 
-  shutdown_system = std::move(shutdown_cb);
   pid.clear();
 
   // fill PID_LENGTH bytes from the kernel RNG.
@@ -541,7 +533,8 @@ bool start_liveness(std::function<void()> shutdown_cb) {
         continue;
       }
       pid.clear();
-      return true;
+      active_liveness_service = nullptr;
+      throw std::runtime_error("failed to generate liveness pid");
     }
     bytes_read += static_cast<size_t>(n);
   }
@@ -556,7 +549,8 @@ bool start_liveness(std::function<void()> shutdown_cb) {
   if (!send_pt_entry(true)) {
     pt_entry.Clear();
     pid.clear();
-    return true;
+    active_liveness_service = nullptr;
+    throw std::runtime_error("failed to write initial process-table entry");
   }
   refresh_observed_pid_table();
   reap_stale_pid_entries();
@@ -564,23 +558,24 @@ bool start_liveness(std::function<void()> shutdown_cb) {
   terminate.store(false, std::memory_order_relaxed);
 
   try {
-    liveness_thread = std::jthread(liveness_manager);
+    liveness_thread =
+        std::jthread([this](std::stop_token st) { liveness_manager(st); });
   } catch (const std::system_error &) {
     terminate.store(true, std::memory_order_relaxed);
+    pt_entry.Clear();
     pid.clear();
-    return true;
+    active_liveness_service = nullptr;
+    throw std::runtime_error("failed to start liveness thread");
   }
 
-  liveness_started = true;
-  return false;
+  started = true;
 }
 
-// we're being called after unmount
-void terminate_liveness() {
-  if (!liveness_started || pid.empty()) {
+LivenessService::~LivenessService() {
+  active_liveness_service = nullptr;
+  if (!started || pid.empty()) {
     return;
   }
-  liveness_started = false;
 
   terminate.store(true, std::memory_order_relaxed);
   if (liveness_thread.joinable()) {
