@@ -69,8 +69,8 @@ private:
 
 template <typename ActionT>
 Inflight_mknod<ActionT>::Inflight_mknod(
-    req_t req, fdbfs_ino_t parent, std::string name, mode_t mode,
-    filetype type, dev_t rdev, unique_transaction transaction,
+    req_t req, fdbfs_ino_t parent, std::string name, mode_t mode, filetype type,
+    dev_t rdev, unique_transaction transaction,
     std::optional<std::string> symlink_target_opt)
     : Base(req, std::move(transaction)), parent(parent), name(std::move(name)),
       type(type), mode(mode), rdev(rdev),
@@ -183,16 +183,14 @@ ActionT Inflight_mknod<ActionT>::postverification() {
   OpLogResultEntry result_entry;
   result_entry.set_ino(a().ino);
   result_entry.set_generation(1);
-  *result_entry.mutable_attr() = pack_stat_into_stat_record(a().attr);
+  *result_entry.mutable_attr() = inode;
   result_entry.set_attr_timeout(0.01);
   result_entry.set_entry_timeout(0.01);
   if (!write_oplog_result(result_entry)) {
     return ActionT::Abort(EIO);
   }
 
-  return commit([&]() {
-    return ActionT::Entry(a().attr);
-  });
+  return commit([&]() { return ActionT::Entry(a().attr); });
 }
 
 template <typename ActionT>
@@ -205,7 +203,7 @@ ActionT Inflight_mknod<ActionT>::oplog_recovery(const OpLogRecord &record) {
   }
 
   struct stat attr{};
-  unpack_stat_record_into_stat(record.entry().attr(), attr);
+  pack_inode_record_into_stat(record.entry().attr(), attr);
   return ActionT::Entry(attr);
 }
 

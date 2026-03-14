@@ -564,45 +564,6 @@ void pack_inode_record_into_stat(const INodeRecord &inode, struct stat &attr) {
   */
 }
 
-StatRecord pack_stat_into_stat_record(const struct stat &attr) {
-  StatRecord record;
-  record.set_ino(attr.st_ino);
-  record.set_dev(attr.st_dev);
-  record.set_mode(attr.st_mode);
-  record.set_nlink(attr.st_nlink);
-  record.set_uid(attr.st_uid);
-  record.set_gid(attr.st_gid);
-  record.set_size(attr.st_size);
-  record.mutable_atime()->set_sec(attr.st_atim.tv_sec);
-  record.mutable_atime()->set_nsec(attr.st_atim.tv_nsec);
-  record.mutable_mtime()->set_sec(attr.st_mtim.tv_sec);
-  record.mutable_mtime()->set_nsec(attr.st_mtim.tv_nsec);
-  record.mutable_ctime()->set_sec(attr.st_ctim.tv_sec);
-  record.mutable_ctime()->set_nsec(attr.st_ctim.tv_nsec);
-  record.set_blksize(attr.st_blksize);
-  record.set_blocks(attr.st_blocks);
-  return record;
-}
-
-void unpack_stat_record_into_stat(const StatRecord &record, struct stat &attr) {
-  attr = {};
-  attr.st_ino = record.ino();
-  attr.st_dev = record.dev();
-  attr.st_mode = record.mode();
-  attr.st_nlink = record.nlink();
-  attr.st_uid = record.uid();
-  attr.st_gid = record.gid();
-  attr.st_size = record.size();
-  attr.st_atim.tv_sec = record.atime().sec();
-  attr.st_atim.tv_nsec = record.atime().nsec();
-  attr.st_mtim.tv_sec = record.mtime().sec();
-  attr.st_mtim.tv_nsec = record.mtime().nsec();
-  attr.st_ctim.tv_sec = record.ctime().sec();
-  attr.st_ctim.tv_nsec = record.ctime().nsec();
-  attr.st_blksize = record.blksize();
-  attr.st_blocks = record.blocks();
-}
-
 range_keys offset_size_to_range_keys(fdbfs_ino_t ino, size_t off, size_t size) {
   uint64_t start_block = off >> BLOCKBITS;
   uint64_t stop_block = ((off + size - 1) >> BLOCKBITS);

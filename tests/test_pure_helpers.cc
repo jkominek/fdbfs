@@ -474,44 +474,6 @@ TEST_CASE("inode/stat packing helpers preserve expected fields",
     CHECK(st.st_blocks == 1);
   }
 
-  SECTION("pack_stat_into_stat_record and unpack roundtrip") {
-    struct stat in {};
-    in.st_ino = 99;
-    in.st_dev = 7;
-    in.st_mode = S_IFDIR | 0755;
-    in.st_nlink = 5;
-    in.st_uid = 1001;
-    in.st_gid = 1002;
-    in.st_size = 123456;
-    in.st_atim.tv_sec = 100;
-    in.st_atim.tv_nsec = 101;
-    in.st_mtim.tv_sec = 200;
-    in.st_mtim.tv_nsec = 201;
-    in.st_ctim.tv_sec = 300;
-    in.st_ctim.tv_nsec = 301;
-    in.st_blksize = 4096;
-    in.st_blocks = 241;
-
-    const StatRecord rec = pack_stat_into_stat_record(in);
-    struct stat out {};
-    unpack_stat_record_into_stat(rec, out);
-
-    CHECK(out.st_ino == in.st_ino);
-    CHECK(out.st_dev == in.st_dev);
-    CHECK(out.st_mode == in.st_mode);
-    CHECK(out.st_nlink == in.st_nlink);
-    CHECK(out.st_uid == in.st_uid);
-    CHECK(out.st_gid == in.st_gid);
-    CHECK(out.st_size == in.st_size);
-    CHECK(out.st_atim.tv_sec == in.st_atim.tv_sec);
-    CHECK(out.st_atim.tv_nsec == in.st_atim.tv_nsec);
-    CHECK(out.st_mtim.tv_sec == in.st_mtim.tv_sec);
-    CHECK(out.st_mtim.tv_nsec == in.st_mtim.tv_nsec);
-    CHECK(out.st_ctim.tv_sec == in.st_ctim.tv_sec);
-    CHECK(out.st_ctim.tv_nsec == in.st_ctim.tv_nsec);
-    CHECK(out.st_blksize == in.st_blksize);
-    CHECK(out.st_blocks == in.st_blocks);
-  }
 }
 
 TEST_CASE("inode time update helpers implement cascade semantics",

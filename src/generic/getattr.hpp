@@ -75,9 +75,7 @@ template <typename ActionT> ActionT Inflight_getattr<ActionT>::callback() {
     return ActionT::Abort(EIO);
   }
 
-  struct stat attr{};
-  pack_inode_record_into_stat(inode, attr);
-  return ActionT::Attr(attr);
+  return ActionT::Attr(inode);
 }
 
 template <typename ActionT>

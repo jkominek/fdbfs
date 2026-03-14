@@ -136,9 +136,7 @@ ActionT Inflight_setattr<ActionT>::commit_cb() {
   if (open_reply != nullptr) {
     return ActionT::Open(ino, open_reply->flags);
   }
-  struct stat newattr{};
-  pack_inode_record_into_stat(a().inode, newattr);
-  return ActionT::Attr(newattr);
+  return ActionT::Attr(a().inode);
 }
 
 template <typename ActionT>
@@ -154,10 +152,8 @@ bool Inflight_setattr<ActionT>::write_success_oplog_result() {
     return write_oplog_result(result);
   }
 
-  struct stat newattr{};
-  pack_inode_record_into_stat(a().inode, newattr);
   OpLogResultAttr result;
-  *result.mutable_attr() = pack_stat_into_stat_record(newattr);
+  *result.mutable_attr() = a().inode;
   return write_oplog_result(result);
 }
 
@@ -168,9 +164,7 @@ ActionT Inflight_setattr<ActionT>::oplog_recovery(const OpLogRecord &record) {
     if (!record.attr().has_attr()) {
       return ActionT::Abort(EIO);
     }
-    struct stat attr{};
-    unpack_stat_record_into_stat(record.attr().attr(), attr);
-    return ActionT::Attr(attr);
+    return ActionT::Attr(record.attr().attr());
   }
   case OpLogRecord::kOpen: {
     return ActionT::Open(record.open().ino(), record.open().flags());

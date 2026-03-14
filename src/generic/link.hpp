@@ -73,13 +73,10 @@ Inflight_link<ActionT>::Inflight_link(req_t req, fdbfs_ino_t ino,
 
 template <typename ActionT>
 bool Inflight_link<ActionT>::write_success_oplog_result() {
-  struct stat attr{};
-  pack_inode_record_into_stat(a().inode, attr);
-
   OpLogResultEntry result;
   result.set_ino(ino);
   result.set_generation(1);
-  *result.mutable_attr() = pack_stat_into_stat_record(attr);
+  *result.mutable_attr() = a().inode;
   result.set_attr_timeout(0.01);
   result.set_entry_timeout(0.01);
   return write_oplog_result(result);
@@ -95,7 +92,7 @@ ActionT Inflight_link<ActionT>::oplog_recovery(const OpLogRecord &record) {
   }
 
   struct stat attr{};
-  unpack_stat_record_into_stat(record.entry().attr(), attr);
+  pack_inode_record_into_stat(record.entry().attr(), attr);
   return ActionT::Entry(attr);
 }
 

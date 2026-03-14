@@ -31,33 +31,18 @@ message ProcessTableEntry {
   optional string hostname = 4;
 }
 
-message StatRecord {
-  required fixed64 ino = 1;
-  required fixed64 dev = 2;
-  required uint32 mode = 3;
-  required uint64 nlink = 4;
-  required uint32 uid = 5;
-  required uint32 gid = 6;
-  required int64 size = 7;
-  required Timespec atime = 8;
-  required Timespec mtime = 9;
-  required Timespec ctime = 10;
-  required uint32 blksize = 11;
-  required uint64 blocks = 12;
-}
-
 message OpLogResultOK {}
 
 message OpLogResultEntry {
   required fixed64 ino = 1;
   required uint64 generation = 2;
-  required StatRecord attr = 3;
+  required INodeRecord attr = 3;
   required double attr_timeout = 4;
   required double entry_timeout = 5;
 }
 
 message OpLogResultAttr {
-  required StatRecord attr = 1;
+  required INodeRecord attr = 1;
 }
 
 message OpLogResultOpen {
@@ -125,6 +110,9 @@ message DirectoryEntry {
 }
 
 message INodeRecord {
+  // We only require fields that are required
+  // for our own operation.
+
   // 0.. fundamentals
   required fixed64 inode = 1; // IMMUTABLE
   required filetype type = 2; // IMMUTABLE

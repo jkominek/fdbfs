@@ -253,7 +253,9 @@ public:
                   }
                 });
   }
-  static Self Attr(struct stat attr) {
+  static Self Attr(const INodeRecord &inode) {
+    struct stat attr{};
+    pack_inode_record_into_stat(inode, attr);
     return Self(true, false, false, [attr](InflightT<Self> *i) {
       fuse_reply_attr(i->req, &attr, 0.0);
     });
