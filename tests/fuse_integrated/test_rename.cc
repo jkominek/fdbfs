@@ -143,3 +143,33 @@ TEST_CASE("renameat2 NOREPLACE and EXCHANGE", "[integration][rename]") {
 #endif
   });
 }
+
+TEST_CASE("rename over hardlink to same inode is a no-op",
+          "[integration][rename]") {
+  scenario([&](FdbfsEnv &env) {
+    const fs::path a = env.p("a");
+    const fs::path b = env.p("b");
+    create_file_with_contents(a, "payload");
+
+    FDBFS_REQUIRE_OK(::link(a.c_str(), b.c_str()));
+
+    struct stat a_before{};
+    struct stat b_before{};
+    FDBFS_REQUIRE_OK(::stat(a.c_str(), &a_before));
+    FDBFS_REQUIRE_OK(::stat(b.c_str(), &b_before));
+    REQUIRE(a_before.st_ino == b_before.st_ino);
+
+    FDBFS_REQUIRE_OK(::rename(a.c_str(), b.c_str()));
+
+    CHECK(fs::exists(a));
+    CHECK(fs::exists(b));
+
+    struct stat a_after{};
+    struct stat b_after{};
+    FDBFS_REQUIRE_OK(::stat(a.c_str(), &a_after));
+    FDBFS_REQUIRE_OK(::stat(b.c_str(), &b_after));
+    CHECK(a_after.st_ino == b_after.st_ino);
+    CHECK(a_after.st_ino == a_before.st_ino);
+    CHECK(b_after.st_ino == b_before.st_ino);
+  });
+}

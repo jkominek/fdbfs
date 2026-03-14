@@ -74,9 +74,10 @@ private:
 
 template <typename ActionT>
 Inflight_rename<ActionT>::Inflight_rename(req_t req, fdbfs_ino_t oldparent,
-                                 std::string oldname, fdbfs_ino_t newparent,
-                                 std::string newname, int flags,
-                                 unique_transaction transaction)
+                                          std::string oldname,
+                                          fdbfs_ino_t newparent,
+                                          std::string newname, int flags,
+                                          unique_transaction transaction)
     : Base(req, std::move(transaction)), oldparent(oldparent),
       oldname(std::move(oldname)), newparent(newparent),
       newname(std::move(newname)), flags(flags) {
@@ -98,8 +99,7 @@ ActionT Inflight_rename<ActionT>::oplog_recovery(const OpLogRecord &record) {
   return ActionT::OK();
 }
 
-template <typename ActionT>
-ActionT Inflight_rename<ActionT>::complicated() {
+template <typename ActionT> ActionT Inflight_rename<ActionT>::complicated() {
   /**
    * If you couldn't tell from the method name, we're in the
    * complicated case for rename. We're in the case where we
@@ -162,8 +162,7 @@ ActionT Inflight_rename<ActionT>::complicated() {
   return commit(ActionT::OK);
 }
 
-template <typename ActionT>
-ActionT Inflight_rename<ActionT>::check() {
+template <typename ActionT> ActionT Inflight_rename<ActionT>::check() {
   INodeRecord oldparent_inode;
   INodeRecord newparent_inode;
 
@@ -252,6 +251,14 @@ ActionT Inflight_rename<ActionT>::check() {
       }
     }
 
+    if (a().destination_dirent.has_inode() &&
+        a().origin_dirent.inode() == a().destination_dirent.inode()) {
+      // moving an inode onto itself is a no-op
+      // i think the kernel attempts to handle this in fuse, but we should
+      // double check it ourselves.
+      return ActionT::OK();
+    }
+
     if (is_directory(a().origin_dirent)) {
       oldparent_nlink_delta -= 1;
       newparent_nlink_delta += 1;
@@ -265,6 +272,10 @@ ActionT Inflight_rename<ActionT>::check() {
     if ((!a().origin_dirent.has_inode()) ||
         (!a().destination_dirent.has_inode())) {
       return ActionT::Abort(ENOENT);
+    }
+    if (a().origin_dirent.inode() == a().destination_dirent.inode()) {
+      // same thing! we can just fast path this.
+      return ActionT::OK();
     }
 
     const int origin_dir = is_directory(a().origin_dirent) ? 1 : 0;
