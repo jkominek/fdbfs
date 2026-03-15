@@ -129,6 +129,7 @@ message INodeRecord {
   optional Timespec atime = 200;
   optional Timespec mtime = 201;
   optional Timespec ctime = 202;
+  optional Timespec btime = 203;
 
   // 1000... unix weirdness
   optional string symlink = 1000;

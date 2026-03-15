@@ -8,6 +8,36 @@ class FuseInflightAction {
 public:
   using Self = FuseInflightAction;
   using req_t = fuse_req_t;
+  struct INodeHandlerAttr {};
+  struct INodeHandlerStatxMask {
+    uint32_t mask = 0;
+  };
+  struct INodeHandlerEntry {};
+  struct INodeHandlerImmediateEntry {
+    std::function<void()> failure_callback;
+  };
+  struct INodeHandlerOpen {
+    int flags = 0;
+  };
+  using INodeHandler =
+      std::variant<INodeHandlerAttr, INodeHandlerStatxMask, INodeHandlerEntry,
+                   INodeHandlerImmediateEntry, INodeHandlerOpen>;
+
+  // TODO these two things are kind of obnoxious, and stem from serializing
+  // the open flags into the oplog. that's almost certainly unnecessary, but
+  // we'll worry about cleaning that up later.
+  static std::optional<int>
+  inode_handler_open_flags(const INodeHandler &inode_handler) {
+    auto open_handler = std::get_if<INodeHandlerOpen>(&inode_handler);
+    if (open_handler == nullptr) {
+      return std::nullopt;
+    }
+    return open_handler->flags;
+  }
+  static INodeHandler inode_handler_open(int flags) {
+    return INodeHandlerOpen{flags};
+  }
+
   struct DirentCollectorSpec {
     size_t max_bytes;
     bool plus_mode;
@@ -215,57 +245,73 @@ public:
     return Self(true, false, false,
                 [err](InflightT<Self> *i) { fuse_reply_err(i->req, err); });
   }
-  static Self Entry(struct stat attr) {
-    return Self(true, false, false, [attr](InflightT<Self> *i) {
-      auto generation =
-          increment_lookup_count(static_cast<fdbfs_ino_t>(attr.st_ino));
-      if (generation.has_value()) {
-        // first lookup for this inode in local kernel cache; publish
-        // a use record before replying to fuse.
-        (new Inflight_markusedT<Self>(i->req, *generation, attr,
-                                      make_transaction()))
-            ->start();
-      } else {
-        // already known locally; no new use record needed.
-        struct fuse_entry_param e{};
-        e.ino = static_cast<fuse_ino_t>(attr.st_ino);
-        e.generation = 1;
-        e.attr = attr;
-        e.attr_timeout = 0.01;
-        e.entry_timeout = 0.01;
-        fuse_reply_entry(i->req, &e);
-      }
-    });
-  }
-  static Self
-  ImmediateEntry(struct stat attr,
-                 std::function<void(InflightT<Self> *)> on_failure = {}) {
-    return Self(true, false, false,
-                [attr, on_failure = std::move(on_failure)](InflightT<Self> *i) {
+  static Self INode(const INodeRecord &inode, INodeHandler selector) {
+    return std::visit(
+        [&](const auto &selected) -> Self {
+          using T = std::decay_t<decltype(selected)>;
+          if constexpr (std::is_same_v<T, INodeHandlerAttr>) {
+            struct stat attr{};
+            pack_inode_record_into_stat(inode, attr);
+            return Self(true, false, false, [attr](InflightT<Self> *i) {
+              fuse_reply_attr(i->req, &attr, 0.0);
+            });
+          } else if constexpr (std::is_same_v<T, INodeHandlerStatxMask>) {
+            (void)selected.mask;
+            return Self(true, false, false, [](InflightT<Self> *i) {
+              fuse_reply_err(i->req, ENOSYS);
+            });
+          } else if constexpr (std::is_same_v<T, INodeHandlerEntry>) {
+            struct stat attr{};
+            pack_inode_record_into_stat(inode, attr);
+            return Self(true, false, false, [attr, inode](InflightT<Self> *i) {
+              auto generation =
+                  increment_lookup_count(static_cast<fdbfs_ino_t>(attr.st_ino));
+              if (generation.has_value()) {
+                // first lookup for this inode in local kernel cache; publish
+                // a use record before replying to fuse.
+                (new Inflight_markusedT<Self>(i->req, *generation, inode,
+                                              make_transaction()))
+                    ->start();
+              } else {
+                // already known locally; no new use record needed.
+                struct fuse_entry_param e{};
+                e.ino = static_cast<fuse_ino_t>(attr.st_ino);
+                e.generation = 1;
+                e.attr = attr;
+                e.attr_timeout = 0.01;
+                e.entry_timeout = 0.01;
+                fuse_reply_entry(i->req, &e);
+              }
+            });
+          } else if constexpr (std::is_same_v<T, INodeHandlerImmediateEntry>) {
+            struct stat attr{};
+            pack_inode_record_into_stat(inode, attr);
+            return Self(
+                true, false, false,
+                [attr, failure_callback =
+                           selected.failure_callback](InflightT<Self> *i) {
                   struct fuse_entry_param e{};
                   e.ino = static_cast<fuse_ino_t>(attr.st_ino);
                   e.generation = 1;
                   e.attr = attr;
                   e.attr_timeout = 0.01;
                   e.entry_timeout = 0.01;
-                  if (fuse_reply_entry(i->req, &e) < 0 && on_failure) {
-                    on_failure(i);
+                  if (fuse_reply_entry(i->req, &e) < 0 && failure_callback) {
+                    failure_callback();
                   }
                 });
-  }
-  static Self Attr(const INodeRecord &inode) {
-    struct stat attr{};
-    pack_inode_record_into_stat(inode, attr);
-    return Self(true, false, false, [attr](InflightT<Self> *i) {
-      fuse_reply_attr(i->req, &attr, 0.0);
-    });
-  }
-  static Self Open(fdbfs_ino_t ino, int flags) {
-    return Self(true, false, false, [ino, flags](InflightT<Self> *i) mutable {
-      struct fuse_file_info fi{};
-      fi.flags = flags;
-      (void)reply_open_with_handle(i->req, static_cast<fuse_ino_t>(ino), &fi);
-    });
+          } else if constexpr (std::is_same_v<T, INodeHandlerOpen>) {
+            return Self(true, false, false,
+                        [ino = inode.inode(),
+                         flags = selected.flags](InflightT<Self> *i) mutable {
+                          struct fuse_file_info fi{};
+                          fi.flags = flags;
+                          (void)reply_open_with_handle(
+                              i->req, static_cast<fuse_ino_t>(ino), &fi);
+                        });
+          }
+        },
+        selector);
   }
   static Self Buf(std::vector<uint8_t> buf, int actual_size = -1) {
     // Note, per the default value for actual_size, we might receive

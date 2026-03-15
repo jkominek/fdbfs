@@ -17,7 +17,7 @@
 #include "util_fuse.h"
 #include "generic/forget.hpp"
 #include "generic/fsync.h"
-#include "generic/getattr.hpp"
+#include "generic/getinode.hpp"
 #include "generic/getxattr.hpp"
 #include "generic/link.hpp"
 #include "generic/listxattr.hpp"
@@ -42,6 +42,10 @@ namespace {
 [[nodiscard]] inline fdbfs_ino_t to_fdbfs_ino(fuse_ino_t ino) {
   return static_cast<fdbfs_ino_t>(ino);
 }
+using INodeHandler = FuseInflightAction::INodeHandler;
+using INodeHandlerAttr = FuseInflightAction::INodeHandlerAttr;
+using INodeHandlerEntry = FuseInflightAction::INodeHandlerEntry;
+using INodeHandlerOpen = FuseInflightAction::INodeHandlerOpen;
 
 LockManagerService *g_lock_manager_service = nullptr;
 
@@ -113,8 +117,9 @@ extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent,
     return;
   }
   std::string sname(name);
-  auto *inflight = new Inflight_lookup<FuseInflightAction>(
-      req, to_fdbfs_ino(parent), sname, make_transaction());
+  auto *inflight = new Inflight_lookup<FuseInflightAction, INodeHandler>(
+      req, to_fdbfs_ino(parent), sname, make_transaction(),
+      INodeHandlerEntry{});
   inflight->start();
 }
 
@@ -122,8 +127,8 @@ extern "C" void fdbfs_lookup(fuse_req_t req, fuse_ino_t parent,
 extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
                               struct fuse_file_info *fi) {
   // get the file attributes of an inode
-  auto *inflight = new Inflight_getattr<FuseInflightAction>(
-      req, to_fdbfs_ino(ino), make_transaction());
+  auto *inflight = new Inflight_getinode<FuseInflightAction, INodeHandler>(
+      req, to_fdbfs_ino(ino), make_transaction(), INodeHandlerAttr{});
   inflight->start();
 }
 
@@ -230,9 +235,9 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name,
   }
   }
 
-  auto *inflight = new Inflight_mknod<FuseInflightAction>(
+  auto *inflight = new Inflight_mknod<FuseInflightAction, INodeHandler>(
       req, to_fdbfs_ino(parent), name, mode & (~S_IFMT), deduced_type, rdev,
-      make_transaction(), std::nullopt);
+      make_transaction(), std::nullopt, INodeHandlerEntry{});
   inflight->start();
 }
 
@@ -242,9 +247,9 @@ extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
     fuse_reply_err(req, ENAMETOOLONG);
     return;
   }
-  auto *inflight = new Inflight_mknod<FuseInflightAction>(
+  auto *inflight = new Inflight_mknod<FuseInflightAction, INodeHandler>(
       req, to_fdbfs_ino(parent), name, mode & (~S_IFMT), ft_directory, 0,
-      make_transaction(), std::nullopt);
+      make_transaction(), std::nullopt, INodeHandlerEntry{});
   inflight->start();
 }
 
@@ -255,9 +260,9 @@ extern "C" void fdbfs_symlink(fuse_req_t req, const char *target,
     fuse_reply_err(req, ENAMETOOLONG);
     return;
   }
-  auto *inflight = new Inflight_mknod<FuseInflightAction>(
+  auto *inflight = new Inflight_mknod<FuseInflightAction, INodeHandler>(
       req, to_fdbfs_ino(parent), name, 0777 & (~S_IFMT), ft_symlink, 0,
-      make_transaction(), std::string(target));
+      make_transaction(), std::string(target), INodeHandlerEntry{});
   inflight->start();
 }
 
@@ -289,9 +294,9 @@ extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent,
     fuse_reply_err(req, ENAMETOOLONG);
     return;
   }
-  auto *inflight = new Inflight_link<FuseInflightAction>(
+  auto *inflight = new Inflight_link<FuseInflightAction, INodeHandler>(
       req, to_fdbfs_ino(ino), to_fdbfs_ino(newparent), std::string(newname),
-      make_transaction());
+      make_transaction(), INodeHandlerEntry{});
   inflight->start();
 }
 
@@ -307,8 +312,9 @@ extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino) {
 extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
                               int to_set, struct fuse_file_info *fi) {
   const SetAttrMask set_attr_mask = from_fuse_setattr_mask(to_set);
-  auto *inflight = new Inflight_setattr<FuseInflightAction>(
-      req, to_fdbfs_ino(ino), *attr, set_attr_mask, make_transaction());
+  auto *inflight = new Inflight_setattr<FuseInflightAction, INodeHandler>(
+      req, to_fdbfs_ino(ino), *attr, set_attr_mask, make_transaction(),
+      INodeHandlerAttr{});
   if (set_attr_mask.has(SetAttrBit::Size) && (fi != nullptr)) {
     if (attr->st_size < 0) {
       // admittedly unlikely we'll get a negative value from the kernel
@@ -344,10 +350,9 @@ extern "C" void fdbfs_setattr_open_trunc(fuse_req_t req, fuse_ino_t ino,
   // we're being called by open, so our 'fi' doesn't have a filehandle
   // in it, which is fine. we don't need to serialize this operation since
   // the file doesn't exist until we return. so there's nothing to serialize.
-  auto *inflight = new Inflight_setattr<FuseInflightAction>(
+  auto *inflight = new Inflight_setattr<FuseInflightAction, INodeHandler>(
       req, to_fdbfs_ino(ino), attr, SetAttrMask(SetAttrBit::Size),
-      make_transaction(),
-      Inflight_setattr<FuseInflightAction>::SuccessReplyOpen{fi->flags});
+      make_transaction(), INodeHandlerOpen{fi->flags});
   inflight->start();
 }
 

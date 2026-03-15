@@ -484,16 +484,16 @@ void InflightT<ActionT>::error_checker(FDBFuture *f, void *p) {
 template <typename ActionT>
 Inflight_markusedT<ActionT>::Inflight_markusedT(typename ActionT::req_t req,
                                                 uint64_t generation,
-                                                struct stat entry_attr,
+                                                INodeRecord entry_inode,
                                                 unique_transaction transaction)
     : InflightWithAttemptT<AttemptState_markusedT<ActionT>,
                            InflightPolicyIdempotentWrite, ActionT>(
           req, std::move(transaction)),
-      generation(generation), entry_attr(entry_attr) {}
+      generation(generation), entry_inode(std::move(entry_inode)) {}
 
 template <typename ActionT>
 InflightCallbackT<ActionT> Inflight_markusedT<ActionT>::issue() {
-  auto inode_key = pack_inode_key(static_cast<fdbfs_ino_t>(entry_attr.st_ino));
+  auto inode_key = pack_inode_key(entry_inode.inode());
   this->wait_on_future(fdb_transaction_get(this->transaction.get(),
                                            inode_key.data(), inode_key.size(),
                                            0),
@@ -511,11 +511,11 @@ template <typename ActionT> ActionT Inflight_markusedT<ActionT>::check_inode() {
     return ActionT::FDBError(err);
 
   if (!present) {
-    (void)decrement_lookup_count(static_cast<fdbfs_ino_t>(entry_attr.st_ino), 1);
+    (void)decrement_lookup_count(entry_inode.inode(), 1);
     return ActionT::Abort(EIO);
   }
 
-  auto use_key = pack_inode_use_key(static_cast<fdbfs_ino_t>(entry_attr.st_ino));
+  auto use_key = pack_inode_use_key(entry_inode.inode());
   const uint64_t generation_le = htole64(generation);
   fdb_transaction_atomic_op(this->transaction.get(), use_key.data(),
                             use_key.size(),
@@ -526,14 +526,19 @@ template <typename ActionT> ActionT Inflight_markusedT<ActionT>::check_inode() {
 }
 
 template <typename ActionT> ActionT Inflight_markusedT<ActionT>::reply_entry() {
-  return ActionT::ImmediateEntry(
-      entry_attr, [entry_attr = this->entry_attr](InflightT<ActionT> *) {
-        // if reply failed, kernel won't hold a reference for this lookup.
-        auto generation_to_clear =
-            decrement_lookup_count(static_cast<fdbfs_ino_t>(entry_attr.st_ino), 1);
-        if (generation_to_clear.has_value()) {
-          best_effort_clear_inode_use_record(
-              static_cast<fdbfs_ino_t>(entry_attr.st_ino), *generation_to_clear);
-        }
-      });
+  return ActionT::INode(entry_inode,
+                        typename ActionT::INodeHandlerImmediateEntry{
+                            .failure_callback =
+                                [entry_inode = this->entry_inode]() {
+                                  // if reply failed, kernel won't hold
+                                  // a reference for this lookup.
+                                  auto generation_to_clear =
+                                      decrement_lookup_count(entry_inode.inode(),
+                                                             1);
+                                  if (generation_to_clear.has_value()) {
+                                    best_effort_clear_inode_use_record(
+                                        entry_inode.inode(),
+                                        *generation_to_clear);
+                                  }
+                                }});
 }

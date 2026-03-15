@@ -36,7 +36,7 @@ struct AttemptState_mknod : public AttemptStateT<ActionT> {
   struct stat attr{};
 };
 
-template <typename ActionT>
+template <typename ActionT, typename INodeHandlerT>
 class Inflight_mknod
     : public InflightWithAttemptT<AttemptState_mknod<ActionT>,
                                   InflightPolicyWrite, ActionT> {
@@ -52,7 +52,7 @@ public:
   using Base::write_oplog_result;
 
   Inflight_mknod(req_t, fdbfs_ino_t, std::string, mode_t, filetype, dev_t,
-                 unique_transaction, std::optional<std::string>);
+                 unique_transaction, std::optional<std::string>, INodeHandlerT);
   InflightCallbackT<ActionT> issue();
 
 private:
@@ -62,26 +62,28 @@ private:
   const mode_t mode;
   const dev_t rdev;
   const std::string symlink_target;
+  const INodeHandlerT inode_handler;
 
   ActionT postverification();
   ActionT oplog_recovery(const OpLogRecord &) override;
 };
 
-template <typename ActionT>
-Inflight_mknod<ActionT>::Inflight_mknod(
+template <typename ActionT, typename INodeHandlerT>
+Inflight_mknod<ActionT, INodeHandlerT>::Inflight_mknod(
     req_t req, fdbfs_ino_t parent, std::string name, mode_t mode, filetype type,
     dev_t rdev, unique_transaction transaction,
-    std::optional<std::string> symlink_target_opt)
+    std::optional<std::string> symlink_target_opt, INodeHandlerT inode_handler)
     : Base(req, std::move(transaction)), parent(parent), name(std::move(name)),
       type(type), mode(mode), rdev(rdev),
       symlink_target((type == ft_symlink && symlink_target_opt.has_value())
                          ? std::move(*symlink_target_opt)
-                         : std::string()) {
+                         : std::string()),
+      inode_handler(std::move(inode_handler)) {
   track_inode_for_fsync(parent);
 }
 
-template <typename ActionT>
-ActionT Inflight_mknod<ActionT>::postverification() {
+template <typename ActionT, typename INodeHandlerT>
+ActionT Inflight_mknod<ActionT, INodeHandlerT>::postverification() {
   fdb_bool_t dirinode_present, inode_present, dirent_present;
   const uint8_t *value;
   int valuelen;
@@ -164,6 +166,8 @@ ActionT Inflight_mknod<ActionT>::postverification() {
   inode.mutable_mtime()->set_nsec(tp.tv_nsec);
   inode.mutable_ctime()->set_sec(tp.tv_sec);
   inode.mutable_ctime()->set_nsec(tp.tv_nsec);
+  inode.mutable_btime()->set_sec(tp.tv_sec);
+  inode.mutable_btime()->set_nsec(tp.tv_nsec);
 
   // wrap it up to be returned to fuse later
   pack_inode_record_into_stat(inode, a().attr);
@@ -190,25 +194,23 @@ ActionT Inflight_mknod<ActionT>::postverification() {
     return ActionT::Abort(EIO);
   }
 
-  return commit([&]() { return ActionT::Entry(a().attr); });
+  return commit([&]() { return ActionT::INode(inode, inode_handler); });
 }
 
-template <typename ActionT>
-ActionT Inflight_mknod<ActionT>::oplog_recovery(const OpLogRecord &record) {
+template <typename ActionT, typename INodeHandlerT>
+ActionT Inflight_mknod<ActionT, INodeHandlerT>::oplog_recovery(
+    const OpLogRecord &record) {
   if (record.result_case() != OpLogRecord::kEntry) {
     return ActionT::Abort(EIO);
   }
   if (!record.entry().has_attr()) {
     return ActionT::Abort(EIO);
   }
-
-  struct stat attr{};
-  pack_inode_record_into_stat(record.entry().attr(), attr);
-  return ActionT::Entry(attr);
+  return ActionT::INode(record.entry().attr(), inode_handler);
 }
 
-template <typename ActionT>
-InflightCallbackT<ActionT> Inflight_mknod<ActionT>::issue() {
+template <typename ActionT, typename INodeHandlerT>
+InflightCallbackT<ActionT> Inflight_mknod<ActionT, INodeHandlerT>::issue() {
   a().ino = 0x47d8d31b9848016f;
   do {
     if (getrandom(reinterpret_cast<void *>(&a().ino), sizeof(a().ino),
@@ -249,5 +251,6 @@ InflightCallbackT<ActionT> Inflight_mknod<ActionT>::issue() {
         a().inode_check);
   }
 
-  return std::bind(&Inflight_mknod<ActionT>::postverification, this);
+  return std::bind(&Inflight_mknod<ActionT, INodeHandlerT>::postverification,
+                   this);
 }

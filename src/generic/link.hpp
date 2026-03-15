@@ -32,7 +32,7 @@ struct AttemptState_link : public AttemptStateT<ActionT> {
   unique_future target_lookup;
 };
 
-template <typename ActionT>
+template <typename ActionT, typename INodeHandlerT>
 class Inflight_link
     : public InflightWithAttemptT<AttemptState_link<ActionT>,
                                   InflightPolicyWrite, ActionT> {
@@ -48,31 +48,33 @@ public:
   using Base::write_oplog_result;
 
   Inflight_link(req_t, fdbfs_ino_t, fdbfs_ino_t, std::string,
-                unique_transaction);
+                unique_transaction, INodeHandlerT);
   InflightCallbackT<ActionT> issue();
 
 private:
   const fdbfs_ino_t ino;
   const fdbfs_ino_t newparent;
   const std::string newname;
+  const INodeHandlerT inode_handler;
 
   ActionT check();
   ActionT oplog_recovery(const OpLogRecord &) override;
   bool write_success_oplog_result();
 };
 
-template <typename ActionT>
-Inflight_link<ActionT>::Inflight_link(req_t req, fdbfs_ino_t ino,
-                                      fdbfs_ino_t newparent, std::string newname,
-                                      unique_transaction transaction)
+template <typename ActionT, typename INodeHandlerT>
+Inflight_link<ActionT, INodeHandlerT>::Inflight_link(
+    req_t req, fdbfs_ino_t ino, fdbfs_ino_t newparent, std::string newname,
+    unique_transaction transaction, INodeHandlerT inode_handler)
     : Base(req, std::move(transaction)), ino(ino),
-      newparent(newparent), newname(std::move(newname)) {
+      newparent(newparent), newname(std::move(newname)),
+      inode_handler(std::move(inode_handler)) {
   track_inode_for_fsync(ino);
   track_inode_for_fsync(newparent);
 }
 
-template <typename ActionT>
-bool Inflight_link<ActionT>::write_success_oplog_result() {
+template <typename ActionT, typename INodeHandlerT>
+bool Inflight_link<ActionT, INodeHandlerT>::write_success_oplog_result() {
   OpLogResultEntry result;
   result.set_ino(ino);
   result.set_generation(1);
@@ -82,22 +84,20 @@ bool Inflight_link<ActionT>::write_success_oplog_result() {
   return write_oplog_result(result);
 }
 
-template <typename ActionT>
-ActionT Inflight_link<ActionT>::oplog_recovery(const OpLogRecord &record) {
+template <typename ActionT, typename INodeHandlerT>
+ActionT Inflight_link<ActionT, INodeHandlerT>::oplog_recovery(
+    const OpLogRecord &record) {
   if (record.result_case() != OpLogRecord::kEntry) {
     return ActionT::Abort(EIO);
   }
   if (!record.entry().has_attr()) {
     return ActionT::Abort(EIO);
   }
-
-  struct stat attr{};
-  pack_inode_record_into_stat(record.entry().attr(), attr);
-  return ActionT::Entry(attr);
+  return ActionT::INode(record.entry().attr(), inode_handler);
 }
 
-template <typename ActionT>
-ActionT Inflight_link<ActionT>::check() {
+template <typename ActionT, typename INodeHandlerT>
+ActionT Inflight_link<ActionT, INodeHandlerT>::check() {
   fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
@@ -179,14 +179,12 @@ ActionT Inflight_link<ActionT>::check() {
   }
 
   return commit([&]() {
-    struct stat attr{};
-    pack_inode_record_into_stat(a().inode, attr);
-    return ActionT::Entry(attr);
+    return ActionT::INode(a().inode, inode_handler);
   });
 }
 
-template <typename ActionT>
-InflightCallbackT<ActionT> Inflight_link<ActionT>::issue() {
+template <typename ActionT, typename INodeHandlerT>
+InflightCallbackT<ActionT> Inflight_link<ActionT, INodeHandlerT>::issue() {
   // check that the file is a file
   {
     const auto key = pack_inode_key(ino);
@@ -211,5 +209,5 @@ InflightCallbackT<ActionT> Inflight_link<ActionT>::issue() {
         a().target_lookup);
   }
 
-  return std::bind(&Inflight_link<ActionT>::check, this);
+  return std::bind(&Inflight_link<ActionT, INodeHandlerT>::check, this);
 }

@@ -73,7 +73,7 @@ struct AttemptState_setattr : public AttemptStateT<ActionT> {
   uint64_t partial_block_idx = 0;
 };
 
-template <typename ActionT>
+template <typename ActionT, typename INodeHandlerT>
 class Inflight_setattr
     : public InflightWithAttemptT<AttemptState_setattr<ActionT>,
                                   InflightPolicyWrite, ActionT> {
@@ -88,22 +88,15 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  struct SuccessReplyAttr {};
-  struct SuccessReplyOpen {
-    int flags;
-  };
-  using SuccessReply = std::variant<SuccessReplyAttr, SuccessReplyOpen>;
-
   Inflight_setattr(req_t, fdbfs_ino_t, struct stat, SetAttrMask,
-                   unique_transaction,
-                   SuccessReply = SuccessReplyAttr{});
+                   unique_transaction, INodeHandlerT);
   InflightCallbackT<ActionT> issue();
 
 private:
   const fdbfs_ino_t ino;
   const struct stat attr{};
   const SetAttrMask to_set;
-  const SuccessReply success_reply;
+  const INodeHandlerT inode_handler;
 
   fdb_error_t configure_transaction() override;
   ActionT callback();
@@ -113,39 +106,33 @@ private:
   bool write_success_oplog_result();
 };
 
-template <typename ActionT>
-Inflight_setattr<ActionT>::Inflight_setattr(req_t req, fdbfs_ino_t ino,
-                                            struct stat attr,
-                                            SetAttrMask to_set,
-                                            unique_transaction transaction,
-                                            SuccessReply success_reply)
-    : Base(req, std::move(transaction)), ino(ino), attr(attr),
-      to_set(to_set), success_reply(std::move(success_reply)) {
+template <typename ActionT, typename INodeHandlerT>
+Inflight_setattr<ActionT, INodeHandlerT>::Inflight_setattr(
+    req_t req, fdbfs_ino_t ino, struct stat attr, SetAttrMask to_set,
+    unique_transaction transaction, INodeHandlerT inode_handler)
+    : Base(req, std::move(transaction)), ino(ino), attr(attr), to_set(to_set),
+      inode_handler(std::move(inode_handler)) {
   track_inode_for_fsync(ino);
 }
 
-template <typename ActionT>
-fdb_error_t Inflight_setattr<ActionT>::configure_transaction() {
+template <typename ActionT, typename INodeHandlerT>
+fdb_error_t Inflight_setattr<ActionT, INodeHandlerT>::configure_transaction() {
   return fdb_transaction_set_option(
       transaction.get(), FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, nullptr, 0);
 }
 
-template <typename ActionT>
-ActionT Inflight_setattr<ActionT>::commit_cb() {
-  auto open_reply = std::get_if<SuccessReplyOpen>(&success_reply);
-  if (open_reply != nullptr) {
-    return ActionT::Open(ino, open_reply->flags);
-  }
-  return ActionT::Attr(a().inode);
+template <typename ActionT, typename INodeHandlerT>
+ActionT Inflight_setattr<ActionT, INodeHandlerT>::commit_cb() {
+  return ActionT::INode(a().inode, inode_handler);
 }
 
-template <typename ActionT>
-bool Inflight_setattr<ActionT>::write_success_oplog_result() {
-  auto open_reply = std::get_if<SuccessReplyOpen>(&success_reply);
-  if (open_reply != nullptr) {
+template <typename ActionT, typename INodeHandlerT>
+bool Inflight_setattr<ActionT, INodeHandlerT>::write_success_oplog_result() {
+  auto open_flags = ActionT::inode_handler_open_flags(inode_handler);
+  if (open_flags.has_value()) {
     OpLogResultOpen result;
     result.set_ino(ino);
-    result.set_flags(open_reply->flags);
+    result.set_flags(*open_flags);
     result.set_direct_io(false);
     result.set_keep_cache(false);
     result.set_nonseekable(false);
@@ -157,25 +144,29 @@ bool Inflight_setattr<ActionT>::write_success_oplog_result() {
   return write_oplog_result(result);
 }
 
-template <typename ActionT>
-ActionT Inflight_setattr<ActionT>::oplog_recovery(const OpLogRecord &record) {
+template <typename ActionT, typename INodeHandlerT>
+ActionT Inflight_setattr<ActionT, INodeHandlerT>::oplog_recovery(
+    const OpLogRecord &record) {
   switch (record.result_case()) {
   case OpLogRecord::kAttr: {
     if (!record.attr().has_attr()) {
       return ActionT::Abort(EIO);
     }
-    return ActionT::Attr(record.attr().attr());
+    return ActionT::INode(record.attr().attr(), inode_handler);
   }
   case OpLogRecord::kOpen: {
-    return ActionT::Open(record.open().ino(), record.open().flags());
+    INodeRecord inode;
+    inode.set_inode(record.open().ino());
+    return ActionT::INode(inode, ActionT::inode_handler_open(
+                                     static_cast<int>(record.open().flags())));
   }
   default:
     return ActionT::Abort(EIO);
   }
 }
 
-template <typename ActionT>
-ActionT Inflight_setattr<ActionT>::partial_block_fixup() {
+template <typename ActionT, typename INodeHandlerT>
+ActionT Inflight_setattr<ActionT, INodeHandlerT>::partial_block_fixup() {
   const FDBKeyValue *kvs;
   int kvcount;
   fdb_bool_t more;
@@ -208,11 +199,12 @@ ActionT Inflight_setattr<ActionT>::partial_block_fixup() {
     return ActionT::Abort(EIO);
   }
 
-  return commit(std::bind(&Inflight_setattr<ActionT>::commit_cb, this));
+  return commit(
+      std::bind(&Inflight_setattr<ActionT, INodeHandlerT>::commit_cb, this));
 }
 
-template <typename ActionT>
-ActionT Inflight_setattr<ActionT>::callback() {
+template <typename ActionT, typename INodeHandlerT>
+ActionT Inflight_setattr<ActionT, INodeHandlerT>::callback() {
   fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
@@ -227,8 +219,8 @@ ActionT Inflight_setattr<ActionT>::callback() {
   }
 
   bool do_commit = true;
-  auto next_action =
-      ActionT::BeginWait(std::bind(&Inflight_setattr<ActionT>::commit_cb, this));
+  auto next_action = ActionT::BeginWait(
+      std::bind(&Inflight_setattr<ActionT, INodeHandlerT>::commit_cb, this));
 
   a().inode.ParseFromArray(val, vallen);
   if (!a().inode.IsInitialized()) {
@@ -274,8 +266,9 @@ ActionT Inflight_setattr<ActionT>::callback() {
                 0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
             a().partial_block_fetch);
         do_commit = false;
-        next_action = ActionT::BeginWait(
-            std::bind(&Inflight_setattr<ActionT>::partial_block_fixup, this));
+        next_action = ActionT::BeginWait(std::bind(
+            &Inflight_setattr<ActionT, INodeHandlerT>::partial_block_fixup,
+            this));
       }
     }
     if (static_cast<uint64_t>(attr.st_size) != a().inode.size()) {
@@ -335,13 +328,13 @@ ActionT Inflight_setattr<ActionT>::callback() {
   return next_action;
 }
 
-template <typename ActionT>
-InflightCallbackT<ActionT> Inflight_setattr<ActionT>::issue() {
+template <typename ActionT, typename INodeHandlerT>
+InflightCallbackT<ActionT> Inflight_setattr<ActionT, INodeHandlerT>::issue() {
   const auto key = pack_inode_key(ino);
 
   // and request just that inode
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
       a().inode_fetch);
-  return std::bind(&Inflight_setattr<ActionT>::callback, this);
+  return std::bind(&Inflight_setattr<ActionT, INodeHandlerT>::callback, this);
 }

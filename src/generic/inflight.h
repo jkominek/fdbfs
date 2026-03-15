@@ -195,7 +195,7 @@ class Inflight_markusedT
     : public InflightWithAttemptT<AttemptState_markusedT<ActionT>,
                                   InflightPolicyIdempotentWrite, ActionT> {
 public:
-  Inflight_markusedT(typename ActionT::req_t, uint64_t, struct stat,
+  Inflight_markusedT(typename ActionT::req_t, uint64_t, INodeRecord,
                      unique_transaction);
   InflightCallbackT<ActionT> issue();
 
@@ -204,7 +204,7 @@ private:
   ActionT reply_entry();
 
   const uint64_t generation;
-  const struct stat entry_attr;
+  const INodeRecord entry_inode;
 };
 
 #include "inflight.tpp"

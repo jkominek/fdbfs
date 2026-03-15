@@ -28,36 +28,39 @@
  * or less common values?
  */
 template <typename ActionT>
-struct AttemptState_getattr : public AttemptStateT<ActionT> {
+struct AttemptState_getinode : public AttemptStateT<ActionT> {
   unique_future inode_fetch;
 };
 
-template <typename ActionT>
-class Inflight_getattr
-    : public InflightWithAttemptT<AttemptState_getattr<ActionT>,
-                                  InflightPolicyReadOnly, ActionT> {
+template <typename ActionT, typename INodeHandlerT>
+class Inflight_getinode
+    : public InflightWithAttemptT<AttemptState_getinode<ActionT>, InflightPolicyReadOnly,
+                                  ActionT> {
 public:
-  using Base = InflightWithAttemptT<AttemptState_getattr<ActionT>,
+  using Base = InflightWithAttemptT<AttemptState_getinode<ActionT>,
                                     InflightPolicyReadOnly, ActionT>;
   using req_t = typename ActionT::req_t;
   using Base::a;
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_getattr(req_t, fdbfs_ino_t, unique_transaction);
+  Inflight_getinode(req_t, fdbfs_ino_t, unique_transaction, INodeHandlerT);
   InflightCallbackT<ActionT> issue();
 
 private:
   const fdbfs_ino_t ino;
+  const INodeHandlerT inode_handler;
   ActionT callback();
 };
 
-template <typename ActionT>
-Inflight_getattr<ActionT>::Inflight_getattr(req_t req, fdbfs_ino_t ino,
-                                            unique_transaction transaction)
-    : Base(req, std::move(transaction)), ino(ino) {}
+template <typename ActionT, typename INodeHandlerT>
+Inflight_getinode<ActionT, INodeHandlerT>::Inflight_getinode(
+    req_t req, fdbfs_ino_t ino, unique_transaction transaction,
+    INodeHandlerT inode_handler)
+    : Base(req, std::move(transaction)), ino(ino), inode_handler(inode_handler) {}
 
-template <typename ActionT> ActionT Inflight_getattr<ActionT>::callback() {
+template <typename ActionT, typename INodeHandlerT>
+ActionT Inflight_getinode<ActionT, INodeHandlerT>::callback() {
   fdb_bool_t present = 0;
   const uint8_t *val;
   int vallen;
@@ -75,16 +78,16 @@ template <typename ActionT> ActionT Inflight_getattr<ActionT>::callback() {
     return ActionT::Abort(EIO);
   }
 
-  return ActionT::Attr(inode);
+  return ActionT::INode(inode, inode_handler);
 }
 
-template <typename ActionT>
-InflightCallbackT<ActionT> Inflight_getattr<ActionT>::issue() {
+template <typename ActionT, typename INodeHandlerT>
+InflightCallbackT<ActionT> Inflight_getinode<ActionT, INodeHandlerT>::issue() {
   auto key = pack_inode_key(ino);
 
   // and request just that inode
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
       a().inode_fetch);
-  return std::bind(&Inflight_getattr<ActionT>::callback, this);
+  return std::bind(&Inflight_getinode<ActionT, INodeHandlerT>::callback, this);
 }
