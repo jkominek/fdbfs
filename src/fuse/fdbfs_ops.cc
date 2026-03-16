@@ -14,7 +14,6 @@
 
 #include "filehandle.h"
 #include "fuse_inflight_action.h"
-#include "util_fuse.h"
 #include "generic/forget.hpp"
 #include "generic/fsync.h"
 #include "generic/getinode.hpp"
@@ -37,6 +36,7 @@
 #include "generic/util.h"
 #include "generic/util_locks.h"
 #include "generic/write.hpp"
+#include "util_fuse.h"
 
 namespace {
 [[nodiscard]] inline fdbfs_ino_t to_fdbfs_ino(fuse_ino_t ino) {
@@ -302,9 +302,8 @@ extern "C" void fdbfs_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent,
 
 // ==== readlink ====
 extern "C" void fdbfs_readlink(fuse_req_t req, fuse_ino_t ino) {
-  auto *inflight =
-      new Inflight_readlink<FuseInflightAction>(req, to_fdbfs_ino(ino),
-                                                make_transaction());
+  auto *inflight = new Inflight_readlink<FuseInflightAction>(
+      req, to_fdbfs_ino(ino), make_transaction());
   inflight->start();
 }
 
@@ -373,6 +372,7 @@ extern "C" void fdbfs_rename(fuse_req_t req, fuse_ino_t parent,
 // ==== write ====
 extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
                             size_t size, off_t off, struct fuse_file_info *fi) {
+  printf("write %li\n", size);
   if (size == 0) {
     // just in case?
     fuse_reply_write(req, 0);
@@ -391,7 +391,8 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 
   std::vector<uint8_t> buffer(buf, buf + size);
   auto *inflight = new Inflight_write<FuseInflightAction>(
-      req, to_fdbfs_ino(ino), buffer, off, make_transaction());
+      req, to_fdbfs_ino(ino), buffer, WritePosOffset{.off = off},
+      make_transaction());
 
   auto &serializer = fh->serializer;
   if (!serializer.enqueue_inflight(inflight,
@@ -422,8 +423,8 @@ extern "C" void fdbfs_forget_multi(fuse_req_t req, size_t count,
   std::vector<ForgetEntry> entries;
   entries.reserve(count);
   for (size_t i = 0; i < count; i++) {
-    auto generation =
-        decrement_lookup_count(to_fdbfs_ino(forgets[i].ino), forgets[i].nlookup);
+    auto generation = decrement_lookup_count(to_fdbfs_ino(forgets[i].ino),
+                                             forgets[i].nlookup);
     if (generation.has_value()) {
       entries.push_back(ForgetEntry{to_fdbfs_ino(forgets[i].ino), *generation});
     }
@@ -547,16 +548,16 @@ extern "C" void fdbfs_fsync(fuse_req_t req, fuse_ino_t ino, int datasync,
                             struct fuse_file_info *fi) {
   (void)datasync;
   (void)fi;
-  g_fsync_barrier_table.fsync_async(to_fdbfs_ino(ino),
-                                    [req](int err) { fuse_reply_err(req, err); });
+  g_fsync_barrier_table.fsync_async(
+      to_fdbfs_ino(ino), [req](int err) { fuse_reply_err(req, err); });
 }
 
 extern "C" void fdbfs_fsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync,
                                struct fuse_file_info *fi) {
   (void)datasync;
   (void)fi;
-  g_fsync_barrier_table.fsync_async(to_fdbfs_ino(ino),
-                                    [req](int err) { fuse_reply_err(req, err); });
+  g_fsync_barrier_table.fsync_async(
+      to_fdbfs_ino(ino), [req](int err) { fuse_reply_err(req, err); });
 }
 
 // ==== release ====
@@ -572,7 +573,8 @@ extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
           [req, ino, fh]() {
             auto generation = decrement_lookup_count(to_fdbfs_ino(ino), 1);
             if (generation.has_value()) {
-              best_effort_clear_inode_use_record(to_fdbfs_ino(ino), *generation);
+              best_effort_clear_inode_use_record(to_fdbfs_ino(ino),
+                                                 *generation);
             }
             fuse_reply_err(req, 0);
           },
@@ -597,8 +599,7 @@ extern "C" void fdbfs_getlk(fuse_req_t req, fuse_ino_t ino,
       (g_lock_manager_service == nullptr)
           ? std::nullopt
           : g_lock_manager_service->query_lock_conflict(
-                to_fdbfs_ino(ino), fi->lock_owner, lock->l_type,
-                range.value());
+                to_fdbfs_ino(ino), fi->lock_owner, lock->l_type, range.value());
   if (!conflict.has_value()) {
     lock->l_type = F_UNLCK;
     lock->l_whence = SEEK_SET;
