@@ -66,9 +66,8 @@ template <typename ActionT, typename INodeHandlerT>
 Inflight_link<ActionT, INodeHandlerT>::Inflight_link(
     req_t req, fdbfs_ino_t ino, fdbfs_ino_t newparent, std::string newname,
     unique_transaction transaction, INodeHandlerT inode_handler)
-    : Base(req, std::move(transaction)), ino(ino),
-      newparent(newparent), newname(std::move(newname)),
-      inode_handler(std::move(inode_handler)) {
+    : Base(req, std::move(transaction)), ino(ino), newparent(newparent),
+      newname(std::move(newname)), inode_handler(std::move(inode_handler)) {
   track_inode_for_fsync(ino);
   track_inode_for_fsync(newparent);
 }
@@ -139,7 +138,10 @@ ActionT Inflight_link<ActionT, INodeHandlerT>::check() {
       return ActionT::Abort(ENOTDIR);
     }
     // update times on destination dir
-    update_directory_times(transaction.get(), dirinode);
+    if (auto it = update_directory_times(transaction.get(), dirinode);
+        !it.has_value()) {
+      return ActionT::FDBError(it.error());
+    }
   } else {
     return ActionT::Abort(ENOENT);
   }
@@ -178,8 +180,9 @@ ActionT Inflight_link<ActionT, INodeHandlerT>::check() {
     return ActionT::Abort(EIO);
   }
 
-  return commit([&]() {
-    return ActionT::INode(a().inode, inode_handler);
+  auto *inode_ptr = &(a().inode);
+  return commit([inode_ptr, inode_handler = inode_handler]() {
+    return ActionT::INode(*inode_ptr, inode_handler);
   });
 }
 

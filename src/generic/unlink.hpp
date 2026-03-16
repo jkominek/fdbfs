@@ -86,9 +86,8 @@ template <typename ActionT>
 Inflight_unlink_rmdir<ActionT>::Inflight_unlink_rmdir(
     req_t req, fdbfs_ino_t parent, std::string name, Op op,
     unique_transaction transaction)
-    : Base(req, std::move(transaction)), parent(parent),
-      name(std::move(name)), dirent_key(pack_dentry_key(parent, this->name)),
-      op(op) {
+    : Base(req, std::move(transaction)), parent(parent), name(std::move(name)),
+      dirent_key(pack_dentry_key(parent, this->name)), op(op) {
   track_inode_for_fsync(parent);
 }
 
@@ -99,8 +98,8 @@ bool Inflight_unlink_rmdir<ActionT>::write_success_oplog_result() {
 }
 
 template <typename ActionT>
-ActionT Inflight_unlink_rmdir<ActionT>::oplog_recovery(
-    const OpLogRecord &record) {
+ActionT
+Inflight_unlink_rmdir<ActionT>::oplog_recovery(const OpLogRecord &record) {
   if (record.result_case() != OpLogRecord::kOk) {
     return ActionT::Abort(EIO);
   }
@@ -213,7 +212,10 @@ ActionT Inflight_unlink_rmdir<ActionT>::postlookup() {
     }
     parent.set_nlinks(parent.nlinks() - 1);
   }
-  update_directory_times(transaction.get(), parent);
+  if (auto it = update_directory_times(transaction.get(), parent);
+      !it.has_value()) {
+    return ActionT::FDBError(it.error());
+  }
 
   err = fdb_future_get_value(a().dirent_lookup.get(), &dirent_present, &value,
                              &valuelen);
@@ -275,8 +277,8 @@ ActionT Inflight_unlink_rmdir<ActionT>::postlookup() {
             a().directory_listing_fetch);
       }
 
-      return ActionT::BeginWait(
-          std::bind(&Inflight_unlink_rmdir<ActionT>::rmdir_inode_dirlist_check, this));
+      return ActionT::BeginWait(std::bind(
+          &Inflight_unlink_rmdir<ActionT>::rmdir_inode_dirlist_check, this));
     } else {
       // mismatch. bail.
       return ActionT::Abort(ENOTDIR);

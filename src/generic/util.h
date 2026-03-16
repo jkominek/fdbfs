@@ -22,8 +22,8 @@
 #endif
 
 // for mode_t
-#include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 
 #include <cstdint>
 #include <expected>
@@ -164,7 +164,9 @@ filename_length_check(const char *, size_t maxlength = MAXFILENAMELEN);
 extern void update_atime(INodeRecord *, const struct timespec *);
 extern void update_mtime(INodeRecord *, const struct timespec *);
 extern void update_ctime(INodeRecord *, const struct timespec *);
-extern void update_directory_times(FDBTransaction *, INodeRecord &);
+[[nodiscard]]
+extern std::expected<void, int> update_directory_times(FDBTransaction *,
+                                                       INodeRecord &);
 
 extern void erase_inode(FDBTransaction *, fdbfs_ino_t);
 

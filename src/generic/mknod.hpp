@@ -140,7 +140,10 @@ ActionT Inflight_mknod<ActionT, INodeHandlerT>::postverification() {
   }
 
   // update the containing directory entry
-  update_directory_times(transaction.get(), parentinode);
+  if (auto it = update_directory_times(transaction.get(), parentinode);
+      !it.has_value()) {
+    return ActionT::FDBError(it.error());
+  }
 
   INodeRecord inode;
   inode.set_inode(a().ino);
@@ -194,7 +197,9 @@ ActionT Inflight_mknod<ActionT, INodeHandlerT>::postverification() {
     return ActionT::Abort(EIO);
   }
 
-  return commit([&]() { return ActionT::INode(inode, inode_handler); });
+  return commit([inode = std::move(inode), inode_handler = inode_handler]() {
+    return ActionT::INode(inode, inode_handler);
+  });
 }
 
 template <typename ActionT, typename INodeHandlerT>

@@ -131,7 +131,8 @@ std::optional<uint64_t> increment_lookup_count(fdbfs_ino_t ino) {
 
 // if this returns a value, the caller is obligated to
 // clear the inode-adjacent record iff generation matches.
-std::optional<uint64_t> decrement_lookup_count(fdbfs_ino_t ino, uint64_t count) {
+std::optional<uint64_t> decrement_lookup_count(fdbfs_ino_t ino,
+                                               uint64_t count) {
   std::lock_guard<std::mutex> guard(lookup_counts_mutex);
   auto it = lookup_counts.find(ino);
   if (it == lookup_counts.end()) {
@@ -594,16 +595,15 @@ void update_mtime(INodeRecord *inode, const struct timespec *tv) {
   update_ctime(inode, tv);
 }
 
-void update_directory_times(FDBTransaction *transaction, INodeRecord &inode) {
+std::expected<void, int> update_directory_times(FDBTransaction *transaction,
+                                                INodeRecord &inode) {
   struct timespec tp;
   clock_gettime(CLOCK_REALTIME, &tp);
   inode.mutable_ctime()->set_sec(tp.tv_sec);
   inode.mutable_ctime()->set_nsec(tp.tv_nsec);
   inode.mutable_mtime()->set_sec(tp.tv_sec);
   inode.mutable_mtime()->set_nsec(tp.tv_nsec);
-  // discard the error; failure shouldn't be possible and even if it does
-  // somehow happen, failing to update directory times is minor.
-  (void)fdb_set_protobuf(transaction, pack_inode_key(inode.inode()), inode);
+  return fdb_set_protobuf(transaction, pack_inode_key(inode.inode()), inode);
 }
 
 void erase_inode(FDBTransaction *transaction, fdbfs_ino_t ino) {
