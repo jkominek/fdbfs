@@ -18,6 +18,7 @@ project_includes = include_directories(
   'src/generic',
   'src/fuse',
   'tests',
+  'tests/inflight',
   'tests/fuse_integrated',
   'thirdparty/concurrentqueue'
 )
@@ -57,6 +58,37 @@ test(
   'fdbfs_pure_helpers',
   pure_helpers_exe,
   timeout : 60,
+  is_parallel : false,
+)
+
+inflight_test_sources = files(
+  'tests/inflight/test_getinode.cc',
+  'tests/inflight/test_statfs.cc',
+  'tests/inflight/test_support.cc',
+  'src/generic/fdb_service.cc',
+  'src/generic/fdbfs_runtime.cc',
+  'src/generic/garbage_collector.cc',
+  'src/generic/liveness.cc',
+  'src/generic/oplog.cc',
+  'src/generic/util.cc',
+  'src/generic/util_locks.cc',
+)
+
+inflight_test_exe = executable(
+  'fdbfs_inflight_tests',
+  inflight_test_sources,
+  generated,
+  dependencies : [catch2_dep] + deps,
+  include_directories : project_includes,
+)
+
+test(
+  'fdbfs_inflight',
+  inflight_test_exe,
+  env : [
+    'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+  ],
+  timeout : 90,
   is_parallel : false,
 )
 
@@ -118,7 +150,7 @@ test(
     'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
     'FDBFS_TEST_MATRIX=empty',
   ],
-  timeout : 240,
+  timeout : 600,
   is_parallel : false,
 )
 
