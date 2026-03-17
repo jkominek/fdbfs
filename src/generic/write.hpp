@@ -110,6 +110,7 @@ public:
                                     InflightPolicyWrite, ActionT>;
   using Base::a;
   using Base::commit;
+  using Base::run_or_begin_wait;
   using Base::track_inode_for_fsync;
   using Base::transaction;
   using Base::wait_on_future;
@@ -118,7 +119,6 @@ public:
   Inflight_write(req_t, fdbfs_ino_t, std::vector<uint8_t>, WritePos,
                  unique_transaction);
   InflightCallbackT<ActionT> issue();
-  InflightCallbackT<ActionT> block_fetch();
 
 private:
   const fdbfs_ino_t ino;
@@ -129,7 +129,8 @@ private:
   fdb_error_t configure_transaction() override;
   std::expected<INodeRecord, ActionT> decode_inode();
   ActionT check();
-  ActionT block_fetch_after_inode();
+  ActionT block_fetch_bridge();
+  InflightCallbackT<ActionT> block_fetch();
   ActionT oplog_recovery(const OpLogRecord &) override;
   bool write_success_oplog_result();
 };
@@ -201,9 +202,6 @@ std::expected<INodeRecord, ActionT> Inflight_write<ActionT>::decode_inode() {
 }
 
 template <typename ActionT> ActionT Inflight_write<ActionT>::check() {
-  fdb_bool_t present;
-  fdb_error_t err;
-
   auto ret = decode_inode();
   if (!ret.has_value()) {
     return ret.error();
@@ -349,17 +347,13 @@ InflightCallbackT<ActionT> Inflight_write<ActionT>::issue() {
     a().off = std::get<WritePosOffset>(pos).off;
     return block_fetch();
   } else {
-    return std::bind(&Inflight_write<ActionT>::block_fetch_after_inode, this);
+    return std::bind(&Inflight_write<ActionT>::block_fetch_bridge, this);
   }
 }
 
 template <typename ActionT>
-ActionT Inflight_write<ActionT>::block_fetch_after_inode() {
-  auto next_cb = block_fetch();
-  if (a().future_queue.empty()) {
-    return next_cb();
-  }
-  return ActionT::BeginWait(std::move(next_cb));
+ActionT Inflight_write<ActionT>::block_fetch_bridge() {
+  return run_or_begin_wait(block_fetch());
 }
 
 template <typename ActionT>
@@ -367,7 +361,8 @@ InflightCallbackT<ActionT> Inflight_write<ActionT>::block_fetch() {
   if (!a().off.has_value()) {
     auto ret = decode_inode();
     if (!ret.has_value()) {
-      return [err = std::move(ret.error())]() mutable { return std::move(err); };
+      return
+          [err = std::move(ret.error())]() mutable { return std::move(err); };
     }
     INodeRecord inode = ret.value();
     a().off = static_cast<off_t>(inode.size());

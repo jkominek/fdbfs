@@ -304,6 +304,14 @@ ActionT InflightT<ActionT>::commit(InflightCallbackT<ActionT> cb) {
   return ActionT::BeginWait(cb);
 }
 
+template <typename ActionT>
+ActionT InflightT<ActionT>::run_or_begin_wait(InflightCallbackT<ActionT> cb) {
+  if (attempt_state().future_queue.empty()) {
+    return cb();
+  }
+  return ActionT::BeginWait(std::move(cb));
+}
+
 template <typename ActionT> bool InflightT<ActionT>::run_current_callback() {
   if (bool(attempt_state().cb)) {
     std::function<ActionT()> f = attempt_state().cb.value();

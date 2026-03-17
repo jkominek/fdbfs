@@ -124,6 +124,7 @@ protected:
   [[nodiscard]] virtual fdb_error_t configure_transaction() { return 0; }
 
   void wait_on_future(FDBFuture *, unique_future &);
+  [[nodiscard]] ActionT run_or_begin_wait(InflightCallbackT<ActionT> cb);
   [[nodiscard]] virtual std::unique_ptr<AttemptStateT<ActionT>>
   create_attempt_state() = 0;
   void track_inode_for_fsync(fdbfs_ino_t ino);

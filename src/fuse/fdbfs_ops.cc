@@ -372,7 +372,6 @@ extern "C" void fdbfs_rename(fuse_req_t req, fuse_ino_t parent,
 // ==== write ====
 extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
                             size_t size, off_t off, struct fuse_file_info *fi) {
-  printf("write %li\n", size);
   if (size == 0) {
     // just in case?
     fuse_reply_write(req, 0);
@@ -389,10 +388,16 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
     return;
   }
 
+  WritePos pos;
+  if (fi->flags & O_APPEND) {
+    pos = WritePosEOF{};
+  } else {
+    pos = WritePosOffset{.off = off};
+  }
+
   std::vector<uint8_t> buffer(buf, buf + size);
   auto *inflight = new Inflight_write<FuseInflightAction>(
-      req, to_fdbfs_ino(ino), buffer, WritePosOffset{.off = off},
-      make_transaction());
+      req, to_fdbfs_ino(ino), buffer, pos, make_transaction());
 
   auto &serializer = fh->serializer;
   if (!serializer.enqueue_inflight(inflight,
