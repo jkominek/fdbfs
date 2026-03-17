@@ -17,3 +17,8 @@ project_source_files += files([
     'generic/util_unlink.cc',
     'generic/oplog.cc',
 ])
+
+utils_source_files = files([
+    'utils/mkfs.fdbfs.cc',
+    'utils/fsck.fdbfs.cc',
+])

@@ -20,6 +20,7 @@ project_includes = include_directories(
   'tests',
   'tests/inflight',
   'tests/fuse_integrated',
+  'thirdparty/CLI11',
   'thirdparty/concurrentqueue'
 )
 
@@ -29,6 +30,16 @@ generated = []
 subdir('src')
 
 fs_exe = executable('fs', project_source_files, generated,
+  dependencies: deps,
+  include_directories: project_includes,
+)
+
+mkfs_exe = executable('mkfs.fdbfs', 'src/utils/mkfs.fdbfs.cc', generated,
+  dependencies: deps,
+  include_directories: project_includes,
+)
+
+fsck_exe = executable('fsck.fdbfs', 'src/utils/fsck.fdbfs.cc', generated,
   dependencies: deps,
   include_directories: project_includes,
 )
