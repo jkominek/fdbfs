@@ -74,6 +74,7 @@ test(
 
 inflight_test_sources = files(
   'tests/inflight/test_getinode.cc',
+  'tests/inflight/test_rename.cc',
   'tests/inflight/test_statfs.cc',
   'tests/inflight/test_support.cc',
   'src/generic/fdb_service.cc',
@@ -82,6 +83,7 @@ inflight_test_sources = files(
   'src/generic/liveness.cc',
   'src/generic/oplog.cc',
   'src/generic/util.cc',
+  'src/generic/util_unlink.cc',
   'src/generic/util_locks.cc',
 )
 
