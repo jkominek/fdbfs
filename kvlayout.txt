@@ -7,10 +7,11 @@ rollover.
 === inodes ===
 prefix 'i' inode              -> contains basic attrs and symlink info
 
-prefix 'i' inode \x00 pid1, anything -> info on a lock
-prefix 'i' inode \x00 pid2, anything -> info on a lock
+prefix 'i' inode \x00 t{a,c,m}-> atime, ctime, mtime. 64 bit sec, 32 bit nsec
 prefix 'i' inode \x01 pid1    -> per fuse-process use counter (64 bit LE)
 prefix 'i' inode \x01 pid2    -> per fuse-process use counter (64 bit LE)
+prefix 'i' inode \x02 pid1, anything -> info on a lock
+prefix 'i' inode \x02 pid2, anything -> info on a lock
 prefix 'i' inode \xfe inodeattr -> pseudo keys to indicate inode updates
 prefix 'd' inode filenameA-> dirents.
 prefix 'd' inode filenameB
@@ -25,22 +26,25 @@ prefix 'x' inode xattrname -> XattrRecord (currently unused place for metadata)
 prefix 'X' inode xattrname -> zero or one block(s) of raw data
                               (if the data is zero-length, this KV is omitted)
 
-The \x00 space for locks is adjacent to the inodes, because in a mandatory
+\x00 space is for fields of the inode which it is beneficial to update
+separately. generally so they can be updated atomically, and keep
+updates from conflicting with one another. time updates, for instance,
+can be updated as atomic max operations. ctime and mtime should be updated
+accurately by writes, atime can be updated accurately by reads, or on a
+slight delay. directory modifications can just update the parent directory
+ctime. operations updating anything besides a timestamp in an inode
+should pick up on changes to these fields (range read basically) and integrate
+the values into the INodeRecord. operations reading inodes can read the
+fields for the latest value, or not, as performance and/or settings permit.
+
+\x01 space is for the use records. The value is an integer counter
+('generation') shared across the process. Currently it's set with
+FDB_MUTATION_TYPE_MAX, and removed with
+FDB_MUTATION_TYPE_COMPARE_AND_CLEAR.
+
+The \x02 space for locks is adjacent to the inodes, because in a mandatory
 locking system, you'd need to read them along with the inode. So we'll
 store them for a single range read.
-
-\x01 space is for the use records. The value is an integer counter ('generation')
-shared across the process. Currently it's set with FDB_MUTATION_TYPE_MAX, and
-removed with FDB_MUTATION_TYPE_COMPARE_AND_CLEAR.
-
-The \xfe space is to register common partial updates to an inode. For
-instance, when reading blocks with noatime, the only thing you need to
-know about an inode is existance and the size of it. So read the inode
-without a read conflict range, but lay down a read conflict on the
-inode size key. Anything changing the size will read/write conflict the
-inode, and write conflict the inode size key. So another process only
-changing the owner (which will read/write the inode, and write conflict
-the inode owner attr) won't conflict all of the ongoing reads.
 
 === garbage ===
 prefix 'g' inode -> indicates that nlinks in the inode has gone to zero,

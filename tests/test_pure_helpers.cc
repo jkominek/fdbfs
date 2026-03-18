@@ -476,7 +476,7 @@ TEST_CASE("inode/stat packing helpers preserve expected fields",
 
 }
 
-TEST_CASE("inode time update helpers implement cascade semantics",
+TEST_CASE("inode time update helpers update only intended timestamps",
           "[pure][helpers][time]") {
   INodeRecord inode;
   inode.mutable_atime()->set_sec(1);
@@ -499,8 +499,8 @@ TEST_CASE("inode time update helpers implement cascade semantics",
   update_ctime(&inode, &t2);
   CHECK(inode.ctime().sec() == 20);
   CHECK(inode.ctime().nsec() == 21);
-  CHECK(inode.atime().sec() == 20);
-  CHECK(inode.atime().nsec() == 21);
+  CHECK(inode.atime().sec() == 10);
+  CHECK(inode.atime().nsec() == 11);
   CHECK(inode.mtime().sec() == 3);
   CHECK(inode.mtime().nsec() == 4);
 
@@ -510,8 +510,8 @@ TEST_CASE("inode time update helpers implement cascade semantics",
   CHECK(inode.mtime().nsec() == 31);
   CHECK(inode.ctime().sec() == 30);
   CHECK(inode.ctime().nsec() == 31);
-  CHECK(inode.atime().sec() == 30);
-  CHECK(inode.atime().nsec() == 31);
+  CHECK(inode.atime().sec() == 10);
+  CHECK(inode.atime().nsec() == 11);
 }
 
 TEST_CASE("offset_size_to_range_keys maps offsets to expected block spans",

@@ -47,7 +47,9 @@
 extern thread_pool pool;
 
 #define INODE_PREFIX 'i'
+#define INODE_FIELD_PREFIX 0x00
 #define INODE_USE_PREFIX 0x01
+#define INODE_LOCK_PREFIX 0x02
 #define DENTRY_PREFIX 'd'
 #define DATA_PREFIX 'f'
 #define GARBAGE_PREFIX 'g'

@@ -230,7 +230,7 @@ ActionT Inflight_setattr<ActionT, INodeHandlerT>::callback() {
 
   // update inode!
 
-  bool substantial_update = false;
+  bool substantial_update = false, data_modification = false;
   if (to_set.has(SetAttrBit::Mode)) {
     a().inode.set_mode(attr.st_mode & 07777);
     substantial_update = true;
@@ -274,6 +274,7 @@ ActionT Inflight_setattr<ActionT, INodeHandlerT>::callback() {
     if (static_cast<uint64_t>(attr.st_size) != a().inode.size()) {
       a().inode.set_size(attr.st_size);
       substantial_update = true;
+      data_modification = true;
     }
   }
   if (to_set.has(SetAttrBit::Atime)) {
@@ -297,7 +298,7 @@ ActionT Inflight_setattr<ActionT, INodeHandlerT>::callback() {
       a().inode.mutable_atime()->set_sec(tp.tv_sec);
       a().inode.mutable_atime()->set_nsec(tp.tv_nsec);
     }
-    if (to_set.has(SetAttrBit::MtimeNow) || substantial_update) {
+    if (to_set.has(SetAttrBit::MtimeNow) || data_modification) {
       a().inode.mutable_mtime()->set_sec(tp.tv_sec);
       a().inode.mutable_mtime()->set_nsec(tp.tv_nsec);
     }

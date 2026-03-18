@@ -585,7 +585,6 @@ void update_ctime(INodeRecord *inode, const struct timespec *tv) {
   Timespec *ctime = inode->mutable_ctime();
   ctime->set_sec(tv->tv_sec);
   ctime->set_nsec(tv->tv_nsec);
-  update_atime(inode, tv);
 }
 
 void update_mtime(INodeRecord *inode, const struct timespec *tv) {
