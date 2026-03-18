@@ -5,8 +5,7 @@
 #include <stdlib.h>
 
 bool FilehandleSerializer::enqueue_inflight(
-    InflightT<FuseInflightAction> *inflight,
-                                            std::optional<ByteRange> range) {
+    InflightT<FuseInflightAction> *inflight, std::optional<ByteRange> range) {
   std::unique_lock lk(mu);
   if (closed) {
     return false;
@@ -24,7 +23,7 @@ bool FilehandleSerializer::enqueue_inflight(
   return true;
 }
 
-bool FilehandleSerializer::enqueue_barrier(std::function<void()> callback,
+bool FilehandleSerializer::enqueue_barrier(std::function<void(int)> callback,
                                            bool close_after_enqueue) {
   std::unique_lock lk(mu);
   if (closed) {
@@ -43,8 +42,12 @@ bool FilehandleSerializer::enqueue_barrier(std::function<void()> callback,
 }
 
 void FilehandleSerializer::on_inflight_done(
-    InflightT<FuseInflightAction> *inflight) {
+    InflightT<FuseInflightAction> *inflight, int err) {
   std::unique_lock lk(mu);
+  // keep any non-zero error we already have
+  if (stored_error == 0)
+    stored_error = err;
+
   auto it = active.find(inflight);
   assert(it != active.end());
 
@@ -92,7 +95,8 @@ void FilehandleSerializer::maybe_start_next_locked(
 
       lk.unlock();
       if (cb) {
-        cb();
+        cb(stored_error);
+        stored_error = 0;
       }
       lk.lock();
       continue;
@@ -132,7 +136,8 @@ void FilehandleSerializer::maybe_start_next_locked(
     queue.pop_front();
 
     // Assumes Inflight will expose a completion callback hook.
-    inflight->set_on_done([this, inflight]() { on_inflight_done(inflight); });
+    inflight->set_on_done(
+        [this, inflight](int err) { on_inflight_done(inflight, err); });
 
     lk.unlock();
     inflight->start();

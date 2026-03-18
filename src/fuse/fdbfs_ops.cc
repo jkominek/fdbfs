@@ -523,10 +523,10 @@ extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
   }
 
   // construct the appropriate callback for the barrier
-  std::function<void()> barrier_callback;
+  std::function<void(int)> barrier_callback;
   if (fi->lock_owner) {
     auto lock_owner = fi->lock_owner;
-    barrier_callback = [req, ino, lock_owner]() {
+    barrier_callback = [req, ino, lock_owner](int err) {
       if (g_lock_manager_service == nullptr) {
         fuse_reply_err(req, EIO);
         return;
@@ -534,12 +534,12 @@ extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
       ByteRange range(0, std::numeric_limits<off_t>::max());
       g_lock_manager_service->queue_lock_manipulation(
           to_fdbfs_ino(ino), lock_owner, 0, 0, F_UNLCK, range,
-          [req](std::expected<void, int> outcome) {
-            fuse_reply_err(req, outcome ? 0 : outcome.error());
+          [req, err](std::expected<void, int> outcome) {
+            fuse_reply_err(req, outcome ? err : outcome.error());
           });
     };
   } else {
-    barrier_callback = [req]() { fuse_reply_err(req, 0); };
+    barrier_callback = [req](int err) { fuse_reply_err(req, err); };
   }
 
   if (!fh->serializer.enqueue_barrier(barrier_callback)) {
@@ -575,12 +575,13 @@ extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
   }
 
   if (!fh->serializer.enqueue_barrier(
-          [req, ino, fh]() {
+          [req, ino, fh](int err) {
             auto generation = decrement_lookup_count(to_fdbfs_ino(ino), 1);
             if (generation.has_value()) {
               best_effort_clear_inode_use_record(to_fdbfs_ino(ino),
                                                  *generation);
             }
+            fh->serializer.close();
             fuse_reply_err(req, 0);
           },
           true)) {

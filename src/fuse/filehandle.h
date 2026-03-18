@@ -38,11 +38,11 @@ public:
   // Enqueue a non-inflight barrier callback (e.g. flush/release drain marker).
   // When close_after_enqueue is true, no further enqueue operations are
   // accepted after this barrier is inserted.
-  [[nodiscard]] bool enqueue_barrier(std::function<void()> callback,
+  [[nodiscard]] bool enqueue_barrier(std::function<void(int)> callback,
                                      bool close_after_enqueue = false);
 
   // Called by inflight completion path to release the current slot.
-  void on_inflight_done(InflightT<FuseInflightAction> *inflight);
+  void on_inflight_done(InflightT<FuseInflightAction> *inflight, int err);
 
   // Prevent further enqueue operations.
   void close();
@@ -58,7 +58,7 @@ private:
   struct PendingItem {
     PendingKind kind;
     InflightT<FuseInflightAction> *inflight = nullptr;
-    std::function<void()> callback;
+    std::function<void(int)> callback;
     bool readonly;
     ByteRange range = ByteRange::closed(0, std::numeric_limits<off_t>::max());
   };
@@ -75,6 +75,8 @@ private:
 
   const fuse_ino_t ino;
   bool closed = false;
+  // error from operations we've serialized, for flush/close
+  int stored_error = 0;
 };
 
 struct fdbfs_filehandle {

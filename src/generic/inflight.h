@@ -80,6 +80,7 @@ template <typename ActionT> struct AttemptStateT {
 
 template <typename ActionT> class InflightT {
 public:
+  friend ActionT;
   using req_t = typename ActionT::req_t;
 
   // issuer is what we'll have to run if the future fails.
@@ -108,7 +109,7 @@ public:
   // run before delete, in case there is anything a subclass
   // wants to take care of.
   void cleanup();
-  void set_on_done(std::function<void()> callback);
+  void set_on_done(std::function<void(int err)> callback);
 
   inline ReadWrite read_write() { return policy->read_write; };
 
@@ -138,8 +139,15 @@ protected:
 private:
   // static behavior selected by the subclass policy.
   const InflightRuntimePolicy *policy;
+
   // single callback for completion, intended for use by FilehandleSerializer
-  std::function<void()> on_done;
+  std::function<void(int err)> on_done;
+  // this is sent back via the on_done callback. generally it will be
+  // 0, EIO, or some other unixy error code (ENOSPC, EPERM maybe, etc)
+  // FDB error codes should just be flattened into EIO before being stuffed
+  // into it.
+  int completion_error = 0;
+
   std::unordered_map<fdbfs_ino_t, FsyncBarrierTable::Token> fsync_tokens;
   bool commit_unknown_seen = false;
   std::optional<uint64_t> op_id;

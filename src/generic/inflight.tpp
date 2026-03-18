@@ -159,12 +159,12 @@ template <typename ActionT> void InflightT<ActionT>::cleanup() {
 #endif
   if (on_done) {
     auto callback = std::move(on_done);
-    callback();
+    callback(completion_error);
   }
 }
 
 template <typename ActionT>
-void InflightT<ActionT>::set_on_done(std::function<void()> callback) {
+void InflightT<ActionT>::set_on_done(std::function<void(int err)> callback) {
   on_done = std::move(callback);
 }
 
@@ -534,19 +534,16 @@ template <typename ActionT> ActionT Inflight_markusedT<ActionT>::check_inode() {
 }
 
 template <typename ActionT> ActionT Inflight_markusedT<ActionT>::reply_entry() {
-  return ActionT::INode(entry_inode,
-                        typename ActionT::INodeHandlerImmediateEntry{
-                            .failure_callback =
-                                [entry_inode = this->entry_inode]() {
-                                  // if reply failed, kernel won't hold
-                                  // a reference for this lookup.
-                                  auto generation_to_clear =
-                                      decrement_lookup_count(entry_inode.inode(),
-                                                             1);
-                                  if (generation_to_clear.has_value()) {
-                                    best_effort_clear_inode_use_record(
-                                        entry_inode.inode(),
-                                        *generation_to_clear);
-                                  }
-                                }});
+  return ActionT::INode(
+      entry_inode, typename ActionT::INodeHandlerImmediateEntry{
+                       .failure_callback = [entry_inode = this->entry_inode]() {
+                         // if reply failed, kernel won't hold
+                         // a reference for this lookup.
+                         auto generation_to_clear =
+                             decrement_lookup_count(entry_inode.inode(), 1);
+                         if (generation_to_clear.has_value()) {
+                           best_effort_clear_inode_use_record(
+                               entry_inode.inode(), *generation_to_clear);
+                         }
+                       }});
 }

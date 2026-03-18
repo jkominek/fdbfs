@@ -183,6 +183,7 @@ public:
             (why && why[0]) ? why : "");
   }
   static void report_failure(InflightT<Self> *i, int err) {
+    i->completion_error = err;
     fuse_reply_err(i->req, err);
   }
   static Self BeginWait(InflightCallbackT<Self> newcb) {
@@ -205,6 +206,7 @@ public:
         // NOTE we could, perhaps, improve this slightly by digging out
         // a list of fdb_error_t values from the code and doing a switch
         // on them, but that's not stable, and wouldn't add much value.
+        i->completion_error = EIO;
         fuse_reply_err(i->req, EIO);
       });
     }
@@ -226,8 +228,10 @@ public:
     return Self(false, false, true, [](InflightT<Self> *) {});
   }
   static Self None() {
-    return Self(true, false, false,
-                [](InflightT<Self> *i) { fuse_reply_none(i->req); });
+    return Self(true, false, false, [](InflightT<Self> *i) {
+      i->completion_error = 0;
+      fuse_reply_none(i->req);
+    });
   };
   static Self Ignore() {
     return Self(true, false, false, [](InflightT<Self> *i) {
@@ -235,15 +239,19 @@ public:
     });
   };
   static Self OK() {
-    return Self(true, false, false,
-                [](InflightT<Self> *i) { fuse_reply_err(i->req, 0); });
+    return Self(true, false, false, [](InflightT<Self> *i) {
+      i->completion_error = 0;
+      fuse_reply_err(i->req, 0);
+    });
   };
   static Self
   Abort(int err, const char *why = "",
         std::source_location loc = std::source_location::current()) {
     trace_errno_error("Abort", err, why, loc);
-    return Self(true, false, false,
-                [err](InflightT<Self> *i) { fuse_reply_err(i->req, err); });
+    return Self(true, false, false, [err](InflightT<Self> *i) {
+      i->completion_error = err;
+      fuse_reply_err(i->req, err);
+    });
   }
   static Self INode(const INodeRecord &inode, INodeHandler selector) {
     return std::visit(
@@ -256,6 +264,7 @@ public:
               fuse_reply_attr(i->req, &attr, 0.0);
             });
           } else if constexpr (std::is_same_v<T, INodeHandlerStatxMask>) {
+            // TODO unimplemented path
             (void)selected.mask;
             return Self(true, false, false, [](InflightT<Self> *i) {
               fuse_reply_err(i->req, ENOSYS);
@@ -280,6 +289,7 @@ public:
                 e.attr = attr;
                 e.attr_timeout = 0.01;
                 e.entry_timeout = 0.01;
+                i->completion_error = 0;
                 fuse_reply_entry(i->req, &e);
               }
             });
@@ -296,6 +306,7 @@ public:
                   e.attr = attr;
                   e.attr_timeout = 0.01;
                   e.entry_timeout = 0.01;
+                  i->completion_error = 0;
                   if (fuse_reply_entry(i->req, &e) < 0 && failure_callback) {
                     failure_callback();
                   }
@@ -306,6 +317,7 @@ public:
                          flags = selected.flags](InflightT<Self> *i) mutable {
                           struct fuse_file_info fi{};
                           fi.flags = flags;
+                          i->completion_error = 0;
                           (void)reply_open_with_handle(
                               i->req, static_cast<fuse_ino_t>(ino), &fi);
                         });
@@ -320,27 +332,34 @@ public:
     // restrict the amount of buf which is passed along.
     return Self(true, false, false, [buf, actual_size](InflightT<Self> *i) {
       assert(actual_size < 0 || static_cast<size_t>(actual_size) <= buf.size());
+      i->completion_error = 0;
       fuse_reply_buf(i->req, reinterpret_cast<const char *>(buf.data()),
                      (actual_size >= 0) ? actual_size : buf.size());
     });
   }
   static Self Readlink(std::string name) {
     return Self(true, false, false, [name](InflightT<Self> *i) {
+      i->completion_error = 0;
       fuse_reply_readlink(i->req, name.c_str());
     });
   }
   static Self Write(size_t size) {
-    return Self(true, false, false,
-                [size](InflightT<Self> *i) { fuse_reply_write(i->req, size); });
+    return Self(true, false, false, [size](InflightT<Self> *i) {
+      i->completion_error = 0;
+      fuse_reply_write(i->req, size);
+    });
   }
   static Self Statfs(std::shared_ptr<struct statvfs> statbuf) {
     return Self(true, false, false, [statbuf](InflightT<Self> *i) {
+      i->completion_error = 0;
       fuse_reply_statfs(i->req, statbuf.get());
     });
   }
   static Self XattrSize(ssize_t size) {
-    return Self(true, false, false,
-                [size](InflightT<Self> *i) { fuse_reply_xattr(i->req, size); });
+    return Self(true, false, false, [size](InflightT<Self> *i) {
+      i->completion_error = 0;
+      fuse_reply_xattr(i->req, size);
+    });
   }
 
 protected:
