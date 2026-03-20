@@ -208,24 +208,30 @@ template <typename ActionT> ActionT Inflight_write<ActionT>::check() {
   }
   INodeRecord inode = ret.value();
 
+  // indicates that we must update the stored inode for correctness
+  bool inode_updated = false;
   if (inode.size() < (a().off.value() + buffer.size())) {
     // we need to expand size of the file
     inode.set_size(a().off.value() + buffer.size());
+    inode_updated = true;
   }
 
   if (inode.mode() & 06000) {
     // check for setuid/setgid and wipe them
     inode.set_mode(inode.mode() & 01777);
+    inode_updated = true;
   }
 
   struct timespec tv;
   clock_gettime(CLOCK_REALTIME, &tv);
-  update_mtime(&inode, &tv);
 
+  if (inode_updated) {
+  update_mtime(&inode, &tv);
   // we've updated the inode appropriately.
   if (!fdb_set_protobuf(transaction.get(), pack_inode_key(inode.inode()),
                         inode))
     return ActionT::Abort(EIO);
+  }
 
   // merge the edge writes into the blocks
   if (a().start_block_fetch) {

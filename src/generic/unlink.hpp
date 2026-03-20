@@ -212,7 +212,8 @@ ActionT Inflight_unlink_rmdir<ActionT>::postlookup() {
     }
     parent.set_nlinks(parent.nlinks() - 1);
   }
-  if (auto it = update_directory_times(transaction.get(), parent);
+  if (auto it =
+          update_directory_times(transaction.get(), parent, op == Op::Rmdir);
       !it.has_value()) {
     return ActionT::FDBError(it.error());
   }

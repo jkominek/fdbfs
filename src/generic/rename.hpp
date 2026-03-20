@@ -321,7 +321,8 @@ template <typename ActionT> ActionT Inflight_rename<ActionT>::check() {
                            oldparent_nlink_delta + newparent_nlink_delta)) {
       return ActionT::Abort(EIO);
     }
-    if (auto it = update_directory_times(transaction.get(), oldparent_inode);
+    if (auto it =
+            update_directory_times(transaction.get(), oldparent_inode, true);
         !it.has_value()) {
       return ActionT::FDBError(it.error());
     }
@@ -332,11 +333,13 @@ template <typename ActionT> ActionT Inflight_rename<ActionT>::check() {
     if (!apply_nlink_delta(newparent_inode, newparent_nlink_delta)) {
       return ActionT::Abort(EIO);
     }
-    if (auto it = update_directory_times(transaction.get(), oldparent_inode);
+    if (auto it =
+            update_directory_times(transaction.get(), oldparent_inode, true);
         !it.has_value()) {
       return ActionT::FDBError(it.error());
     }
-    if (auto it = update_directory_times(transaction.get(), newparent_inode);
+    if (auto it =
+            update_directory_times(transaction.get(), newparent_inode, true);
         !it.has_value()) {
       return ActionT::FDBError(it.error());
     }
