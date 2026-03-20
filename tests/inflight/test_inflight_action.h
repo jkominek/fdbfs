@@ -147,6 +147,11 @@ public:
   }
 
   static bool trace_errors_enabled() { return false; }
+  static std::string format_req(req_t req) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%p", static_cast<void *>(req));
+    return std::string(buf);
+  }
   static bool request_interrupted(req_t) { return false; }
   static fdbfs_request_ctx request_ctx(req_t) {
     return fdbfs_request_ctx{

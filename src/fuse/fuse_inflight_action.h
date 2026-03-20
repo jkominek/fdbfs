@@ -1,6 +1,8 @@
 #ifndef __FUSE_INFLIGHT_ACTION_H__
 #define __FUSE_INFLIGHT_ACTION_H__
 
+#include <string>
+
 #include "generic/inflight.h"
 #include "util_fuse.h"
 
@@ -151,6 +153,11 @@ public:
   static bool trace_errors_enabled() {
     static const bool enabled = (getenv("FDBFS_TRACE_ERRORS") != nullptr);
     return enabled;
+  }
+  static std::string format_req(req_t req) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%p", static_cast<void *>(req));
+    return std::string(buf);
   }
   static bool request_interrupted(req_t req) {
     return fuse_req_interrupted(req);

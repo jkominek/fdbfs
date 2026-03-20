@@ -79,6 +79,27 @@ bool ranges_overlap(const range_keys &a, const range_keys &b) {
   return (a.first < b.second) && (b.first < a.second);
 }
 
+int compare_timespec_value(const struct timespec &a, const struct timespec &b) {
+  if (a.tv_sec < b.tv_sec) {
+    return -1;
+  }
+  if (a.tv_sec > b.tv_sec) {
+    return 1;
+  }
+  if (a.tv_nsec < b.tv_nsec) {
+    return -1;
+  }
+  if (a.tv_nsec > b.tv_nsec) {
+    return 1;
+  }
+  return 0;
+}
+
+const std::array<uint8_t, 12> &fdb_max_order(const std::array<uint8_t, 12> &a,
+                                             const std::array<uint8_t, 12> &b) {
+  return (a < b) ? b : a;
+}
+
 std::string bytes_to_hex(const std::vector<uint8_t> &v) {
   static constexpr char hex[] = "0123456789abcdef";
   std::string out;
@@ -238,7 +259,16 @@ TEST_CASE("pack range helpers: start-stop and containment", "[pure][helpers][ran
       const auto inode_r = pack_inode_subspace_range(ino);
       CHECK(inode_r.first < inode_r.second);
       CHECK(range_contains(inode_r, pack_inode_key(ino)));
+      CHECK(range_contains(inode_r, pack_inode_field_key(ino, {'t', 'a'})));
       CHECK(range_contains(inode_r, pack_inode_use_key(ino)));
+
+      const auto inode_fields_r = pack_inode_and_fields_range(ino);
+      CHECK(inode_fields_r.first < inode_fields_r.second);
+      CHECK(range_contains(inode_fields_r, pack_inode_key(ino)));
+      CHECK(range_contains(inode_fields_r, pack_inode_field_key(ino, {'t', 'a'})));
+      CHECK(range_contains(inode_fields_r, pack_inode_field_key(ino, {'t', 'c'})));
+      CHECK(range_contains(inode_fields_r, pack_inode_field_key(ino, {'t', 'm'})));
+      CHECK(!range_contains(inode_fields_r, pack_inode_use_key(ino)));
 
       const auto use_r = pack_inode_use_subspace_range(ino);
       CHECK(use_r.first < use_r.second);
@@ -287,6 +317,10 @@ TEST_CASE("pack ranges: ordering and non-overlap properties",
       const auto ib = pack_inode_subspace_range(b);
       CHECK(ia.second <= ib.first);
 
+      const auto ifa = pack_inode_and_fields_range(a);
+      const auto ifb = pack_inode_and_fields_range(b);
+      CHECK(ifa.second <= ifb.first);
+
       const auto da = pack_dentry_subspace_range(a);
       const auto db = pack_dentry_subspace_range(b);
       CHECK(da.second <= db.first);
@@ -330,7 +364,11 @@ TEST_CASE("pack ranges: ordering and non-overlap properties",
     };
 
     check_nonoverlap_by_ino(
+        [&](fdbfs_ino_t ino) { return pack_inode_and_fields_range(ino); });
+    check_nonoverlap_by_ino(
         [&](fdbfs_ino_t ino) { return pack_inode_subspace_range(ino); });
+    check_nonoverlap_by_ino(
+        [&](fdbfs_ino_t ino) { return pack_inode_use_subspace_range(ino); });
     check_nonoverlap_by_ino(
         [&](fdbfs_ino_t ino) { return pack_fileblock_span_range(ino, 0, UINT64_MAX); });
     check_nonoverlap_by_ino(
@@ -361,6 +399,19 @@ TEST_CASE("pack ranges: ordering and non-overlap properties",
         for (size_t j = i + 1; j < family_ranges.size(); j++) {
           CHECK(!ranges_overlap(family_ranges[i], family_ranges[j]));
         }
+      }
+    }
+
+    SECTION("inode field keys sort between bare inode and use records") {
+      for (fdbfs_ino_t ino : inodes) {
+        const auto bare = pack_inode_key(ino);
+        const auto field_a = pack_inode_field_key(ino, {'t', 'a'});
+        const auto field_m = pack_inode_field_key(ino, {'t', 'm'});
+        const auto use = pack_inode_use_key(ino);
+
+        CHECK(bare < field_a);
+        CHECK(field_a < field_m);
+        CHECK(field_m < use);
       }
     }
 
@@ -434,6 +485,7 @@ TEST_CASE("pack name helpers preserve lexicographic name ordering",
         }
       }
     }
+
   }
 }
 
@@ -512,6 +564,99 @@ TEST_CASE("inode time update helpers update only intended timestamps",
   CHECK(inode.ctime().nsec() == 31);
   CHECK(inode.atime().sec() == 10);
   CHECK(inode.atime().nsec() == 11);
+}
+
+TEST_CASE("timespec helpers round trip and preserve atomic-max ordering",
+          "[pure][helpers][time]") {
+  SECTION("encode_timespec and decode_timespec round trip") {
+    std::vector<struct timespec> cases = {
+        {0, 0},
+        {0, 999999999},
+        {1, 2},
+        {123456789, 42},
+        {-1, 2},
+        {-123456789, 987654321},
+    };
+
+    struct timespec now{};
+    REQUIRE(clock_gettime(CLOCK_REALTIME, &now) == 0);
+    cases.push_back(now);
+
+    std::mt19937_64 rng(0x51a7f00dULL);
+    std::uniform_int_distribution<int64_t> sec_dist(-1000000000LL,
+                                                    1000000000LL);
+    std::uniform_int_distribution<long> nsec_dist(0, 999999999L);
+    for (int i = 0; i < 32; i++) {
+      cases.push_back(timespec{
+          .tv_sec = static_cast<decltype(now.tv_sec)>(sec_dist(rng)),
+          .tv_nsec = static_cast<decltype(now.tv_nsec)>(nsec_dist(rng)),
+      });
+    }
+
+    for (const auto &ts : cases) {
+      INFO("tv_sec=" << ts.tv_sec << " tv_nsec=" << ts.tv_nsec);
+      const auto encoded = encode_timespec(ts);
+      const auto decoded = decode_timespec(encoded);
+      CHECK(decoded.tv_sec == ts.tv_sec);
+      CHECK(decoded.tv_nsec == ts.tv_nsec);
+    }
+  }
+
+  SECTION("encode_timespec ordering matches FDB atomic max ordering") {
+    std::vector<std::pair<struct timespec, struct timespec>> pairs = {
+        {{-10, 1}, {-20, 1}},
+        {{-1, 1}, {0, 1}},
+        {{0, 1}, {-1, 1}},
+        {{1, 1}, {0, 1}},
+        {{10, 1}, {20, 1}},
+        {{0, 10}, {0, 20}},
+        {{-5, 10}, {-5, 20}},
+        {{7, 10}, {7, 20}},
+        {{0, 0}, {0, 0}},
+        {{-1, 999999998}, {-1, 999999999}},
+        {{1, 999999998}, {1, 999999999}},
+    };
+
+    struct timespec now{};
+    REQUIRE(clock_gettime(CLOCK_REALTIME, &now) == 0);
+    pairs.push_back({now, now});
+    pairs.push_back({{now.tv_sec - 1, now.tv_nsec}, now});
+    pairs.push_back({now, {now.tv_sec + 1, now.tv_nsec}});
+
+    std::mt19937_64 rng(0x7135f03cULL);
+    std::uniform_int_distribution<int64_t> sec_dist(-1000000000LL,
+                                                    1000000000LL);
+    std::uniform_int_distribution<long> nsec_dist(0, 999999999L);
+    for (int i = 0; i < 64; i++) {
+      timespec a{
+          .tv_sec = static_cast<decltype(now.tv_sec)>(sec_dist(rng)),
+          .tv_nsec = static_cast<decltype(now.tv_nsec)>(nsec_dist(rng)),
+      };
+      timespec b{
+          .tv_sec = static_cast<decltype(now.tv_sec)>(sec_dist(rng)),
+          .tv_nsec = static_cast<decltype(now.tv_nsec)>(nsec_dist(rng)),
+      };
+      pairs.push_back({a, b});
+    }
+
+    for (const auto &[a, b] : pairs) {
+      INFO("a=(" << a.tv_sec << "," << a.tv_nsec << ") "
+                  "b=(" << b.tv_sec << "," << b.tv_nsec << ")");
+      const auto encoded_a = encode_timespec(a);
+      const auto encoded_b = encode_timespec(b);
+      const int cmp = compare_timespec_value(a, b);
+
+      if (cmp < 0) {
+        CHECK(encoded_a < encoded_b);
+        CHECK(fdb_max_order(encoded_a, encoded_b) == encoded_b);
+      } else if (cmp > 0) {
+        CHECK(encoded_b < encoded_a);
+        CHECK(fdb_max_order(encoded_a, encoded_b) == encoded_a);
+      } else {
+        CHECK(encoded_a == encoded_b);
+      }
+    }
+  }
 }
 
 TEST_CASE("offset_size_to_range_keys maps offsets to expected block spans",

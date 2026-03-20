@@ -266,9 +266,9 @@ bool InflightT<ActionT>::retry_with_on_error(fdb_error_t err,
   if (ActionT::trace_errors_enabled()) {
     char op_id_buf[32];
     fprintf(stderr,
-            "fdbfs OnErrorBegin: inflight=%p req=%p type=%s op_id=%s "
+            "fdbfs OnErrorBegin: inflight=%p req=%s type=%s op_id=%s "
             "source=%s err=%d (%s)\n",
-            static_cast<void *>(this), static_cast<void *>(req),
+            static_cast<void *>(this), ActionT::format_req(req).c_str(),
             typeid(*this).name(),
             op_id_to_cstr(op_id, op_id_buf, sizeof(op_id_buf)), source, err,
             fdb_get_error(err));
@@ -440,9 +440,10 @@ void InflightT<ActionT>::error_processor(FDBFuture *f, void *p) {
     if (ActionT::trace_errors_enabled()) {
       char op_id_buf[32];
       fprintf(stderr,
-              "fdbfs ErrorProcessorBegin: inflight=%p req=%p type=%s "
+              "fdbfs ErrorProcessorBegin: inflight=%p req=%s type=%s "
               "op_id=%s future=%p err=%d (%s)\n",
-              static_cast<void *>(inflight), static_cast<void *>(inflight->req),
+              static_cast<void *>(inflight),
+              ActionT::format_req(inflight->req).c_str(),
               typeid(*inflight).name(),
               op_id_to_cstr(inflight->op_id, op_id_buf, sizeof(op_id_buf)),
               static_cast<void *>(f), err, fdb_get_error(err));
@@ -469,9 +470,10 @@ void InflightT<ActionT>::error_checker(FDBFuture *f, void *p) {
     if (ActionT::trace_errors_enabled()) {
       char op_id_buf[32];
       fprintf(stderr,
-              "fdbfs CheckerError: inflight=%p req=%p type=%s op_id=%s "
+              "fdbfs CheckerError: inflight=%p req=%s type=%s op_id=%s "
               "future=%p err=%d (%s)\n",
-              static_cast<void *>(inflight), static_cast<void *>(inflight->req),
+              static_cast<void *>(inflight),
+              ActionT::format_req(inflight->req).c_str(),
               typeid(*inflight).name(),
               op_id_to_cstr(inflight->op_id, op_id_buf, sizeof(op_id_buf)),
               static_cast<void *>(f), err, fdb_get_error(err));

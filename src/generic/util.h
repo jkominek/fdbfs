@@ -108,6 +108,8 @@ pack_inode_key(fdbfs_ino_t, char = INODE_PREFIX,
 pack_pid_key(std::vector<uint8_t>, const std::vector<uint8_t> &suffix = {});
 [[nodiscard]] extern std::vector<uint8_t>
 pack_oplog_key(const std::vector<uint8_t> &owner_pid, uint64_t op_id);
+[[nodiscard]] extern std::vector<uint8_t>
+pack_inode_field_key(fdbfs_ino_t, const std::vector<uint8_t> &suffix);
 [[nodiscard]] extern std::vector<uint8_t> pack_inode_use_key(fdbfs_ino_t);
 [[nodiscard]] extern std::vector<uint8_t>
 pack_fileblock_key(fdbfs_ino_t, uint64_t,
@@ -115,9 +117,9 @@ pack_fileblock_key(fdbfs_ino_t, uint64_t,
 [[nodiscard]] extern std::vector<uint8_t> pack_dentry_key(fdbfs_ino_t,
                                                           const std::string &);
 [[nodiscard]] extern std::vector<uint8_t>
-pack_xattr_key(fdbfs_ino_t ino, const std::string &name = {});
+pack_xattr_key(fdbfs_ino_t ino, const std::string &name);
 [[nodiscard]] extern std::vector<uint8_t>
-pack_xattr_data_key(fdbfs_ino_t ino, const std::string &name = {});
+pack_xattr_data_key(fdbfs_ino_t ino, const std::string &name);
 extern void print_key(std::vector<uint8_t>);
 extern void pack_inode_record_into_stat(const INodeRecord &inode,
                                         struct stat &attr);
@@ -148,6 +150,7 @@ pack_oplog_subspace_range(const std::vector<uint8_t> &owner_pid);
 pack_local_oplog_span_range(uint64_t start_op_id, uint64_t stop_op_id);
 [[nodiscard]] extern range_keys pack_garbage_subspace_range();
 [[nodiscard]] extern range_keys pack_inode_subspace_range(fdbfs_ino_t);
+[[nodiscard]] extern range_keys pack_inode_and_fields_range(fdbfs_ino_t);
 [[nodiscard]] extern range_keys pack_inode_use_subspace_range(fdbfs_ino_t);
 [[nodiscard]] extern range_keys pack_inode_metadata_and_use_range(fdbfs_ino_t);
 [[nodiscard]] extern range_keys pack_fileblock_single_range(fdbfs_ino_t,
@@ -169,6 +172,10 @@ extern void update_ctime(INodeRecord *, const struct timespec *);
 [[nodiscard]]
 extern std::expected<void, int> update_directory_times(FDBTransaction *,
                                                        INodeRecord &);
+[[nodiscard]]
+extern std::array<uint8_t, 12> encode_timespec(const struct timespec &ts);
+[[nodiscard]]
+struct timespec decode_timespec(std::span<const uint8_t, 12> in);
 
 extern void erase_inode(FDBTransaction *, fdbfs_ino_t);
 

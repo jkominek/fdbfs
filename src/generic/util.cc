@@ -254,6 +254,14 @@ std::vector<uint8_t> pack_oplog_key(const std::vector<uint8_t> &owner_pid,
   return key;
 }
 
+std::vector<uint8_t> pack_inode_field_key(fdbfs_ino_t ino,
+                                          const std::vector<uint8_t> &suffix) {
+  auto key = pack_inode_key(ino);
+  key.push_back(INODE_FIELD_PREFIX);
+  key.insert(key.end(), suffix.begin(), suffix.end());
+  return key;
+}
+
 std::vector<uint8_t> pack_inode_use_key(fdbfs_ino_t ino) {
   auto key = pack_inode_key(ino);
   key.push_back(INODE_USE_PREFIX);
@@ -389,6 +397,15 @@ range_keys pack_inode_subspace_range(fdbfs_ino_t ino) {
     stop = key_prefix;
     stop.push_back(INODE_PREFIX + 1);
   }
+  assert(start < stop);
+  return {start, stop};
+}
+
+// inode metadata key and its adjacent field-record subspace.
+// [ pack_inode_key(ino), pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX}) ).
+range_keys pack_inode_and_fields_range(fdbfs_ino_t ino) {
+  auto start = pack_inode_key(ino);
+  auto stop = pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX});
   assert(start < stop);
   return {start, stop};
 }
@@ -603,6 +620,38 @@ std::expected<void, int> update_directory_times(FDBTransaction *transaction,
   inode.mutable_mtime()->set_sec(tp.tv_sec);
   inode.mutable_mtime()->set_nsec(tp.tv_nsec);
   return fdb_set_protobuf(transaction, pack_inode_key(inode.inode()), inode);
+}
+
+std::array<uint8_t, 12> encode_timespec(const struct timespec &ts) {
+  std::array<uint8_t, 12> out{};
+
+  int64_t sec_signed = static_cast<int64_t>(ts.tv_sec);
+  uint64_t sec = static_cast<uint64_t>(sec_signed) ^ (1ULL << 63);
+  uint32_t nsec = static_cast<uint32_t>(ts.tv_nsec);
+
+  sec = htobe64(sec);
+  nsec = htobe32(nsec);
+
+  std::memcpy(out.data(), &sec, 8);
+  std::memcpy(out.data() + 8, &nsec, 4);
+
+  return out;
+}
+
+struct timespec decode_timespec(std::span<const uint8_t, 12> in) {
+  uint64_t sec_be;
+  uint32_t nsec_be;
+
+  std::memcpy(&sec_be, in.data(), 8);
+  std::memcpy(&nsec_be, in.data() + 8, 4);
+
+  uint64_t sec = be64toh(sec_be) ^ (1ULL << 63);
+  uint32_t nsec = be32toh(nsec_be);
+
+  struct timespec ts;
+  ts.tv_sec = static_cast<decltype(ts.tv_sec)>(static_cast<int64_t>(sec));
+  ts.tv_nsec = static_cast<decltype(ts.tv_nsec)>(nsec);
+  return ts;
 }
 
 void erase_inode(FDBTransaction *transaction, fdbfs_ino_t ino) {
