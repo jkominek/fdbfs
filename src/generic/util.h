@@ -109,7 +109,8 @@ pack_pid_key(std::vector<uint8_t>, const std::vector<uint8_t> &suffix = {});
 [[nodiscard]] extern std::vector<uint8_t>
 pack_oplog_key(const std::vector<uint8_t> &owner_pid, uint64_t op_id);
 [[nodiscard]] extern std::vector<uint8_t>
-pack_inode_field_key(fdbfs_ino_t, const std::vector<uint8_t> &suffix);
+pack_inode_field_key(fdbfs_ino_t,
+                     const std::vector<uint8_t> &suffix = {});
 [[nodiscard]] extern std::vector<uint8_t> pack_inode_use_key(fdbfs_ino_t);
 [[nodiscard]] extern std::vector<uint8_t>
 pack_fileblock_key(fdbfs_ino_t, uint64_t,
@@ -166,12 +167,17 @@ pack_local_oplog_span_range(uint64_t start_op_id, uint64_t stop_op_id);
 [[nodiscard]] extern bool
 filename_length_check(const char *, size_t maxlength = MAXFILENAMELEN);
 
+extern int compare_timespec_value(const struct timespec &a,
+                                  const struct timespec &b);
 extern void update_atime(INodeRecord *, const struct timespec *);
 extern void update_mtime(INodeRecord *, const struct timespec *);
 extern void update_ctime(INodeRecord *, const struct timespec *);
+[[nodiscard]] extern std::expected<bool, int>
+apply_newer_inode_time_fields(const FDBKeyValue *kvs, int kvcount,
+                              INodeRecord &inode);
 [[nodiscard]]
-extern std::expected<void, int> update_directory_times(FDBTransaction *,
-                                                       INodeRecord &);
+extern std::expected<void, int>
+update_directory_times(FDBTransaction *, INodeRecord &, bool = true);
 [[nodiscard]]
 extern std::array<uint8_t, 12> encode_timespec(const struct timespec &ts);
 [[nodiscard]]

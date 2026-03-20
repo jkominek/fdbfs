@@ -46,6 +46,34 @@ unexpected_errno(int err, const char *why = "",
 
 } // namespace
 
+int compare_timespec_value(const struct timespec &a, const struct timespec &b) {
+  if (a.tv_sec < b.tv_sec) {
+    return -1;
+  }
+  if (a.tv_sec > b.tv_sec) {
+    return 1;
+  }
+  if (a.tv_nsec < b.tv_nsec) {
+    return -1;
+  }
+  if (a.tv_nsec > b.tv_nsec) {
+    return 1;
+  }
+  return 0;
+}
+
+namespace {
+
+int compare_proto_timespec(const Timespec &a, const struct timespec &b) {
+  const struct timespec left{
+      .tv_sec = static_cast<decltype(timespec::tv_sec)>(a.sec()),
+      .tv_nsec = static_cast<decltype(timespec::tv_nsec)>(a.nsec()),
+  };
+  return compare_timespec_value(left, b);
+}
+
+} // namespace
+
 unique_transaction make_transaction() {
   unique_transaction ut;
   FDBTransaction *t;
@@ -402,7 +430,8 @@ range_keys pack_inode_subspace_range(fdbfs_ino_t ino) {
 }
 
 // inode metadata key and its adjacent field-record subspace.
-// [ pack_inode_key(ino), pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX}) ).
+// [ pack_inode_key(ino), pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX})
+// ).
 range_keys pack_inode_and_fields_range(fdbfs_ino_t ino) {
   auto start = pack_inode_key(ino);
   auto stop = pack_inode_key(ino, INODE_PREFIX, {INODE_USE_PREFIX});
@@ -611,15 +640,93 @@ void update_mtime(INodeRecord *inode, const struct timespec *tv) {
   update_ctime(inode, tv);
 }
 
+std::expected<bool, int> apply_newer_inode_time_fields(const FDBKeyValue *kvs,
+                                                       int kvcount,
+                                                       INodeRecord &inode) {
+  if ((kvs == nullptr) || (kvcount <= 0)) {
+    return false;
+  }
+
+  const auto field_prefix = pack_inode_field_key(inode.inode());
+  bool changed = false;
+
+  for (int i = 0; i < kvcount; i++) {
+    const FDBKeyValue &kv = kvs[i];
+    if ((kv.key_length < static_cast<int>(field_prefix.size())) ||
+        (std::memcmp(kv.key, field_prefix.data(), field_prefix.size()) != 0)) {
+      continue;
+    }
+
+    const size_t suffix_len =
+        static_cast<size_t>(kv.key_length) - field_prefix.size();
+    if ((suffix_len != 2) || (kv.key[field_prefix.size()] != 't')) {
+      continue;
+    }
+
+    if (kv.value_length != 12) {
+      return unexpected_errno<bool>(EIO, "malformed inode time field value");
+    }
+
+    const auto ts = decode_timespec(std::span<const uint8_t, 12>(kv.value, 12));
+    const uint8_t which = kv.key[field_prefix.size() + 1];
+
+    switch (which) {
+    case 'a':
+      if (!inode.has_atime() ||
+          (compare_proto_timespec(inode.atime(), ts) < 0)) {
+        inode.mutable_atime()->set_sec(ts.tv_sec);
+        inode.mutable_atime()->set_nsec(ts.tv_nsec);
+        changed = true;
+      }
+      break;
+    case 'm':
+      if (!inode.has_mtime() ||
+          (compare_proto_timespec(inode.mtime(), ts) < 0)) {
+        inode.mutable_mtime()->set_sec(ts.tv_sec);
+        inode.mutable_mtime()->set_nsec(ts.tv_nsec);
+        changed = true;
+      }
+      break;
+    case 'c':
+      if (!inode.has_ctime() ||
+          (compare_proto_timespec(inode.ctime(), ts) < 0)) {
+        inode.mutable_ctime()->set_sec(ts.tv_sec);
+        inode.mutable_ctime()->set_nsec(ts.tv_nsec);
+        changed = true;
+      }
+      break;
+    default:
+      break;
+    }
+  }
+
+  return changed;
+}
+
 std::expected<void, int> update_directory_times(FDBTransaction *transaction,
-                                                INodeRecord &inode) {
+                                                INodeRecord &inode,
+                                                bool metadataChange) {
   struct timespec tp;
   clock_gettime(CLOCK_REALTIME, &tp);
-  inode.mutable_ctime()->set_sec(tp.tv_sec);
-  inode.mutable_ctime()->set_nsec(tp.tv_nsec);
-  inode.mutable_mtime()->set_sec(tp.tv_sec);
-  inode.mutable_mtime()->set_nsec(tp.tv_nsec);
-  return fdb_set_protobuf(transaction, pack_inode_key(inode.inode()), inode);
+  if (metadataChange) {
+    // the inode metadata changed, so 1) we only change the ctime 2) we
+    // have to actually update the inode itself.
+    inode.mutable_ctime()->set_sec(tp.tv_sec);
+    inode.mutable_ctime()->set_nsec(tp.tv_nsec);
+    return fdb_set_protobuf(transaction, pack_inode_key(inode.inode()), inode);
+  } else {
+    // there wasn't a metadata change. that means it was a directory contents
+    // change. so 1) we update mtime and ctime 2) we can just do atomic max
+    // updates to the timestamp field keys. they'll be picked up later.
+    auto mtime_key = pack_inode_field_key(inode.inode(), {'t', 'm'});
+    auto ctime_key = pack_inode_field_key(inode.inode(), {'t', 'c'});
+    auto now = encode_timespec(tp);
+    fdb_transaction_atomic_op(transaction, mtime_key.data(), mtime_key.size(),
+                              now.data(), now.size(), FDB_MUTATION_TYPE_MAX);
+    fdb_transaction_atomic_op(transaction, ctime_key.data(), ctime_key.size(),
+                              now.data(), now.size(), FDB_MUTATION_TYPE_MAX);
+    return {};
+  }
 }
 
 std::array<uint8_t, 12> encode_timespec(const struct timespec &ts) {

@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-#include "test_support.h"
 #include "liveness.h"
+#include "test_support.h"
 #include "util.h"
 
 // Test-local definitions for globals normally owned by fs main/liveness.
@@ -77,22 +77,6 @@ bool range_contains(const range_keys &r, const std::vector<uint8_t> &k) {
 
 bool ranges_overlap(const range_keys &a, const range_keys &b) {
   return (a.first < b.second) && (b.first < a.second);
-}
-
-int compare_timespec_value(const struct timespec &a, const struct timespec &b) {
-  if (a.tv_sec < b.tv_sec) {
-    return -1;
-  }
-  if (a.tv_sec > b.tv_sec) {
-    return 1;
-  }
-  if (a.tv_nsec < b.tv_nsec) {
-    return -1;
-  }
-  if (a.tv_nsec > b.tv_nsec) {
-    return 1;
-  }
-  return 0;
 }
 
 const std::array<uint8_t, 12> &fdb_max_order(const std::array<uint8_t, 12> &a,
@@ -219,7 +203,8 @@ TEST_CASE("pack helpers: monotonic numeric ordering", "[pure][helpers][pack]") {
   }
 }
 
-TEST_CASE("pack range helpers: start-stop and containment", "[pure][helpers][range]") {
+TEST_CASE("pack range helpers: start-stop and containment",
+          "[pure][helpers][range]") {
   const auto inodes = inode_cases();
   const auto blocks = block_cases();
   const std::vector<std::vector<uint8_t>> pid_records = {
@@ -265,9 +250,12 @@ TEST_CASE("pack range helpers: start-stop and containment", "[pure][helpers][ran
       const auto inode_fields_r = pack_inode_and_fields_range(ino);
       CHECK(inode_fields_r.first < inode_fields_r.second);
       CHECK(range_contains(inode_fields_r, pack_inode_key(ino)));
-      CHECK(range_contains(inode_fields_r, pack_inode_field_key(ino, {'t', 'a'})));
-      CHECK(range_contains(inode_fields_r, pack_inode_field_key(ino, {'t', 'c'})));
-      CHECK(range_contains(inode_fields_r, pack_inode_field_key(ino, {'t', 'm'})));
+      CHECK(range_contains(inode_fields_r,
+                           pack_inode_field_key(ino, {'t', 'a'})));
+      CHECK(range_contains(inode_fields_r,
+                           pack_inode_field_key(ino, {'t', 'c'})));
+      CHECK(range_contains(inode_fields_r,
+                           pack_inode_field_key(ino, {'t', 'm'})));
       CHECK(!range_contains(inode_fields_r, pack_inode_use_key(ino)));
 
       const auto use_r = pack_inode_use_subspace_range(ino);
@@ -338,7 +326,8 @@ TEST_CASE("pack ranges: ordering and non-overlap properties",
       CHECK(ua.second <= ub.first);
     }
 
-    // Non-overlap checks for top-level inode-parameterized spaces on random inodes.
+    // Non-overlap checks for top-level inode-parameterized spaces on random
+    // inodes.
     std::mt19937_64 rng(0x7c00de5ULL);
     std::uniform_int_distribution<uint64_t> ino_dist(
         2ULL, std::numeric_limits<uint64_t>::max() - 2ULL);
@@ -369,8 +358,9 @@ TEST_CASE("pack ranges: ordering and non-overlap properties",
         [&](fdbfs_ino_t ino) { return pack_inode_subspace_range(ino); });
     check_nonoverlap_by_ino(
         [&](fdbfs_ino_t ino) { return pack_inode_use_subspace_range(ino); });
-    check_nonoverlap_by_ino(
-        [&](fdbfs_ino_t ino) { return pack_fileblock_span_range(ino, 0, UINT64_MAX); });
+    check_nonoverlap_by_ino([&](fdbfs_ino_t ino) {
+      return pack_fileblock_span_range(ino, 0, UINT64_MAX);
+    });
     check_nonoverlap_by_ino(
         [&](fdbfs_ino_t ino) { return pack_dentry_subspace_range(ino); });
     check_nonoverlap_by_ino(
@@ -415,7 +405,8 @@ TEST_CASE("pack ranges: ordering and non-overlap properties",
       }
     }
 
-    // Span ordering: if a < b < c then [a,b] should end at/before [b+1,c] starts.
+    // Span ordering: if a < b < c then [a,b] should end at/before [b+1,c]
+    // starts.
     for (size_t i = 0; i + 2 < blocks.size(); i++) {
       const uint64_t a = blocks[i];
       const uint64_t b = blocks[i + 1];
@@ -485,7 +476,6 @@ TEST_CASE("pack name helpers preserve lexicographic name ordering",
         }
       }
     }
-
   }
 }
 
@@ -507,7 +497,7 @@ TEST_CASE("inode/stat packing helpers preserve expected fields",
     inode.mutable_ctime()->set_sec(30);
     inode.mutable_ctime()->set_nsec(31);
 
-    struct stat st {};
+    struct stat st{};
     pack_inode_record_into_stat(inode, st);
 
     CHECK(st.st_ino == 1234);
@@ -525,7 +515,6 @@ TEST_CASE("inode/stat packing helpers preserve expected fields",
     CHECK(st.st_blksize == static_cast<decltype(st.st_blksize)>(BLOCKSIZE));
     CHECK(st.st_blocks == 1);
   }
-
 }
 
 TEST_CASE("inode time update helpers update only intended timestamps",
@@ -570,12 +559,8 @@ TEST_CASE("timespec helpers round trip and preserve atomic-max ordering",
           "[pure][helpers][time]") {
   SECTION("encode_timespec and decode_timespec round trip") {
     std::vector<struct timespec> cases = {
-        {0, 0},
-        {0, 999999999},
-        {1, 2},
-        {123456789, 42},
-        {-1, 2},
-        {-123456789, 987654321},
+        {0, 0},          {0, 999999999}, {1, 2},
+        {123456789, 42}, {-1, 2},        {-123456789, 987654321},
     };
 
     struct timespec now{};
@@ -640,8 +625,10 @@ TEST_CASE("timespec helpers round trip and preserve atomic-max ordering",
     }
 
     for (const auto &[a, b] : pairs) {
-      INFO("a=(" << a.tv_sec << "," << a.tv_nsec << ") "
-                  "b=(" << b.tv_sec << "," << b.tv_nsec << ")");
+      INFO("a=(" << a.tv_sec << "," << a.tv_nsec
+                 << ") "
+                    "b=("
+                 << b.tv_sec << "," << b.tv_nsec << ")");
       const auto encoded_a = encode_timespec(a);
       const auto encoded_b = encode_timespec(b);
       const int cmp = compare_timespec_value(a, b);
@@ -656,6 +643,94 @@ TEST_CASE("timespec helpers round trip and preserve atomic-max ordering",
         CHECK(encoded_a == encoded_b);
       }
     }
+  }
+}
+
+TEST_CASE("inode time field helper merges only newer recognized timestamps",
+          "[pure][helpers][time]") {
+  auto make_kv = [](const std::vector<uint8_t> &key,
+                    const std::vector<uint8_t> &value) -> FDBKeyValue {
+    FDBKeyValue kv{};
+    kv.key = key.data();
+    kv.key_length = static_cast<int>(key.size());
+    kv.value = value.data();
+    kv.value_length = static_cast<int>(value.size());
+    return kv;
+  };
+
+  SECTION("ignores older and unknown fields, applies newer ones") {
+    INodeRecord inode;
+    inode.set_inode(42);
+    const timespec initial_atime{.tv_sec = -10, .tv_nsec = 100};
+    const timespec initial_mtime{.tv_sec = 0, .tv_nsec = 200};
+    const timespec initial_ctime{.tv_sec = 5, .tv_nsec = 300};
+    update_atime(&inode, &initial_atime);
+    update_mtime(&inode, &initial_mtime);
+    update_ctime(&inode, &initial_ctime);
+
+    const auto older_atime = encode_timespec(timespec{-11, 100});
+    const auto newer_mtime = encode_timespec(timespec{0, 250});
+
+    std::vector<std::vector<uint8_t>> keys = {
+        pack_inode_key(42),
+        pack_inode_field_key(42, {'t', 'a'}),
+        pack_inode_field_key(42, {'t', 'm'}),
+        pack_inode_field_key(42, {'x'}),
+    };
+    std::vector<std::vector<uint8_t>> values = {
+        {0x01},
+        std::vector<uint8_t>(older_atime.begin(), older_atime.end()),
+        std::vector<uint8_t>(newer_mtime.begin(), newer_mtime.end()),
+        {0xde, 0xad, 0xbe, 0xef},
+    };
+
+    std::vector<FDBKeyValue> kvs;
+    kvs.reserve(keys.size());
+    for (size_t i = 0; i < keys.size(); i++) {
+      kvs.push_back(make_kv(keys[i], values[i]));
+    }
+
+    auto changed = apply_newer_inode_time_fields(
+        kvs.data(), static_cast<int>(kvs.size()), inode);
+    REQUIRE(changed.has_value());
+    CHECK(changed.value());
+
+    CHECK(inode.atime().sec() == -10);
+    CHECK(inode.atime().nsec() == 100);
+    CHECK(inode.mtime().sec() == 0);
+    CHECK(inode.mtime().nsec() == 250);
+    CHECK(inode.ctime().sec() == 5);
+    CHECK(inode.ctime().nsec() == 300);
+  }
+
+  SECTION("fills in missing timestamp fields") {
+    INodeRecord inode;
+    inode.set_inode(7);
+
+    const auto atime_enc = encode_timespec(timespec{123, 456});
+    std::vector<uint8_t> key = pack_inode_field_key(7, {'t', 'a'});
+    std::vector<uint8_t> value(atime_enc.begin(), atime_enc.end());
+    FDBKeyValue kv = make_kv(key, value);
+
+    auto changed = apply_newer_inode_time_fields(&kv, 1, inode);
+    REQUIRE(changed.has_value());
+    CHECK(changed.value());
+    REQUIRE(inode.has_atime());
+    CHECK(inode.atime().sec() == 123);
+    CHECK(inode.atime().nsec() == 456);
+  }
+
+  SECTION("malformed recognized time value returns EIO") {
+    INodeRecord inode;
+    inode.set_inode(9);
+
+    std::vector<uint8_t> key = pack_inode_field_key(9, {'t', 'm'});
+    std::vector<uint8_t> value = {0x00, 0x01, 0x02};
+    FDBKeyValue kv = make_kv(key, value);
+
+    auto changed = apply_newer_inode_time_fields(&kv, 1, inode);
+    REQUIRE(!changed.has_value());
+    CHECK(changed.error() == EIO);
   }
 }
 
@@ -732,7 +807,8 @@ TEST_CASE("decode_block handles plain and error paths",
     kv.value_length = static_cast<int>(value.size());
 
     std::vector<uint8_t> out(8, 0);
-    auto decoded = decode_block(&kv, 2, std::span<uint8_t>(out.data(), out.size()), 10);
+    auto decoded =
+        decode_block(&kv, 2, std::span<uint8_t>(out.data(), out.size()), 10);
     REQUIRE(decoded.has_value());
     CHECK(decoded.value() == 4);
     CHECK(out[0] == 12);
@@ -751,7 +827,8 @@ TEST_CASE("decode_block handles plain and error paths",
     kv.value_length = static_cast<int>(value.size());
 
     std::vector<uint8_t> out(4, 0xaa);
-    auto decoded = decode_block(&kv, 100, std::span<uint8_t>(out.data(), out.size()), 4);
+    auto decoded =
+        decode_block(&kv, 100, std::span<uint8_t>(out.data(), out.size()), 4);
     REQUIRE(decoded.has_value());
     CHECK(decoded.value() == 0);
     CHECK(out[0] == 0xaa);
@@ -767,7 +844,8 @@ TEST_CASE("decode_block handles plain and error paths",
     kv.value_length = static_cast<int>(value.size());
 
     std::vector<uint8_t> out(4, 0);
-    auto decoded = decode_block(&kv, -1, std::span<uint8_t>(out.data(), out.size()), 4);
+    auto decoded =
+        decode_block(&kv, -1, std::span<uint8_t>(out.data(), out.size()), 4);
     REQUIRE(!decoded.has_value());
     CHECK(decoded.error() == EINVAL);
   }
@@ -785,7 +863,8 @@ TEST_CASE("decode_block handles plain and error paths",
     kv.value_length = static_cast<int>(value.size());
 
     std::vector<uint8_t> out(4, 0);
-    auto decoded = decode_block(&kv, 0, std::span<uint8_t>(out.data(), out.size()), 4);
+    auto decoded =
+        decode_block(&kv, 0, std::span<uint8_t>(out.data(), out.size()), 4);
     REQUIRE(!decoded.has_value());
     CHECK(decoded.error() == EIO);
   }
@@ -793,7 +872,8 @@ TEST_CASE("decode_block handles plain and error paths",
 
 TEST_CASE("logical payload encode/decode roundtrip and error behavior",
           "[pure][helpers][payload]") {
-  const std::vector<size_t> sizes = {0, 1, 63, 64, 1024, static_cast<size_t>(BLOCKSIZE)};
+  const std::vector<size_t> sizes = {0,  1,    63,
+                                     64, 1024, static_cast<size_t>(BLOCKSIZE)};
 
   for (int pattern = 0; pattern < 3; pattern++) {
     for (size_t size : sizes) {
@@ -814,14 +894,16 @@ TEST_CASE("logical payload encode/decode roundtrip and error behavior",
         break;
       }
 
-      auto encoded =
-          encode_logical_payload(std::span<const uint8_t>(payload.data(), payload.size()));
+      auto encoded = encode_logical_payload(
+          std::span<const uint8_t>(payload.data(), payload.size()));
       REQUIRE(encoded.has_value());
       CHECK(encoded->true_block_size == payload.size());
 
       std::vector<uint8_t> decoded(payload.size(), 0xaa);
       auto decode_full = decode_logical_payload_slice(
-          encoded->encoding, std::span<const uint8_t>(encoded->bytes.data(), encoded->bytes.size()),
+          encoded->encoding,
+          std::span<const uint8_t>(encoded->bytes.data(),
+                                   encoded->bytes.size()),
           encoded->true_block_size, 0,
           std::span<uint8_t>(decoded.data(), decoded.size()));
       REQUIRE(decode_full.has_value());
@@ -831,15 +913,16 @@ TEST_CASE("logical payload encode/decode roundtrip and error behavior",
   }
 
   SECTION("decode offset and bounded output returns requested slice") {
-    const auto payload = generate_bytes(256, BytePattern::Random, 0,
-                                        0xdeadbeefULL);
-    auto encoded =
-        encode_logical_payload(std::span<const uint8_t>(payload.data(), payload.size()));
+    const auto payload =
+        generate_bytes(256, BytePattern::Random, 0, 0xdeadbeefULL);
+    auto encoded = encode_logical_payload(
+        std::span<const uint8_t>(payload.data(), payload.size()));
     REQUIRE(encoded.has_value());
 
     std::vector<uint8_t> decoded(32, 0xcc);
     auto decode_slice = decode_logical_payload_slice(
-        encoded->encoding, std::span<const uint8_t>(encoded->bytes.data(), encoded->bytes.size()),
+        encoded->encoding,
+        std::span<const uint8_t>(encoded->bytes.data(), encoded->bytes.size()),
         encoded->true_block_size, 100,
         std::span<uint8_t>(decoded.data(), decoded.size()));
     REQUIRE(decode_slice.has_value());
@@ -849,13 +932,14 @@ TEST_CASE("logical payload encode/decode roundtrip and error behavior",
 
   SECTION("offset past logical end returns zero bytes") {
     const std::vector<uint8_t> payload(24, static_cast<uint8_t>('A'));
-    auto encoded =
-        encode_logical_payload(std::span<const uint8_t>(payload.data(), payload.size()));
+    auto encoded = encode_logical_payload(
+        std::span<const uint8_t>(payload.data(), payload.size()));
     REQUIRE(encoded.has_value());
 
     std::vector<uint8_t> decoded(16, 0x55);
     auto decode = decode_logical_payload_slice(
-        encoded->encoding, std::span<const uint8_t>(encoded->bytes.data(), encoded->bytes.size()),
+        encoded->encoding,
+        std::span<const uint8_t>(encoded->bytes.data(), encoded->bytes.size()),
         encoded->true_block_size, payload.size(),
         std::span<uint8_t>(decoded.data(), decoded.size()));
     REQUIRE(decode.has_value());
@@ -867,15 +951,17 @@ TEST_CASE("logical payload encode/decode roundtrip and error behavior",
         {0x00},             // too small
         {0x00, 0x00, 0x00}, // nulls
         {'g', 'o', 'a', 't', 's'},
-        {'t', 'h', 'i', 's', ' ', 'i', 's', ' ', 'n', 'o', 't', ' ', 'z', 's', 't', 'd'},
+        {'t', 'h', 'i', 's', ' ', 'i', 's', ' ', 'n', 'o', 't', ' ', 'z', 's',
+         't', 'd'},
     };
 
     for (const auto &stored : invalid_payloads) {
       INFO("invalid_payload_hex=" << bytes_to_hex(stored));
       std::vector<uint8_t> out(64, 0);
       auto decode = decode_logical_payload_slice(
-          XAttrEncoding::xattr_zstd, std::span<const uint8_t>(stored.data(), stored.size()),
-          256, 0, std::span<uint8_t>(out.data(), out.size()));
+          XAttrEncoding::xattr_zstd,
+          std::span<const uint8_t>(stored.data(), stored.size()), 256, 0,
+          std::span<uint8_t>(out.data(), out.size()));
       REQUIRE(!decode.has_value());
       CHECK(decode.error() == EIO);
     }
