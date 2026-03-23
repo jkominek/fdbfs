@@ -226,11 +226,24 @@ template <typename ActionT> ActionT Inflight_write<ActionT>::check() {
   clock_gettime(CLOCK_REALTIME, &tv);
 
   if (inode_updated) {
-  update_mtime(&inode, &tv);
-  // we've updated the inode appropriately.
-  if (!fdb_set_protobuf(transaction.get(), pack_inode_key(inode.inode()),
-                        inode))
-    return ActionT::Abort(EIO);
+    update_mtime(&inode, &tv);
+    // we've updated the inode appropriately.
+    if (!fdb_set_protobuf(transaction.get(), pack_inode_key(inode.inode()),
+                          inode))
+      return ActionT::Abort(EIO);
+  } else {
+    // not required to update the inode, so instead we'll update the inode field
+    // KVs. personally i think it's dumb that we have to update the ctime, but
+    // they didn't ask me how posix is supposed to work.
+    auto mtime_key = pack_inode_field_key(inode.inode(), {'t', 'm'});
+    auto ctime_key = pack_inode_field_key(inode.inode(), {'t', 'c'});
+    auto now = encode_timespec(tv);
+    fdb_transaction_atomic_op(transaction.get(), mtime_key.data(),
+                              mtime_key.size(), now.data(), now.size(),
+                              FDB_MUTATION_TYPE_MAX);
+    fdb_transaction_atomic_op(transaction.get(), ctime_key.data(),
+                              ctime_key.size(), now.data(), now.size(),
+                              FDB_MUTATION_TYPE_MAX);
   }
 
   // merge the edge writes into the blocks

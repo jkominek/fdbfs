@@ -74,24 +74,36 @@ Inflight_lookup<ActionT, INodeHandlerT>::Inflight_lookup(
 
 template <typename ActionT, typename INodeHandlerT>
 ActionT Inflight_lookup<ActionT, INodeHandlerT>::process_inode() {
-  fdb_bool_t present = 0;
-  const uint8_t *val;
-  int vallen;
+  const FDBKeyValue *kvs;
+  int kvcount;
+  fdb_bool_t more;
   fdb_error_t err;
 
-  err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
+  err = fdb_future_get_keyvalue_array(a().inode_fetch.get(), &kvs, &kvcount,
+                                      &more);
   if (err)
     return ActionT::FDBError(err);
 
-  // and second callback, to get the attributes
-  if (!present) {
+  if (kvcount < 1) {
+    return ActionT::Abort(EIO);
+  }
+
+  const auto expected_key = pack_inode_key(a().target);
+  if ((kvs[0].key_length != static_cast<int>(expected_key.size())) ||
+      (std::memcmp(kvs[0].key, expected_key.data(), expected_key.size()) !=
+       0)) {
     return ActionT::Abort(EIO);
   }
 
   INodeRecord inode;
-  inode.ParseFromArray(val, vallen);
+  inode.ParseFromArray(kvs[0].value, kvs[0].value_length);
   if (!inode.IsInitialized()) {
     return ActionT::Abort(EIO);
+  }
+
+  if (auto it = apply_newer_inode_time_fields(kvs + 1, kvcount - 1, inode);
+      !it.has_value()) {
+    return ActionT::Abort(it.error());
   }
 
   return ActionT::INode(inode, inode_handler);
@@ -119,14 +131,17 @@ ActionT Inflight_lookup<ActionT, INodeHandlerT>::lookup_inode() {
       a().target = dirent.inode();
     }
 
-    const auto key = pack_inode_key(a().target);
-
-    // and request just that inode
+    const auto [start_key, stop_key] = pack_inode_and_fields_range(a().target);
     wait_on_future(
-        fdb_transaction_get(transaction.get(), key.data(), key.size(), 1),
+        fdb_transaction_get_range(
+            transaction.get(),
+            FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(),
+                                              start_key.size()),
+            FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop_key.data(), stop_key.size()),
+            4, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
         a().inode_fetch);
-    return ActionT::BeginWait(
-        std::bind(&Inflight_lookup<ActionT, INodeHandlerT>::process_inode, this));
+    return ActionT::BeginWait(std::bind(
+        &Inflight_lookup<ActionT, INodeHandlerT>::process_inode, this));
   } else {
     return ActionT::Abort(ENOENT);
   }
@@ -139,5 +154,6 @@ InflightCallbackT<ActionT> Inflight_lookup<ActionT, INodeHandlerT>::issue() {
   wait_on_future(
       fdb_transaction_get(transaction.get(), key.data(), key.size(), 1),
       a().dirent_fetch);
-  return std::bind(&Inflight_lookup<ActionT, INodeHandlerT>::lookup_inode, this);
+  return std::bind(&Inflight_lookup<ActionT, INodeHandlerT>::lookup_inode,
+                   this);
 }

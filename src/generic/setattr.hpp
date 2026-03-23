@@ -205,27 +205,52 @@ ActionT Inflight_setattr<ActionT, INodeHandlerT>::partial_block_fixup() {
 
 template <typename ActionT, typename INodeHandlerT>
 ActionT Inflight_setattr<ActionT, INodeHandlerT>::callback() {
-  fdb_bool_t present = 0;
-  const uint8_t *val;
-  int vallen;
+  const FDBKeyValue *kvs;
+  int kvcount;
+  fdb_bool_t more;
   fdb_error_t err;
 
-  err = fdb_future_get_value(a().inode_fetch.get(), &present, &val, &vallen);
+  err = fdb_future_get_keyvalue_array(a().inode_fetch.get(), &kvs, &kvcount,
+                                      &more);
   if (err)
     return ActionT::FDBError(err);
-
-  if (!present) {
+  if (kvcount < 1) {
+    if (more) {
+      // probably shouldn't be possible, but i'm paranoid about it
+      // better to throw an error than falsely report ENOENT
+      return ActionT::Abort(EIO);
+    } else {
     return ActionT::Abort(ENOENT);
+    }
+  }
+
+  // sanity check that the first key is the inode.
+  const auto expected_key = pack_inode_key(ino);
+  if ((kvs[0].key_length != static_cast<int>(expected_key.size())) ||
+      (std::memcmp(kvs[0].key, expected_key.data(), expected_key.size()) !=
+       0)) {
+    return ActionT::Abort(EIO);
   }
 
   bool do_commit = true;
   auto next_action = ActionT::BeginWait(
       std::bind(&Inflight_setattr<ActionT, INodeHandlerT>::commit_cb, this));
 
-  a().inode.ParseFromArray(val, vallen);
+  a().inode.ParseFromArray(kvs[0].value, kvs[0].value_length);
   if (!a().inode.IsInitialized()) {
     // bad inode
     return ActionT::Abort(EIO);
+  }
+
+  if (auto it = apply_newer_inode_time_fields(kvs + 1, kvcount - 1, a().inode);
+      it.has_value()) {
+    // we've integrated any values that were present there, so we can
+    // clear them out, now.
+    fdbfs_transaction_clear_range(
+        transaction.get(), std::make_pair(pack_inode_field_key(ino, {'t'}),
+                                          pack_inode_field_key(ino, {'u'})));
+  } else {
+    return ActionT::Abort(it.error());
   }
 
   // update inode!
@@ -333,9 +358,16 @@ template <typename ActionT, typename INodeHandlerT>
 InflightCallbackT<ActionT> Inflight_setattr<ActionT, INodeHandlerT>::issue() {
   const auto key = pack_inode_key(ino);
 
-  // and request just that inode
+  // limit is set to 4 keys, because that's the most we can expect at the
+  // moment, inode + {a,m,c}time
+  const auto [start_key, stop_key] = pack_inode_and_fields_range(ino);
   wait_on_future(
-      fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
+      fdb_transaction_get_range(
+          transaction.get(),
+          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(), start_key.size()),
+          FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop_key.data(), stop_key.size()),
+          4, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
       a().inode_fetch);
+
   return std::bind(&Inflight_setattr<ActionT, INodeHandlerT>::callback, this);
 }

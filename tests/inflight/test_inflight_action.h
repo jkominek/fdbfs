@@ -78,6 +78,13 @@ public:
     bool plus_mode = false;
   };
 
+  static std::optional<int>
+  inode_handler_open_flags(const std::monostate &) {
+    return std::nullopt;
+  }
+
+  static std::monostate inode_handler_open(int) { return {}; }
+
   class DirentCollector {
   public:
     explicit DirentCollector(const DirentCollectorSpec &spec)

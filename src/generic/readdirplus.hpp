@@ -133,10 +133,12 @@ ActionT Inflight_readdirplus<ActionT>::dirent_callback() {
     };
     a().entries.emplace_back(std::move(entry));
 
-    const auto inode_key = pack_inode_key(dirent.inode());
+    const auto [start_key, stop_key] = pack_inode_and_fields_range(dirent.inode());
     a().inode_fetches.emplace_back();
-    wait_on_future(fdb_transaction_get(transaction.get(), inode_key.data(),
-                                       inode_key.size(), 1),
+    wait_on_future(fdb_transaction_get_range(
+                       transaction.get(), start_key.data(), start_key.size(),
+                       0, 1, stop_key.data(), stop_key.size(), 0, 1, 4, 0,
+                       FDB_STREAMING_MODE_WANT_ALL, 0, 0, 1),
                    a().inode_fetches.back());
   }
 
@@ -159,27 +161,39 @@ ActionT Inflight_readdirplus<ActionT>::callback() {
   use_records.reserve(a().entries.size());
 
   for (size_t i = 0; i < a().entries.size(); i++) {
-    fdb_bool_t present = 0;
-    const uint8_t *val = nullptr;
-    int vallen = 0;
-    const fdb_error_t err = fdb_future_get_value(a().inode_fetches[i].get(),
-                                                 &present, &val, &vallen);
+    const FDBKeyValue *kvs = nullptr;
+    int kvcount = 0;
+    fdb_bool_t more = 0;
+    const fdb_error_t err = fdb_future_get_keyvalue_array(
+        a().inode_fetches[i].get(), &kvs, &kvcount, &more);
     if (err) {
       return ActionT::FDBError(err);
     }
-    if (!present) {
+    if (kvcount < 1) {
       // this is some sort of db corruption; can we maybe stuff an
       // error into the response, or fill it out partially, so that
       // users can at least see which dirent is misbehaving?
       return ActionT::Abort(EIO);
     }
 
+    const auto expected_key = pack_inode_key(a().entries[i].dirent.inode());
+    if ((kvs[0].key_length != static_cast<int>(expected_key.size())) ||
+        (std::memcmp(kvs[0].key, expected_key.data(), expected_key.size()) !=
+         0)) {
+      return ActionT::Abort(EIO);
+    }
+
     INodeRecord inode;
-    if (!inode.ParseFromArray(val, vallen) || !inode.IsInitialized()) {
+    if (!inode.ParseFromArray(kvs[0].value, kvs[0].value_length) ||
+        !inode.IsInitialized()) {
       return ActionT::Abort(EIO);
     }
     if (inode.inode() != a().entries[i].dirent.inode()) {
       return ActionT::Abort(EIO);
+    }
+    if (auto it = apply_newer_inode_time_fields(kvs + 1, kvcount - 1, inode);
+        !it.has_value()) {
+      return ActionT::Abort(it.error());
     }
 
     auto add_result =
