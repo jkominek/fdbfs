@@ -52,6 +52,9 @@ public:
   [[nodiscard]] std::size_t queued_count() const;
   [[nodiscard]] fuse_ino_t inode() const { return ino; }
 
+  // latest (unstored) read time, for setting atime
+  std::optional<struct timespec> latest_read;
+
 private:
   enum class PendingKind { Inflight, Barrier };
 
@@ -65,6 +68,7 @@ private:
 
   // Starts or dispatches the next queued item if idle.
   void maybe_start_next_locked(std::unique_lock<std::mutex> &lk);
+  void maybe_start_atime_update_locked(std::unique_lock<std::mutex> &lk);
 
   mutable std::mutex mu;
   std::deque<PendingItem> queue;
@@ -77,6 +81,8 @@ private:
   bool closed = false;
   // error from operations we've serialized, for flush/close
   int stored_error = 0;
+  bool atime_update_needed = false;
+  bool atime_update_running = false;
 };
 
 struct fdbfs_filehandle {

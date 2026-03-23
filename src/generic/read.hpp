@@ -19,18 +19,12 @@
 /*************************************************************
  * read
  *************************************************************
- * INITIAL PLAN
- * for v0, we'll issue either a single get, or a single range
- * read, and call it good.
+ * Assuming this will be one of the most frequently used Inflights
+ * in the system, we keep it read only. As such, we don't update
+ * atimes in here. Slightly higher level code will have to take
+ * care of tracking and accumulating atimes and writing them out.
  *
- * that makes this relatively straightforward to implement.
- *
- * REAL PLAN?
- * in reality we'll probably also need to read the file attributes
- * and pick up the file size, in addition to the content reads.
- *
- * that still isn't too bad, but it means that we'll have to
- * handle multiple futures in the end.
+ * This does handle arbitrary, unaligned reads.
  */
 
 template <typename ActionT>
@@ -38,8 +32,6 @@ struct AttemptState_read : public AttemptStateT<ActionT> {
   unique_future inode_fetch;
   unique_future range_fetch;
   range_keys requested_range;
-  // we pad the buffer some so special block decoders have room to work
-  // without having to perform extra copies or allocations.
   std::vector<uint8_t> buffer;
 };
 
@@ -67,16 +59,12 @@ private:
 };
 
 template <typename ActionT>
-Inflight_read<ActionT>::Inflight_read(req_t req, fdbfs_ino_t ino,
-                                      size_t size, off_t off,
-                                      unique_transaction transaction)
-    : Base(req, std::move(transaction)), ino(ino),
-      requested_size(size), off(off) {
-  a().buffer.assign(requested_size + 32, 0);
-}
+Inflight_read<ActionT>::Inflight_read(req_t req, fdbfs_ino_t ino, size_t size,
+                                      off_t off, unique_transaction transaction)
+    : Base(req, std::move(transaction)), ino(ino), requested_size(size),
+      off(off) {}
 
-template <typename ActionT>
-ActionT Inflight_read<ActionT>::callback() {
+template <typename ActionT> ActionT Inflight_read<ActionT>::callback() {
   const uint8_t *val;
   int vallen;
   fdb_bool_t present;
@@ -179,7 +167,8 @@ ActionT Inflight_read<ActionT>::callback() {
 
   if (more) {
     a().range_fetch = std::move(next_range_fetch);
-    return ActionT::BeginWait(std::bind(&Inflight_read<ActionT>::callback, this));
+    return ActionT::BeginWait(
+        std::bind(&Inflight_read<ActionT>::callback, this));
   } else {
     return ActionT::Buf(a().buffer, size);
   }
@@ -194,7 +183,6 @@ InflightCallbackT<ActionT> Inflight_read<ActionT>::issue() {
       a().inode_fetch);
 
   a().requested_range = offset_size_to_range_keys(ino, off, requested_size);
-  a().buffer.assign(requested_size + 32, 0);
 
   wait_on_future(
       fdb_transaction_get_range(
@@ -205,5 +193,10 @@ InflightCallbackT<ActionT> Inflight_read<ActionT>::issue() {
                                             a().requested_range.second.size()),
           0, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
       a().range_fetch);
+
+  // we pad the buffer some so special block decoders have room to work
+  // without having to perform extra copies or allocations.
+  a().buffer.assign(requested_size + 32, 0);
+
   return std::bind(&Inflight_read<ActionT>::callback, this);
 }

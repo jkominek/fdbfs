@@ -1,5 +1,7 @@
 #include "filehandle.h"
+#include "atomicfield.hpp"
 #include "fuse_inflight_action.h"
+#include "void_inflight_action.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,6 +55,16 @@ void FilehandleSerializer::on_inflight_done(
 
   if (it->second.readonly) {
     inflight_reads -= std::make_pair(it->second.range, 1);
+    if (!err) {
+      // just finished a successful read, update in-memory atime
+      struct timespec now{};
+      clock_gettime(CLOCK_REALTIME, &now);
+      if (!latest_read.has_value() ||
+          compare_timespec_value(now, latest_read.value()) > 0) {
+        latest_read = now;
+      }
+      atime_update_needed = true;
+    }
   } else {
     inflight_writes -= std::make_pair(it->second.range, 1);
   }
@@ -81,8 +93,43 @@ std::size_t FilehandleSerializer::queued_count() const {
   return queue.size();
 }
 
+void FilehandleSerializer::maybe_start_atime_update_locked(
+    std::unique_lock<std::mutex> &lk) {
+  if (closed || atime_update_running || !atime_update_needed ||
+      !latest_read.has_value()) {
+    return;
+  }
+
+  auto encoded = encode_timespec(*latest_read);
+  std::vector<AtomicFieldOp> ops;
+  ops.push_back(AtomicFieldOp{
+      .suffix = {'t', 'a'},
+      .mutation_type = FDB_MUTATION_TYPE_MAX,
+      .value = std::vector<uint8_t>(encoded.begin(), encoded.end()),
+  });
+
+  atime_update_running = true;
+  auto *inflight = new Inflight_atomicfield<VoidInflightAction>(
+      std::monostate{}, static_cast<fdbfs_ino_t>(ino), std::move(ops),
+      make_transaction());
+  inflight->set_on_done([this](int) {
+    std::unique_lock lk(mu);
+    atime_update_running = false;
+    atime_update_needed = false;
+    maybe_start_next_locked(lk);
+  });
+
+  lk.unlock();
+  inflight->start();
+  lk.lock();
+}
+
 void FilehandleSerializer::maybe_start_next_locked(
     std::unique_lock<std::mutex> &lk) {
+  if (atime_update_running) {
+    return;
+  }
+
   while (!queue.empty()) {
     auto &next = queue.front();
     if (next.kind == PendingKind::Barrier) {
@@ -143,5 +190,9 @@ void FilehandleSerializer::maybe_start_next_locked(
     inflight->start();
     lk.lock();
     // Continue dispatching until front item conflicts.
+  }
+
+  if (active.empty()) {
+    maybe_start_atime_update_locked(lk);
   }
 }
