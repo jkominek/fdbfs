@@ -738,28 +738,30 @@ std::expected<void, int> update_directory_times(FDBTransaction *transaction,
 std::array<uint8_t, 12> encode_timespec(const struct timespec &ts) {
   std::array<uint8_t, 12> out{};
 
+  assert(ts.tv_nsec >= 0 && ts.tv_nsec < 1000000000);
+
   int64_t sec_signed = static_cast<int64_t>(ts.tv_sec);
   uint64_t sec = static_cast<uint64_t>(sec_signed) ^ (1ULL << 63);
   uint32_t nsec = static_cast<uint32_t>(ts.tv_nsec);
 
-  sec = htobe64(sec);
-  nsec = htobe32(nsec);
+  sec = htole64(sec);
+  nsec = htole32(nsec);
 
-  std::memcpy(out.data(), &sec, 8);
-  std::memcpy(out.data() + 8, &nsec, 4);
+  std::memcpy(out.data() + 4, &sec, 8);
+  std::memcpy(out.data(), &nsec, 4);
 
   return out;
 }
 
 struct timespec decode_timespec(std::span<const uint8_t, 12> in) {
-  uint64_t sec_be;
-  uint32_t nsec_be;
+  uint64_t sec_le;
+  uint32_t nsec_le;
 
-  std::memcpy(&sec_be, in.data(), 8);
-  std::memcpy(&nsec_be, in.data() + 8, 4);
+  std::memcpy(&sec_le, in.data() + 4, 8);
+  std::memcpy(&nsec_le, in.data(), 4);
 
-  uint64_t sec = be64toh(sec_be) ^ (1ULL << 63);
-  uint32_t nsec = be32toh(nsec_be);
+  uint64_t sec = le64toh(sec_le) ^ (1ULL << 63);
+  uint32_t nsec = le32toh(nsec_le);
 
   struct timespec ts;
   ts.tv_sec = static_cast<decltype(ts.tv_sec)>(static_cast<int64_t>(sec));

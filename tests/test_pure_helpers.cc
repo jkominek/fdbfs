@@ -79,9 +79,21 @@ bool ranges_overlap(const range_keys &a, const range_keys &b) {
   return (a.first < b.second) && (b.first < a.second);
 }
 
+int compare_fdb_max_order(const std::array<uint8_t, 12> &a,
+                          const std::array<uint8_t, 12> &b) {
+  for (size_t i = a.size(); i > 0; --i) {
+    const uint8_t ab = a[i - 1];
+    const uint8_t bb = b[i - 1];
+    if (ab != bb) {
+      return (ab < bb) ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
 const std::array<uint8_t, 12> &fdb_max_order(const std::array<uint8_t, 12> &a,
                                              const std::array<uint8_t, 12> &b) {
-  return (a < b) ? b : a;
+  return (compare_fdb_max_order(a, b) < 0) ? b : a;
 }
 
 std::string bytes_to_hex(const std::vector<uint8_t> &v) {
@@ -602,11 +614,18 @@ TEST_CASE("timespec helpers round trip and preserve atomic-max ordering",
         {{1, 999999998}, {1, 999999999}},
     };
 
+    struct timespec early{};
+    REQUIRE(clock_gettime(CLOCK_REALTIME, &early) == 0);
     struct timespec now{};
     REQUIRE(clock_gettime(CLOCK_REALTIME, &now) == 0);
     pairs.push_back({now, now});
     pairs.push_back({{now.tv_sec - 1, now.tv_nsec}, now});
     pairs.push_back({now, {now.tv_sec + 1, now.tv_nsec}});
+    struct timespec later{};
+    REQUIRE(clock_gettime(CLOCK_REALTIME, &later) == 0);
+    pairs.push_back({early, now});
+    pairs.push_back({early, later});
+    pairs.push_back({now, later});
 
     std::mt19937_64 rng(0x7135f03cULL);
     std::uniform_int_distribution<int64_t> sec_dist(-1000000000LL,
@@ -632,15 +651,16 @@ TEST_CASE("timespec helpers round trip and preserve atomic-max ordering",
       const auto encoded_a = encode_timespec(a);
       const auto encoded_b = encode_timespec(b);
       const int cmp = compare_timespec_value(a, b);
+      const int fdb_cmp = compare_fdb_max_order(encoded_a, encoded_b);
 
       if (cmp < 0) {
-        CHECK(encoded_a < encoded_b);
+        CHECK(fdb_cmp < 0);
         CHECK(fdb_max_order(encoded_a, encoded_b) == encoded_b);
       } else if (cmp > 0) {
-        CHECK(encoded_b < encoded_a);
+        CHECK(fdb_cmp > 0);
         CHECK(fdb_max_order(encoded_a, encoded_b) == encoded_a);
       } else {
-        CHECK(encoded_a == encoded_b);
+        CHECK(fdb_cmp == 0);
       }
     }
   }
