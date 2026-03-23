@@ -172,12 +172,17 @@ extern int compare_timespec_value(const struct timespec &a,
 extern void update_atime(INodeRecord *, const struct timespec *);
 extern void update_mtime(INodeRecord *, const struct timespec *);
 extern void update_ctime(INodeRecord *, const struct timespec *);
+enum class DirectoryUpdateKind {
+  INodeOnly,
+  ContentsDeferred,
+  ContentsPersist,
+};
 [[nodiscard]] extern std::expected<bool, int>
 apply_newer_inode_time_fields(const FDBKeyValue *kvs, int kvcount,
                               INodeRecord &inode);
 [[nodiscard]]
 extern std::expected<void, int>
-update_directory_times(FDBTransaction *, INodeRecord &, bool = true);
+update_directory_times(FDBTransaction *, INodeRecord &, DirectoryUpdateKind);
 [[nodiscard]]
 extern std::array<uint8_t, 12> encode_timespec(const struct timespec &ts);
 [[nodiscard]]

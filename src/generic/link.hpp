@@ -138,7 +138,8 @@ ActionT Inflight_link<ActionT, INodeHandlerT>::check() {
       return ActionT::Abort(ENOTDIR);
     }
     // update times on destination dir
-    if (auto it = update_directory_times(transaction.get(), dirinode, false);
+    if (auto it = update_directory_times(
+            transaction.get(), dirinode, DirectoryUpdateKind::ContentsDeferred);
         !it.has_value()) {
       return ActionT::FDBError(it.error());
     }

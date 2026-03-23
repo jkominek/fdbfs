@@ -705,19 +705,13 @@ std::expected<bool, int> apply_newer_inode_time_fields(const FDBKeyValue *kvs,
 
 std::expected<void, int> update_directory_times(FDBTransaction *transaction,
                                                 INodeRecord &inode,
-                                                bool metadataChange) {
+                                                DirectoryUpdateKind update) {
   struct timespec tp;
   clock_gettime(CLOCK_REALTIME, &tp);
-  if (metadataChange) {
-    // the inode metadata changed, so 1) we only change the ctime 2) we
-    // have to actually update the inode itself.
-    inode.mutable_ctime()->set_sec(tp.tv_sec);
-    inode.mutable_ctime()->set_nsec(tp.tv_nsec);
-    return fdb_set_protobuf(transaction, pack_inode_key(inode.inode()), inode);
-  } else {
-    // there wasn't a metadata change. that means it was a directory contents
-    // change. so 1) we update mtime and ctime 2) we can just do atomic max
-    // updates to the timestamp field keys. they'll be picked up later.
+  switch (update) {
+  case DirectoryUpdateKind::ContentsDeferred: {
+    // Directory contents changed, but the inode record itself does not need
+    // to be rewritten. Defer the mtime/ctime updates into field KVs.
     auto mtime_key = pack_inode_field_key(inode.inode(), {'t', 'm'});
     auto ctime_key = pack_inode_field_key(inode.inode(), {'t', 'c'});
     auto now = encode_timespec(tp);
@@ -727,6 +721,18 @@ std::expected<void, int> update_directory_times(FDBTransaction *transaction,
                               now.data(), now.size(), FDB_MUTATION_TYPE_MAX);
     return {};
   }
+  case DirectoryUpdateKind::ContentsPersist:
+    // Directory contents changed and the inode record itself changed. Update
+    // both mtime and ctime and persist the inode.
+    inode.mutable_mtime()->set_sec(tp.tv_sec);
+    inode.mutable_mtime()->set_nsec(tp.tv_nsec);
+  case DirectoryUpdateKind::INodeOnly: // Only metadata -> only ctime
+    inode.mutable_ctime()->set_sec(tp.tv_sec);
+    inode.mutable_ctime()->set_nsec(tp.tv_nsec);
+    return fdb_set_protobuf(transaction, pack_inode_key(inode.inode()), inode);
+  }
+  // catastrophic failure
+  std::terminate();
 }
 
 std::array<uint8_t, 12> encode_timespec(const struct timespec &ts) {

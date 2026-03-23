@@ -139,8 +139,10 @@ ActionT Inflight_mknod<ActionT, INodeHandlerT>::postverification() {
     parentinode.set_nlinks(parentinode.nlinks() + 1);
   }
   // update parent directory times
-  if (auto it = update_directory_times(transaction.get(), parentinode,
-                                       type == ft_directory);
+  if (auto it = update_directory_times(
+          transaction.get(), parentinode,
+          type == ft_directory ? DirectoryUpdateKind::ContentsPersist
+                               : DirectoryUpdateKind::ContentsDeferred);
       !it.has_value()) {
     return ActionT::FDBError(it.error());
   }
