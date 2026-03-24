@@ -183,7 +183,7 @@ extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
     return;
   }
 
-  auto fh = extract_fdbfs_filehandle(fi);
+  auto fh = extract_fuse_handle<struct fdbfs_filehandle>(fi);
   if (!fh) {
     fuse_reply_err(req, EBADF);
     return;
@@ -322,7 +322,7 @@ extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
       return;
     }
     // we're doing a truncate on an open file, so we have to be serialized
-    auto fh = extract_fdbfs_filehandle(fi);
+    auto fh = extract_fuse_handle<struct fdbfs_filehandle>(fi);
     if (!fh) {
       delete inflight;
       fuse_reply_err(req, EBADF);
@@ -382,7 +382,7 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
     return;
   }
 
-  auto fh = extract_fdbfs_filehandle(fi);
+  auto fh = extract_fuse_handle<struct fdbfs_filehandle>(fi);
   if (!fh) {
     fuse_reply_err(req, EBADF);
     return;
@@ -516,7 +516,7 @@ extern "C" void fdbfs_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size) {
 // ==== flush ====
 extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
                             struct fuse_file_info *fi) {
-  auto fh = extract_fdbfs_filehandle(fi);
+  auto fh = extract_fuse_handle<struct fdbfs_filehandle>(fi);
   if (!fh) {
     fuse_reply_err(req, EBADF);
     return;
@@ -568,7 +568,7 @@ extern "C" void fdbfs_fsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync,
 // ==== release ====
 extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
                               struct fuse_file_info *fi) {
-  auto fh = extract_fdbfs_filehandle(fi);
+  auto fh = extract_fuse_handle<struct fdbfs_filehandle>(fi);
   if (!fh) {
     fuse_reply_err(req, EBADF);
     return;
@@ -589,7 +589,7 @@ extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
     return;
   }
 
-  free_fdbfs_filehandle_slot(fi);
+  free_fuse_handle_slot<struct fdbfs_filehandle>(fi);
 }
 
 // ==== posix_locks ====

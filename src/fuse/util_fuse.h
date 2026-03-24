@@ -4,13 +4,44 @@
 #define FUSE_USE_VERSION 35
 #include <fuse_lowlevel.h>
 
+#include <cassert>
 #include <memory>
 
 struct fdbfs_filehandle;
 
-[[nodiscard]] std::shared_ptr<struct fdbfs_filehandle>
-extract_fdbfs_filehandle(struct fuse_file_info *fi);
-void free_fdbfs_filehandle_slot(struct fuse_file_info *fi);
+template <typename T>
+[[nodiscard]] std::shared_ptr<T> **extract_fuse_handle_slot(
+    struct fuse_file_info *fi) {
+  static_assert(sizeof(fi->fh) >= sizeof(std::shared_ptr<T> *),
+                "FUSE file handle can't hold a pointer to our structure");
+  return reinterpret_cast<std::shared_ptr<T> **>(&(fi->fh));
+}
+
+template <typename T>
+[[nodiscard]] std::shared_ptr<T> extract_fuse_handle(struct fuse_file_info *fi) {
+  if (fi == nullptr) {
+    return {};
+  }
+  auto **slot = extract_fuse_handle_slot<T>(fi);
+  if ((slot == nullptr) || (*slot == nullptr)) {
+    return {};
+  }
+  return **slot;
+}
+
+template <typename T>
+void free_fuse_handle_slot(struct fuse_file_info *fi) {
+  if (fi == nullptr) {
+    return;
+  }
+  auto **slot = extract_fuse_handle_slot<T>(fi);
+  if ((slot == nullptr) || (*slot == nullptr)) {
+    return;
+  }
+  delete *slot;
+  *slot = nullptr;
+}
+
 int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
                            struct fuse_file_info *fi);
 

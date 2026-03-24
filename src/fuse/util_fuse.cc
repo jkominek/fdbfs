@@ -6,43 +6,6 @@
 #include "filehandle.h"
 #include "generic/util.h"
 
-namespace {
-
-std::shared_ptr<struct fdbfs_filehandle> **
-extract_fdbfs_filehandle_slot(struct fuse_file_info *fi) {
-  static_assert(sizeof(fi->fh) >=
-                    sizeof(std::shared_ptr<struct fdbfs_filehandle> *),
-                "FUSE File handle can't hold a pointer to our structure");
-  return reinterpret_cast<std::shared_ptr<struct fdbfs_filehandle> **>(
-      &(fi->fh));
-}
-
-} // namespace
-
-std::shared_ptr<struct fdbfs_filehandle>
-extract_fdbfs_filehandle(struct fuse_file_info *fi) {
-  if (fi == nullptr) {
-    return {};
-  }
-  auto **slot = extract_fdbfs_filehandle_slot(fi);
-  if (slot == nullptr || *slot == nullptr) {
-    return {};
-  }
-  return **slot;
-}
-
-void free_fdbfs_filehandle_slot(struct fuse_file_info *fi) {
-  if (fi == nullptr) {
-    return;
-  }
-  auto **slot = extract_fdbfs_filehandle_slot(fi);
-  if (slot == nullptr || *slot == nullptr) {
-    return;
-  }
-  delete *slot;
-  *slot = nullptr;
-}
-
 int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
                            struct fuse_file_info *fi) {
   bool atime = true;
@@ -51,7 +14,7 @@ int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
 #endif
   auto slot = new std::shared_ptr<struct fdbfs_filehandle>(
       std::make_shared<struct fdbfs_filehandle>(ino, atime));
-  *(extract_fdbfs_filehandle_slot(fi)) = slot;
+  *(extract_fuse_handle_slot<struct fdbfs_filehandle>(fi)) = slot;
 
   auto generation = increment_lookup_count(static_cast<fdbfs_ino_t>(ino));
   // open should only arrive for an inode that was already looked up.
@@ -59,7 +22,7 @@ int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
 
   if (fuse_reply_open(req, fi) < 0) {
     // release won't be called if open failed.
-    free_fdbfs_filehandle_slot(fi);
+    free_fuse_handle_slot<struct fdbfs_filehandle>(fi);
 
     auto clear_generation =
         decrement_lookup_count(static_cast<fdbfs_ino_t>(ino), 1);
