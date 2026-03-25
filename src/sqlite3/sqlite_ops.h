@@ -3,14 +3,19 @@
 #define FDB_API_VERSION 730
 #include <foundationdb/fdb_c.h>
 
-#include <sqlite3.h>
+#include <sqlite3ext.h>
 
 #include "util.h"
 
-struct fdbfs_file : sqlite3_file {
+struct fdbfs_file {
+  sqlite3_file base; // must remain first
+
   fdbfs_ino_t ino;
-  // Future fdbfs-specific per-file state will live here.
+
+  fdbfs_file(fdbfs_ino_t ino) : ino(ino) {}
 };
+
+bool fdbfs_sqlite3_ensure_runtime();
 
 int fdbfs_sqlite3_file_xClose(sqlite3_file *file);
 int fdbfs_sqlite3_file_xRead(sqlite3_file *file, void *buf, int amount,

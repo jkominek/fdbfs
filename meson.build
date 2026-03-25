@@ -58,7 +58,7 @@ endif
 
 if have_sqlite3
   sqlite3_vfs_lib = shared_library(
-    'sqlite3_fdbfs',
+    'fdbfs',
     sqlite3_source_files + generic_source_files,
     generated,
     dependencies: core_deps + [sqlite3_dep],
