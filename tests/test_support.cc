@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
@@ -673,6 +674,28 @@ void scenario(const std::function<void(FdbfsEnv &)> &fn) {
     return;
   }
   scenario(fs::path{}, fs::path{}, fn);
+}
+
+void require_directory_scan_ok(const fs::path &dir) {
+  INFO("directory scan path=" << dir);
+  errno = 0;
+  DIR *d = ::opendir(dir.c_str());
+  const int open_errno = errno;
+  INFO("opendir errno=" << errno_with_message(open_errno));
+  REQUIRE(d != nullptr);
+
+  while (true) {
+    errno = 0;
+    struct dirent *ent = ::readdir(d);
+    const int read_errno = errno;
+    INFO("readdir errno=" << errno_with_message(read_errno));
+    if (ent == nullptr) {
+      REQUIRE(read_errno == 0);
+      break;
+    }
+  }
+
+  FDBFS_REQUIRE_OK(::closedir(d));
 }
 
 bool is_host_backend() { return backend_from_env() == TestBackend::Host; }

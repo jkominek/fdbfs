@@ -31,6 +31,8 @@ TEST_CASE("unlink removes regular files and preserves hard-linked targets",
 
     FDBFS_REQUIRE_OK(::unlink(b.c_str()));
     CHECK(!fs::exists(b));
+
+    require_directory_scan_ok(env.mnt);
   });
 }
 
@@ -70,5 +72,8 @@ TEST_CASE("unlink and rmdir enforce directory/type constraints",
     errno = 0;
     CHECK(::unlink(env.p("missing").c_str()) == -1);
     FDBFS_CHECK_ERRNO(ENOENT);
+
+    require_directory_scan_ok(env.mnt);
+    require_directory_scan_ok(dir);
   });
 }

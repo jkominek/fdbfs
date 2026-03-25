@@ -62,6 +62,8 @@ TEST_CASE("rmdir removes empty directory and reports expected errors",
     errno = 0;
     CHECK(::rmdir(file.c_str()) == -1);
     FDBFS_CHECK_ERRNO(ENOTDIR);
+
+    require_directory_scan_ok(env.mnt);
   });
 }
 
@@ -74,6 +76,8 @@ TEST_CASE("rmdir mkdir-rmdir immediate loop x32",
       FDBFS_REQUIRE_OK(::mkdir(d.c_str(), 0755));
       FDBFS_REQUIRE_OK(::rmdir(d.c_str()));
     }
+
+    require_directory_scan_ok(env.mnt);
   });
 }
 
@@ -89,6 +93,8 @@ TEST_CASE("rmdir mkdir all then rmdir all x32",
       const fs::path d = env.p(name);
       FDBFS_REQUIRE_OK(::rmdir(d.c_str()));
     }
+
+    require_directory_scan_ok(env.mnt);
   });
 }
 
@@ -111,6 +117,8 @@ TEST_CASE("rmdir mkdir and rmdir in shuffled order x32",
       const fs::path d = env.p(name);
       FDBFS_REQUIRE_OK(::rmdir(d.c_str()));
     }
+
+    require_directory_scan_ok(env.mnt);
   });
 }
 
@@ -142,6 +150,7 @@ TEST_CASE("rmdir preserves usability for open/cwd holders while blocking creates
 
       FDBFS_REQUIRE_OK(::close(dfd));
       CHECK(!fs::exists(d));
+      require_directory_scan_ok(env.mnt);
     }
 
     SECTION("directory held as another process cwd") {
@@ -238,6 +247,7 @@ TEST_CASE("rmdir preserves usability for open/cwd holders while blocking creates
       FDBFS_REQUIRE_OK(::close(result_pipe[0]));
 
       CHECK(!fs::exists(d));
+      require_directory_scan_ok(env.mnt);
     }
   });
 }

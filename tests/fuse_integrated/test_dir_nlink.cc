@@ -74,6 +74,8 @@ TEST_CASE("directory nlink tracks subdirectory create and remove",
       CHECK(stat_dir_nlink(parent) ==
             static_cast<nlink_t>(base + (count - i - 1)));
     }
+
+    require_directory_scan_ok(parent);
   });
 }
 
@@ -142,6 +144,8 @@ TEST_CASE("directory nlink is unaffected by non-directory entries",
       FDBFS_REQUIRE_OK(::unlink(p.c_str()));
       CHECK(stat_dir_nlink(parent) == base);
     }
+
+    require_directory_scan_ok(parent);
   });
 }
 
@@ -165,6 +169,8 @@ TEST_CASE("directory nlink is correct across deep chain create/remove",
       chain.pop_back();
       check_chain_nlinks(chain);
     }
+
+    require_directory_scan_ok(env.mnt);
   });
 }
 
@@ -185,6 +191,8 @@ TEST_CASE("rename directory across parents updates both parent nlinks",
     CHECK(fs::is_directory(bx));
     CHECK(stat_dir_nlink(a) == 2);
     CHECK(stat_dir_nlink(b) == 3);
+    require_directory_scan_ok(a);
+    require_directory_scan_ok(b);
   });
 }
 
@@ -206,6 +214,8 @@ TEST_CASE("rename directory over empty destination keeps destination parent nlin
     CHECK(fs::is_directory(by));
     CHECK(stat_dir_nlink(a) == 2);
     CHECK(stat_dir_nlink(b) == 3);
+    require_directory_scan_ok(a);
+    require_directory_scan_ok(b);
   });
 }
 
@@ -226,6 +236,7 @@ TEST_CASE("rename directory within same parent keeps parent nlink",
     CHECK(fs::exists(dst));
     CHECK(fs::is_directory(dst));
     CHECK(stat_dir_nlink(parent) == before);
+    require_directory_scan_ok(parent);
   });
 }
 
@@ -250,6 +261,8 @@ TEST_CASE(
     CHECK(fs::is_directory(dst));
     CHECK(stat_dir_nlink(parent) == static_cast<nlink_t>(before - 1));
     CHECK(stat_dir_nlink(dst) == 2);
+    require_directory_scan_ok(parent);
+    require_directory_scan_ok(dst);
   });
 }
 
@@ -279,5 +292,7 @@ TEST_CASE("rename exchange directory and file across parents updates nlinks",
     CHECK(fs::is_directory(bf));
     CHECK(stat_dir_nlink(a) == 2);
     CHECK(stat_dir_nlink(b) == 3);
+    require_directory_scan_ok(a);
+    require_directory_scan_ok(b);
   });
 }

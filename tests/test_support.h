@@ -39,6 +39,7 @@ bool is_host_backend();
 void scenario(const fs::path &fs_exe, const fs::path &source_dir,
               const std::function<void(FdbfsEnv &)> &fn);
 void scenario(const std::function<void(FdbfsEnv &)> &fn);
+void require_directory_scan_ok(const fs::path &dir);
 
 enum class BytePattern {
   Nulls,

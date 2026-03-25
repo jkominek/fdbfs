@@ -61,8 +61,7 @@ Inflight_readdirplus<ActionT>::Inflight_readdirplus(
     typename ActionT::DirentCollectorSpec collector_spec, off_t off,
     unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino),
-      collector_spec(std::move(collector_spec)),
-      off(off) {}
+      collector_spec(std::move(collector_spec)), off(off) {}
 
 template <typename ActionT>
 InflightCallbackT<ActionT> Inflight_readdirplus<ActionT>::issue() {
@@ -72,8 +71,8 @@ InflightCallbackT<ActionT> Inflight_readdirplus<ActionT>::issue() {
   const size_t estimated_count = collector.estimate_remaining_entries();
   // limit ourselves to pulling 128 entries at once, since that's a decent
   // amount of potential traffic.
-  const int limit =
-      static_cast<int>(std::max<size_t>(1, std::min<size_t>(128, estimated_count)));
+  const int limit = static_cast<int>(
+      std::max<size_t>(1, std::min<size_t>(128, estimated_count)));
   const int offset = static_cast<int>(off);
 
   wait_on_future(
@@ -133,13 +132,17 @@ ActionT Inflight_readdirplus<ActionT>::dirent_callback() {
     };
     a().entries.emplace_back(std::move(entry));
 
-    const auto [start_key, stop_key] = pack_inode_and_fields_range(dirent.inode());
+    const auto [start_key, stop_key] =
+        pack_inode_and_fields_range(dirent.inode());
     a().inode_fetches.emplace_back();
-    wait_on_future(fdb_transaction_get_range(
-                       transaction.get(), start_key.data(), start_key.size(),
-                       0, 1, stop_key.data(), stop_key.size(), 0, 1, 4, 0,
-                       FDB_STREAMING_MODE_WANT_ALL, 0, 0, 1),
-                   a().inode_fetches.back());
+    wait_on_future(
+        fdb_transaction_get_range(
+            transaction.get(),
+            FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(),
+                                              start_key.size()),
+            FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop_key.data(), stop_key.size()),
+            4, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+        a().inode_fetches.back());
   }
 
   if (a().inode_fetches.empty()) {
@@ -149,8 +152,7 @@ ActionT Inflight_readdirplus<ActionT>::dirent_callback() {
       std::bind(&Inflight_readdirplus<ActionT>::callback, this));
 }
 
-template <typename ActionT>
-ActionT Inflight_readdirplus<ActionT>::callback() {
+template <typename ActionT> ActionT Inflight_readdirplus<ActionT>::callback() {
   if (a().inode_fetches.size() != a().entries.size()) {
     return ActionT::Abort(EIO);
   }

@@ -66,6 +66,7 @@ TEST_CASE("rename basic and replacement behavior", "[integration][rename]") {
 
     const auto data = read_file_all(c);
     CHECK(std::string(data.begin(), data.end()) == "aaa");
+    require_directory_scan_ok(env.mnt);
   });
 }
 
@@ -92,6 +93,9 @@ TEST_CASE("rename type and emptiness checks", "[integration][rename]") {
     errno = 0;
     CHECK(::rename(dir1.c_str(), dir2.c_str()) == -1);
     FDBFS_CHECK_ERRNO(ENOTEMPTY);
+
+    require_directory_scan_ok(env.mnt);
+    require_directory_scan_ok(dir2);
   });
 }
 
@@ -107,6 +111,8 @@ TEST_CASE("rename directory onto empty directory succeeds",
     CHECK(!fs::exists(src));
     CHECK(fs::exists(dst));
     CHECK(fs::is_directory(dst));
+    require_directory_scan_ok(env.mnt);
+    require_directory_scan_ok(dst);
   });
 }
 
@@ -141,6 +147,8 @@ TEST_CASE("renameat2 NOREPLACE and EXCHANGE", "[integration][rename]") {
       CHECK((errno == ENOSYS || errno == EINVAL));
     }
 #endif
+
+    require_directory_scan_ok(env.mnt);
   });
 }
 
@@ -171,5 +179,6 @@ TEST_CASE("rename over hardlink to same inode is a no-op",
     CHECK(a_after.st_ino == b_after.st_ino);
     CHECK(a_after.st_ino == a_before.st_ino);
     CHECK(b_after.st_ino == b_before.st_ino);
+    require_directory_scan_ok(env.mnt);
   });
 }
