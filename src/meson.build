@@ -1,24 +1,44 @@
-gen = generator(protoc, \
-  output    : ['@BASENAME@.pb.cc', '@BASENAME@.pb.h'],
-  arguments : ['--proto_path=@CURRENT_SOURCE_DIR@', '--cpp_out=@BUILD_DIR@', '@INPUT@'])
+gen = generator(
+    protoc,
+    output: ['@BASENAME@.pb.cc', '@BASENAME@.pb.h'],
+    arguments: [
+        '--proto_path=@CURRENT_SOURCE_DIR@',
+        '--cpp_out=@BUILD_DIR@',
+        '@INPUT@',
+    ],
+)
 generated += gen.process(files('values.proto'))
 
-project_source_files += files([
-    'fuse/main.cc',
+fuse_source_files += files(
+    'fuse/directoryhandle.cc',
     'fuse/fdbfs_ops.cc',
     'fuse/filehandle.cc',
     'fuse/inflight_instantiations.cc',
+    'fuse/main.cc',
     'fuse/util_fuse.cc',
-    'generic/garbage_collector.cc',
+)
+
+generic_source_files += files(
     'generic/fdb_service.cc',
+    'generic/fdbfs_runtime.cc',
+    'generic/garbage_collector.cc',
     'generic/liveness.cc',
+    'generic/oplog.cc',
     'generic/util.cc',
     'generic/util_locks.cc',
     'generic/util_unlink.cc',
-    'generic/oplog.cc',
-])
+)
 
-utils_source_files = files([
-    'utils/mkfs.fdbfs.cc',
+sqlite3_source_files += files(
+    'sqlite3/lib.cc',
+    'sqlite3/sqlite_ops.cc',
+)
+
+if have_fuse
+    project_source_files += fuse_source_files + generic_source_files
+endif
+
+utils_source_files = files(
     'utils/fsck.fdbfs.cc',
-])
+    'utils/mkfs.fdbfs.cc',
+)

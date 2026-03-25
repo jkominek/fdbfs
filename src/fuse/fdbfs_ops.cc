@@ -12,6 +12,7 @@
 
 #include "fdbfs_ops.h"
 
+#include "directoryhandle.h"
 #include "filehandle.h"
 #include "fuse_inflight_action.h"
 #include "generic/forget.hpp"
@@ -153,6 +154,29 @@ extern "C" void fdbfs_readdirplus(fuse_req_t req, fuse_ino_t ino, size_t size,
   auto *inflight = new Inflight_readdirplus<FuseInflightAction>(
       req, to_fdbfs_ino(ino), collector_spec, off, make_transaction());
   inflight->start();
+}
+
+extern "C" void fdbfs_opendir(fuse_req_t req, fuse_ino_t ino,
+                              struct fuse_file_info *fi) {
+  auto slot =
+      new std::shared_ptr<DirectoryHandle>(std::make_shared<DirectoryHandle>(ino));
+  *(extract_fuse_handle_slot<DirectoryHandle>(fi)) = slot;
+  if (fuse_reply_open(req, fi) < 0) {
+    free_fuse_handle_slot<DirectoryHandle>(fi);
+  }
+}
+
+extern "C" void fdbfs_releasedir(fuse_req_t req, fuse_ino_t ino,
+                                 struct fuse_file_info *fi) {
+  (void)ino;
+  auto dh = extract_fuse_handle<DirectoryHandle>(fi);
+  if (!dh) {
+    fuse_reply_err(req, EBADF);
+    return;
+  }
+  dh->close();
+  free_fuse_handle_slot<DirectoryHandle>(fi);
+  fuse_reply_err(req, 0);
 }
 
 // ==== open ====

@@ -5,18 +5,35 @@ add_project_arguments(cc.get_supported_arguments(['-Wall']), language: 'cpp')
 
 protoc = find_program('protoc', required : true)
 
-deps = [
-  dependency('fuse3'),
+fuse_dep = dependency('fuse3', required : false)
+sqlite3_dep = dependency('sqlite3', required : false)
+core_deps = [
   dependency('libzstd'),
   dependency('protobuf'),
   dependency('foundationdb-client'),
   dependency('nlohmann_json'),
 ]
+fuse_build_deps = core_deps
+if fuse_dep.found()
+  fuse_build_deps += fuse_dep
+endif
+
+sqlite3_compile_deps = []
+if sqlite3_dep.found()
+  sqlite3_compile_deps += sqlite3_dep.partial_dependency(
+    compile_args : true,
+    includes : true,
+  )
+endif
+
+have_fuse = fuse_dep.found()
+have_sqlite3 = sqlite3_dep.found() and cc.has_header('sqlite3.h', dependencies : sqlite3_compile_deps)
 
 project_includes = include_directories(
   'src',
   'src/generic',
   'src/fuse',
+  'src/sqlite3',
   'tests',
   'tests/inflight',
   'tests/fuse_integrated',
@@ -25,22 +42,37 @@ project_includes = include_directories(
 )
 
 project_source_files = []
+generic_source_files = []
+sqlite3_source_files = []
+fuse_source_files = []
 generated = []
 
 subdir('src')
 
-fs_exe = executable('fs', project_source_files, generated,
-  dependencies: deps,
-  include_directories: project_includes,
-)
+if have_fuse
+  fs_exe = executable('fs', project_source_files, generated,
+    dependencies: fuse_build_deps,
+    include_directories: project_includes,
+  )
+endif
+
+if have_sqlite3
+  sqlite3_vfs_lib = shared_library(
+    'sqlite3_fdbfs',
+    sqlite3_source_files + generic_source_files,
+    generated,
+    dependencies: core_deps + [sqlite3_dep],
+    include_directories: project_includes,
+  )
+endif
 
 mkfs_exe = executable('mkfs.fdbfs', 'src/utils/mkfs.fdbfs.cc', generated,
-  dependencies: deps,
+  dependencies: core_deps,
   include_directories: project_includes,
 )
 
 fsck_exe = executable('fsck.fdbfs', 'src/utils/fsck.fdbfs.cc', generated,
-  dependencies: deps,
+  dependencies: core_deps + sqlite3_compile_deps,
   include_directories: project_includes,
 )
 
@@ -61,7 +93,7 @@ pure_helpers_exe = executable(
   'fdbfs_pure_helpers_bin',
   pure_helpers_sources,
   generated,
-  dependencies : [catch2_dep] + deps,
+  dependencies : [catch2_dep] + core_deps,
   include_directories : project_includes,
 )
 
@@ -92,7 +124,7 @@ inflight_test_exe = executable(
   'fdbfs_inflight_tests',
   inflight_test_sources,
   generated,
-  dependencies : [catch2_dep] + deps,
+  dependencies : [catch2_dep] + core_deps,
   include_directories : project_includes,
 )
 
@@ -156,29 +188,31 @@ test(
 #   fs_exe = join_paths(meson.current_build_dir(), 'fs')
 #
 # Pass it via an environment variable so your tests don't depend on CWD assumptions.
-test(
-  'fdbfs_fuse_integrated_empty',
-  test_exe,
-  env : [
-    'FDBFS_FS_EXE=' + fs_exe.full_path(),
-    'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
-    'FDBFS_TEST_MATRIX=empty',
-  ],
-  timeout : 600,
-  is_parallel : false,
-)
+if have_fuse
+  test(
+    'fdbfs_fuse_integrated_empty',
+    test_exe,
+    env : [
+      'FDBFS_FS_EXE=' + fs_exe.full_path(),
+      'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+      'FDBFS_TEST_MATRIX=empty',
+    ],
+    timeout : 600,
+    is_parallel : false,
+  )
 
-test(
-  'fdbfs_fuse_integrated_seeded',
-  test_exe,
-  env : [
-    'FDBFS_FS_EXE=' + fs_exe.full_path(),
-    'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
-    'FDBFS_TEST_MATRIX=seeded',
-  ],
-  timeout : 420,
-  is_parallel : false,
-)
+  test(
+    'fdbfs_fuse_integrated_seeded',
+    test_exe,
+    env : [
+      'FDBFS_FS_EXE=' + fs_exe.full_path(),
+      'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+      'FDBFS_TEST_MATRIX=seeded',
+    ],
+    timeout : 420,
+    is_parallel : false,
+  )
+endif
 
 # Optional: a quick “smoke” test label so you can run subset:
 # meson test --suite smoke
