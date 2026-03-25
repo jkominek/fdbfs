@@ -10,6 +10,7 @@
 #include <optional>
 #include <shared_mutex>
 #include <stdint.h>
+#include <sys/file.h>
 #include <sys/types.h>
 #include <thread>
 #include <unordered_map>
@@ -22,6 +23,8 @@ struct LockConflict {
   short locktype;
   ByteRange range;
 };
+
+std::expected<ByteRange, int> flock_to_range(const struct flock *lock);
 
 class LockManagerService {
 public:

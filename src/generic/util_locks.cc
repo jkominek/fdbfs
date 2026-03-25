@@ -1,6 +1,7 @@
 #include "util_locks.h"
 
 #include <errno.h>
+#include <limits>
 #include <sys/file.h>
 
 #include <expected>
@@ -21,6 +22,39 @@ find_conflict_for_owner_lock(pid_t pid, short locktype,
   return std::nullopt;
 }
 } // namespace
+
+std::expected<ByteRange, int> flock_to_range(const struct flock *lock) {
+  // FUSE won't generate SEEK_CUR or SEEK_END, it only sends SEEK_SET
+
+  off_t start = lock->l_start;
+  off_t end_inclusive = 0;
+  if (lock->l_len == 0) {
+    end_inclusive = std::numeric_limits<off_t>::max();
+  } else if (lock->l_len > 0) {
+    const off_t len_minus_one = lock->l_len - 1;
+    if ((start > 0) &&
+        (len_minus_one > (std::numeric_limits<off_t>::max() - start))) {
+      return std::unexpected(EINVAL);
+    }
+    end_inclusive = start + len_minus_one;
+  } else { // lock->l_len < 0
+    if (lock->l_len == std::numeric_limits<off_t>::min()) {
+      return std::unexpected(EINVAL);
+    }
+    const off_t len_abs = -lock->l_len;
+    if (start < len_abs) {
+      return std::unexpected(EINVAL);
+    }
+    start = start + lock->l_len;
+    end_inclusive = lock->l_start - 1;
+  }
+
+  if ((start < 0) || (end_inclusive < start)) {
+    return std::unexpected(EINVAL);
+  }
+
+  return ByteRange::closed(start, end_inclusive);
+}
 
 std::optional<LockConflict>
 LockManagerService::query_lock_conflict(fdbfs_ino_t ino, uint64_t owner,

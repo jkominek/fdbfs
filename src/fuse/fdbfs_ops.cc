@@ -23,7 +23,6 @@
 #include "generic/listxattr.hpp"
 #include "generic/lookup.hpp"
 #include "generic/mknod.hpp"
-#include "generic/posix_locks.hpp"
 #include "generic/read.hpp"
 #include "generic/readdir.hpp"
 #include "generic/readdirplus.hpp"
