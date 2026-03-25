@@ -40,7 +40,6 @@
  */
 
 std::vector<uint8_t> pid;
-ProcessTableEntry pt_entry;
 static LivenessService *active_liveness_service = nullptr;
 
 struct ObservedPidState {

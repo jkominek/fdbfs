@@ -8,6 +8,8 @@
 #include <thread>
 #include <vector>
 
+#include "values.pb.h"
+
 enum class PidLiveness { Alive, Dead, Unknown };
 
 extern std::vector<uint8_t> pid; // our unique id for use records
@@ -36,6 +38,7 @@ private:
   std::mutex liveness_sleep_mutex;
   std::condition_variable liveness_sleep_cv;
   bool started = false;
+  ProcessTableEntry pt_entry;
 };
 
 #endif
