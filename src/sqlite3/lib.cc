@@ -23,7 +23,6 @@ uint32_t BLOCKSIZE = 1u << 13;
 
 namespace {
 
-std::unique_ptr<FdbfsRuntime> g_sqlite3_runtime;
 std::once_flag g_sqlite3_runtime_once;
 bool g_sqlite3_runtime_start_failed = false;
 sqlite3_vfs g_fdbfs_vfs = {

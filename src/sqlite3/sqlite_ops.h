@@ -5,16 +5,19 @@
 
 #include <sqlite3ext.h>
 
+#include "generic/fdbfs_runtime.h"
 #include "util.h"
 
 struct fdbfs_file {
   sqlite3_file base; // must remain first
 
   fdbfs_ino_t ino;
+  int currentlock = SQLITE_LOCK_NONE;
 
   fdbfs_file(fdbfs_ino_t ino) : ino(ino) {}
 };
 
+extern std::unique_ptr<FdbfsRuntime> g_sqlite3_runtime;
 bool fdbfs_sqlite3_ensure_runtime();
 
 int fdbfs_sqlite3_file_xClose(sqlite3_file *file);
