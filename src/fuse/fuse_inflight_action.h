@@ -160,7 +160,11 @@ public:
     return std::string(buf);
   }
   static bool request_interrupted(req_t req) {
-    return fuse_req_interrupted(req);
+    //return fuse_req_interrupted(req);
+    // apparently, just because fuse/the kernel think a request might
+    // have been interrupted, that doesn't mean we should stop
+    // processing it.
+    return false;
   }
   static fdbfs_request_ctx request_ctx(req_t req) {
     const fuse_ctx *ctx = fuse_req_ctx(req);
