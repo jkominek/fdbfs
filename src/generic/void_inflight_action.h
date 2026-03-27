@@ -77,7 +77,7 @@ public:
   }
 
   static DirentCollector
-  make_dirent_collector(req_t, off_t, const DirentCollectorSpec &spec) {
+  make_dirent_collector(req_t, const DirentCollectorSpec &spec) {
     return DirentCollector(spec);
   }
 

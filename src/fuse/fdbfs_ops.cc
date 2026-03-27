@@ -135,11 +135,27 @@ extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
 // ==== readdir ====
 extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
                               off_t off, struct fuse_file_info *fi) {
+  auto dh = extract_fuse_handle<DirectoryHandle>(fi);
+  if (!dh || dh->is_closed()) {
+    fuse_reply_err(req, EBADF);
+    return;
+  }
+
+  std::string_view start_name;
+  if (off != 0) {
+    auto start_name_opt = dh->cookie_to_filename(static_cast<uint64_t>(off));
+    if (!start_name_opt.has_value()) {
+      fuse_reply_err(req, EINVAL);
+      return;
+    }
+    start_name = *start_name_opt;
+  }
+
   // let's not read more than 64k in a go, even if we think we can.
   auto collector_spec = FuseInflightAction::make_dirent_collector_spec(
-      std::min(size, static_cast<size_t>(1 << 16)));
+      std::min(size, static_cast<size_t>(1 << 16)), false, dh);
   auto *inflight = new Inflight_readdir<FuseInflightAction>(
-      req, to_fdbfs_ino(ino), collector_spec, off, make_transaction());
+      req, to_fdbfs_ino(ino), collector_spec, start_name, make_transaction());
 
   inflight->start();
 }
@@ -147,11 +163,26 @@ extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
 // ==== readdirplus ====
 extern "C" void fdbfs_readdirplus(fuse_req_t req, fuse_ino_t ino, size_t size,
                                   off_t off, struct fuse_file_info *fi) {
-  (void)fi;
+  auto dh = extract_fuse_handle<DirectoryHandle>(fi);
+  if (!dh || dh->is_closed()) {
+    fuse_reply_err(req, EBADF);
+    return;
+  }
+
+  std::string_view start_name;
+  if (off != 0) {
+    auto start_name_opt = dh->cookie_to_filename(static_cast<uint64_t>(off));
+    if (!start_name_opt.has_value()) {
+      fuse_reply_err(req, EINVAL);
+      return;
+    }
+    start_name = *start_name_opt;
+  }
+
   auto collector_spec =
-      FuseInflightAction::make_dirent_collector_spec(size, true);
+      FuseInflightAction::make_dirent_collector_spec(size, true, dh);
   auto *inflight = new Inflight_readdirplus<FuseInflightAction>(
-      req, to_fdbfs_ino(ino), collector_spec, off, make_transaction());
+      req, to_fdbfs_ino(ino), collector_spec, start_name, make_transaction());
   inflight->start();
 }
 

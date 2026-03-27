@@ -1,8 +1,11 @@
 #ifndef __FUSE_INFLIGHT_ACTION_H__
 #define __FUSE_INFLIGHT_ACTION_H__
 
+#include <cassert>
+#include <memory>
 #include <string>
 
+#include "directoryhandle.h"
 #include "generic/inflight.h"
 #include "util_fuse.h"
 
@@ -43,13 +46,15 @@ public:
   struct DirentCollectorSpec {
     size_t max_bytes;
     bool plus_mode;
+    std::shared_ptr<DirectoryHandle> directory_handle;
   };
 
   class DirentCollector {
   public:
-    DirentCollector(req_t req, off_t start_off, const DirentCollectorSpec &spec)
-        : req(req), plus_mode(spec.plus_mode), next_offset(start_off + 1),
-          buf(spec.max_bytes) {}
+    DirentCollector(req_t req, const DirentCollectorSpec &spec)
+        : req(req), spec(spec), buf(spec.max_bytes) {
+      assert(this->spec.directory_handle != nullptr);
+    }
 
     [[nodiscard]] size_t estimate_remaining_entries() const {
       const size_t remaining = buf.size() - consumed;
@@ -57,7 +62,7 @@ public:
         return 0;
       }
 
-      if (plus_mode) {
+      if (spec.plus_mode) {
         struct fuse_entry_param dummy{};
         size_t estimated_entry_size =
             fuse_add_direntry_plus(req, nullptr, 0, "12345678", &dummy, 1);
@@ -85,8 +90,10 @@ public:
       }
 
       const std::string name_copy(name);
+      const off_t entry_offset =
+          static_cast<off_t>(spec.directory_handle->filename_to_cookie(name));
 
-      if (plus_mode) {
+      if (spec.plus_mode) {
         if (inode == nullptr) {
           return std::unexpected(DirentAddError::InvalidInput);
         }
@@ -99,12 +106,11 @@ public:
 
         const size_t used = fuse_add_direntry_plus(
             req, reinterpret_cast<char *>(buf.data() + consumed), remaining,
-            name_copy.c_str(), &e, next_offset);
+            name_copy.c_str(), &e, entry_offset);
         if (used > remaining) {
           return std::unexpected(DirentAddError::NoSpace);
         }
         consumed += used;
-        next_offset += 1;
         return {};
       }
 
@@ -114,12 +120,11 @@ public:
 
       const size_t used = fuse_add_direntry(
           req, reinterpret_cast<char *>(buf.data() + consumed), remaining,
-          name_copy.c_str(), &attr, next_offset);
+          name_copy.c_str(), &attr, entry_offset);
       if (used > remaining) {
         return std::unexpected(DirentAddError::NoSpace);
       }
       consumed += used;
-      next_offset += 1;
       return {};
     }
 
@@ -130,24 +135,25 @@ public:
 
   private:
     req_t req;
-    bool plus_mode;
-    off_t next_offset;
+    DirentCollectorSpec spec;
     std::vector<uint8_t> buf;
     size_t consumed = 0;
   };
 
   static DirentCollectorSpec
-  make_dirent_collector_spec(size_t max_bytes, bool plus_mode = false) {
+  make_dirent_collector_spec(
+      size_t max_bytes, bool plus_mode = false,
+      std::shared_ptr<DirectoryHandle> directory_handle = nullptr) {
     return DirentCollectorSpec{
         .max_bytes = max_bytes,
         .plus_mode = plus_mode,
+        .directory_handle = std::move(directory_handle),
     };
   }
 
   static DirentCollector
-  make_dirent_collector(req_t req, off_t start_off,
-                        const DirentCollectorSpec &spec) {
-    return DirentCollector(req, start_off, spec);
+  make_dirent_collector(req_t req, const DirentCollectorSpec &spec) {
+    return DirentCollector(req, spec);
   }
 
   static bool trace_errors_enabled() {

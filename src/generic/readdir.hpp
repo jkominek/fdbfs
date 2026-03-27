@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <string_view>
 
 #include "inflight.h"
 #include "util.h"
@@ -41,15 +42,14 @@ public:
   using Base::transaction;
   using Base::wait_on_future;
 
-  Inflight_readdir(req_t, fdbfs_ino_t,
-                   typename ActionT::DirentCollectorSpec, off_t,
-                   unique_transaction);
+  Inflight_readdir(req_t, fdbfs_ino_t, typename ActionT::DirentCollectorSpec,
+                   std::string_view, unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
   const fdbfs_ino_t ino;
   const typename ActionT::DirentCollectorSpec collector_spec;
-  const off_t off;
+  const std::string start_name;
 
   ActionT callback();
 };
@@ -57,10 +57,10 @@ private:
 template <typename ActionT>
 Inflight_readdir<ActionT>::Inflight_readdir(
     req_t req, fdbfs_ino_t ino,
-    typename ActionT::DirentCollectorSpec collector_spec, off_t off,
-    unique_transaction transaction)
+    typename ActionT::DirentCollectorSpec collector_spec,
+    std::string_view start_name, unique_transaction transaction)
     : Base(req, std::move(transaction)), ino(ino),
-      collector_spec(std::move(collector_spec)), off(off) {}
+      collector_spec(std::move(collector_spec)), start_name(start_name) {}
 
 template <typename ActionT> ActionT Inflight_readdir<ActionT>::callback() {
   const FDBKeyValue *kvs;
@@ -73,7 +73,7 @@ template <typename ActionT> ActionT Inflight_readdir<ActionT>::callback() {
   if (err)
     return ActionT::FDBError(err);
 
-  auto collector = ActionT::make_dirent_collector(req, off, collector_spec);
+  auto collector = ActionT::make_dirent_collector(req, collector_spec);
 
   for (int i = 0; i < kvcount; i++) {
     FDBKeyValue kv = kvs[i];
@@ -108,18 +108,25 @@ template <typename ActionT> ActionT Inflight_readdir<ActionT>::callback() {
 
 template <typename ActionT>
 InflightCallbackT<ActionT> Inflight_readdir<ActionT>::issue() {
-  const auto [start, stop] = pack_dentry_subspace_range(ino);
+  auto [start_key, stop_key] = pack_dentry_subspace_range(ino);
+  int begin_or_equal = 0;
+  int begin_offset = 1;
+  if (!start_name.empty()) {
+    start_key = pack_dentry_key(ino, start_name);
+    begin_or_equal = 1;
+    begin_offset = 1;
+  }
 
-  auto collector = ActionT::make_dirent_collector(req, off, collector_spec);
+  auto collector = ActionT::make_dirent_collector(req, collector_spec);
   const size_t estimated_count = collector.estimate_remaining_entries();
   int limit = static_cast<int>(estimated_count);
   limit = std::max<size_t>(8, limit);
 
-  // well this is tricky. how large a range should we request?
   wait_on_future(
-      fdb_transaction_get_range(transaction.get(), start.data(), start.size(),
-                                0, 1 + off, stop.data(), stop.size(), 0, 1,
-                                limit, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+      fdb_transaction_get_range(transaction.get(), start_key.data(),
+                                start_key.size(), begin_or_equal, begin_offset,
+                                stop_key.data(), stop_key.size(), 0, 1, limit,
+                                0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
       a().range_fetch);
   return std::bind(&Inflight_readdir<ActionT>::callback, this);
 }

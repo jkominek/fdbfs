@@ -3,7 +3,9 @@
 #include <expected>
 #include <future>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "generic/util.h"
 #include "test_inflight_action.h"
@@ -103,3 +105,8 @@ std::expected<TestINode, int> get_test_inode(fdbfs_ino_t ino);
 std::expected<TestINode, int> lookup_test_inode(fdbfs_ino_t parent,
                                                 std::string_view name);
 std::expected<TestINode, int> resolve_test_path(std::string_view path);
+
+std::vector<std::string> readdir_names_once(fdbfs_ino_t ino,
+                                            std::string_view start_name = {});
+std::vector<std::string>
+readdirplus_names_once(fdbfs_ino_t ino, std::string_view start_name = {});

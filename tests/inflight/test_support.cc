@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -22,6 +23,8 @@
 #include "generic/liveness.h"
 #include "generic/lookup.hpp"
 #include "generic/mknod.hpp"
+#include "generic/readdir.hpp"
+#include "generic/readdirplus.hpp"
 #include "generic/rename.hpp"
 #include "generic/util_locks.h"
 
@@ -77,6 +80,36 @@ wait_for_test_result(std::future<TestResult> &future) {
     return std::unexpected(result.error());
   }
   return *std::move(result);
+}
+
+std::string describe_test_reply(const TestReply &reply) {
+  return std::visit(
+      [](const auto &value) -> std::string {
+        using T = std::decay_t<decltype(value)>;
+        std::ostringstream os;
+        if constexpr (std::is_same_v<T, TestReplyStatfs>) {
+          os << "TestReplyStatfs";
+        } else if constexpr (std::is_same_v<T, TestReplyINode>) {
+          os << "TestReplyINode(ino=" << value.inode.inode() << ")";
+        } else if constexpr (std::is_same_v<T, TestReplyBuf>) {
+          os << "TestReplyBuf(size=" << value.bytes.size() << ")";
+        } else if constexpr (std::is_same_v<T, TestReplyReadlink>) {
+          os << "TestReplyReadlink(target=" << value.target << ")";
+        } else if constexpr (std::is_same_v<T, TestReplyWrite>) {
+          os << "TestReplyWrite(size=" << value.size << ")";
+        } else if constexpr (std::is_same_v<T, TestReplyXattrSize>) {
+          os << "TestReplyXattrSize(size=" << value.size << ")";
+        } else if constexpr (std::is_same_v<T, TestReplyDirents>) {
+          os << "TestReplyDirents(plus_mode=" << value.plus_mode
+             << ", entries=" << value.entries.size() << ")";
+        } else if constexpr (std::is_same_v<T, TestReplyNone>) {
+          os << "TestReplyNone";
+        } else {
+          os << "UnknownTestReply";
+        }
+        return os.str();
+      },
+      reply);
 }
 
 void forget_inode_best_effort(fdbfs_ino_t ino) noexcept {
@@ -408,4 +441,45 @@ std::expected<TestINode, int> resolve_test_path(std::string_view path) {
   }
 
   return current;
+}
+
+std::vector<std::string> readdir_names_once(fdbfs_ino_t ino,
+                                            std::string_view start_name) {
+  auto spec = TestInflightAction::make_dirent_collector_spec(4096, false);
+  auto op = start_test_op<Inflight_readdir<TestInflightAction>>(
+      ino, spec, start_name, inflight_test_services().make_transaction());
+  TestResult result = wait_test_result(op);
+  REQUIRE(result.has_value());
+  INFO("actual reply=" << describe_test_reply(*result));
+  REQUIRE(std::holds_alternative<TestReplyDirents>(*result));
+  const auto &reply = std::get<TestReplyDirents>(*result);
+  REQUIRE(!reply.plus_mode);
+
+  std::vector<std::string> names;
+  names.reserve(reply.entries.size());
+  for (const auto &entry : reply.entries) {
+    names.push_back(entry.name);
+  }
+  return names;
+}
+
+std::vector<std::string> readdirplus_names_once(fdbfs_ino_t ino,
+                                                std::string_view start_name) {
+  auto spec = TestInflightAction::make_dirent_collector_spec(4096, true);
+  auto op = start_test_op<Inflight_readdirplus<TestInflightAction>>(
+      ino, spec, start_name, inflight_test_services().make_transaction());
+  TestResult result = wait_test_result(op);
+  REQUIRE(result.has_value());
+  INFO("actual reply=" << describe_test_reply(*result));
+  REQUIRE(std::holds_alternative<TestReplyDirents>(*result));
+  const auto &reply = std::get<TestReplyDirents>(*result);
+  REQUIRE(reply.plus_mode);
+
+  std::vector<std::string> names;
+  names.reserve(reply.entries.size());
+  for (const auto &entry : reply.entries) {
+    REQUIRE(entry.inode.has_value());
+    names.push_back(entry.name);
+  }
+  return names;
 }

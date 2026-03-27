@@ -5,11 +5,34 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "test_posix_helpers.h"
 #include "test_support.h"
+
+namespace {
+
+std::optional<std::string> readdir_next_non_dot(DIR *d) {
+  while (true) {
+    errno = 0;
+    struct dirent *ent = ::readdir(d);
+    if (ent == nullptr) {
+      INFO("readdir errno=" << errno_with_message(errno));
+      REQUIRE(errno == 0);
+      return std::nullopt;
+    }
+    if ((std::string_view(ent->d_name) == ".") ||
+        (std::string_view(ent->d_name) == "..")) {
+      continue;
+    }
+    return std::string(ent->d_name);
+  }
+}
+
+} // namespace
 
 TEST_CASE("readdir returns created entries and handles seekdir/telldir",
           "[integration][readdir][mkdir][mknod]") {
@@ -99,5 +122,60 @@ TEST_CASE("readdir handles directories with many entries",
     for (int i = 0; i < 48; i++) {
       require_contains(names, "entry_" + std::to_string(i));
     }
+  });
+}
+
+TEST_CASE("readdir restart positions survive deleting earlier entries",
+          "[integration][readdir][seekdir][telldir][unlink]") {
+  scenario([&](FdbfsEnv &env) {
+    const fs::path dir = env.p("resume_after_delete");
+    FDBFS_REQUIRE_OK(::mkdir(dir.c_str(), 0755));
+
+    for (std::string_view name : {"a", "b", "c", "d", "e", "f"}) {
+      int fd = ::open((dir / name).c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+      FDBFS_REQUIRE_NONNEG(fd);
+      FDBFS_REQUIRE_OK(::close(fd));
+    }
+
+    DIR *d = ::opendir(dir.c_str());
+    REQUIRE(d != nullptr);
+
+    std::vector<std::string> observed;
+    std::vector<long> checkpoints;
+    while (auto name = readdir_next_non_dot(d)) {
+      observed.push_back(*name);
+      checkpoints.push_back(::telldir(d));
+    }
+
+    REQUIRE(observed.size() == 6);
+    REQUIRE(checkpoints.size() == observed.size());
+
+    auto check_resume_after_deletes = [&](size_t expected_index) {
+      INFO("expected_index=" << expected_index);
+      INFO("expected_name=" << observed[expected_index]);
+
+      for (size_t i = 0; i < expected_index; i++) {
+        INFO("deleting_behind=" << observed[i]);
+        FDBFS_REQUIRE_OK(::unlink((dir / observed[i]).c_str()));
+      }
+
+      ::seekdir(d, checkpoints[expected_index - 1]);
+
+      std::vector<std::string> resumed;
+      while (auto name = readdir_next_non_dot(d)) {
+        resumed.push_back(*name);
+      }
+
+      std::vector<std::string> expected_suffix(observed.begin() + expected_index,
+                                               observed.end());
+      INFO("resumed_size=" << resumed.size());
+      REQUIRE(resumed == expected_suffix);
+    };
+
+    SECTION("resume near beginning") { check_resume_after_deletes(1); }
+    SECTION("resume from middle") { check_resume_after_deletes(3); }
+    SECTION("resume at final entry") { check_resume_after_deletes(5); }
+
+    FDBFS_REQUIRE_OK(::closedir(d));
   });
 }
