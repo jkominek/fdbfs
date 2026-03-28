@@ -85,6 +85,25 @@ void read_single_byte(const fs::path &p) {
   FDBFS_REQUIRE_OK(::close(fd));
 }
 
+std::set<std::string> readdir_directory_once(const fs::path &p) {
+  DIR *d = ::opendir(p.c_str());
+  REQUIRE(d != nullptr);
+
+  std::set<std::string> names;
+  while (true) {
+    errno = 0;
+    struct dirent *ent = ::readdir(d);
+    if (!ent) {
+      REQUIRE(errno == 0);
+      break;
+    }
+    names.emplace(ent->d_name);
+  }
+
+  FDBFS_REQUIRE_OK(::closedir(d));
+  return names;
+}
+
 void write_single_byte(const fs::path &p, off_t off, uint8_t value) {
   int fd = ::open(p.c_str(), O_WRONLY);
   FDBFS_REQUIRE_NONNEG(fd);
@@ -248,6 +267,32 @@ void run_timestamp_behavior_matrix(FdbfsEnv &env) {
                               .atime_changed = false,
                               .mtime_changed = true,
                               .ctime_changed = true,
+                          });
+  }
+
+  SECTION("directory atime via readdir") {
+    const fs::path dir = env.p("scan-dir");
+    const fs::path child = dir / "entry";
+
+    FDBFS_REQUIRE_OK(::mkdir(dir.c_str(), 0755));
+    int fd = ::open(child.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    FDBFS_REQUIRE_NONNEG(fd);
+    FDBFS_REQUIRE_OK(::close(fd));
+
+    struct stat before = require_stat_snapshot(dir);
+
+    sleep_for_timestamp_tick();
+    const auto names = readdir_directory_once(dir);
+    require_contains(names, "entry");
+    struct stat after_readdir_immediate = require_stat_snapshot(dir);
+    sleep_for_attr_cache_expiry();
+    struct stat after_readdir = require_stat_snapshot(dir);
+    check_time_transition("readdir", before, after_readdir_immediate,
+                          after_readdir,
+                          TimestampExpectations{
+                              .atime_changed = true,
+                              .mtime_changed = false,
+                              .ctime_changed = false,
                           });
   }
 }

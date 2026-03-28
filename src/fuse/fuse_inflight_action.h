@@ -129,6 +129,7 @@ public:
     }
 
     [[nodiscard]] Self finish() && {
+      spec.directory_handle->read_complete();
       buf.resize(consumed);
       return Self::Buf(std::move(buf));
     }

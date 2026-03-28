@@ -4,7 +4,9 @@
 #define FUSE_USE_VERSION 35
 #include <fuse_lowlevel.h>
 
+#include <atomic>
 #include <cstdint>
+#include <ctime>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -25,16 +27,27 @@ public:
   void close();
   [[nodiscard]] bool is_closed() const;
   [[nodiscard]] fuse_ino_t inode() const;
+  void read_complete();
   [[nodiscard]] uint64_t filename_to_cookie(std::string_view name);
   [[nodiscard]] std::optional<std::string_view>
   cookie_to_filename(uint64_t cookie) const;
 
 private:
-  fuse_ino_t ino_;
-  bool closed_ = false;
-  mutable std::mutex cookie_mutex_;
-  std::vector<std::string> cookie_filenames_;
-  std::unordered_map<std::string, uint64_t> filename_cookies_;
+  // Requires lk to be held on state_mutex_ and releases it before returning.
+  void launch_atime_update_locked(const struct timespec &target,
+                                  const struct timespec &attempt_time,
+                                  std::unique_lock<std::mutex> &lk);
+
+  fuse_ino_t ino;
+  bool closed = false;
+  mutable std::mutex cookie_mutex;
+  mutable std::mutex state_mutex;
+  std::vector<std::string> cookie_filenames;
+  std::unordered_map<std::string, uint64_t> filename_cookies;
+  std::optional<struct timespec> latest_read;
+  std::optional<struct timespec> first_read;
+  std::optional<struct timespec> last_update_attempt;
+  std::atomic<size_t> inflight_updates{0};
 };
 
 #endif
