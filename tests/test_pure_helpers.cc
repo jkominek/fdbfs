@@ -109,6 +109,19 @@ std::string bytes_to_hex(const std::vector<uint8_t> &v) {
 
 } // namespace
 
+TEST_CASE("classify_dentry_name handles dot-like names",
+          "[pure][helpers][dentry]") {
+  CHECK(classify_dentry_name(".") == DentryNameKind::Self);
+  CHECK(classify_dentry_name("..") == DentryNameKind::Parent);
+
+  CHECK(classify_dentry_name("foo") == DentryNameKind::Normal);
+  CHECK(classify_dentry_name(".foo") == DentryNameKind::Normal);
+  CHECK(classify_dentry_name("..foo") == DentryNameKind::Normal);
+  CHECK(classify_dentry_name("foo.") == DentryNameKind::Normal);
+  CHECK(classify_dentry_name("foo..") == DentryNameKind::Normal);
+  CHECK(classify_dentry_name("...") == DentryNameKind::Normal);
+}
+
 TEST_CASE("prefix_range_end ordering and tightness", "[pure][helpers][range]") {
   const std::vector<std::vector<uint8_t>> direct_prefixes = {
       {0x00},

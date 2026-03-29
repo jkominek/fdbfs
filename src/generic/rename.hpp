@@ -571,6 +571,16 @@ ActionT Inflight_rename<ActionT>::update_inode_parents() {
 
 template <typename ActionT>
 InflightCallbackT<ActionT> Inflight_rename<ActionT>::issue() {
+  const auto oldname_kind = classify_dentry_name(oldname);
+  if (oldname_kind != DentryNameKind::Normal) {
+    return []() { return ActionT::Abort(EBUSY); };
+  }
+
+  const auto newname_kind = classify_dentry_name(newname);
+  if (newname_kind != DentryNameKind::Normal) {
+    return []() { return ActionT::Abort(EBUSY); };
+  }
+
   {
     const auto key = pack_inode_key(oldparent);
     wait_on_future(

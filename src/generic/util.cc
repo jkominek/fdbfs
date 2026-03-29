@@ -621,6 +621,16 @@ bool filename_length_check(const char *name, size_t maxlength) {
   return strnlen(name, maxlength + 1) > maxlength;
 }
 
+DentryNameKind classify_dentry_name(std::string_view name) {
+  if (name == ".") {
+    return DentryNameKind::Self;
+  }
+  if (name == "..") {
+    return DentryNameKind::Parent;
+  }
+  return DentryNameKind::Normal;
+}
+
 void update_atime(INodeRecord *inode, const struct timespec *tv) {
   Timespec *atime = inode->mutable_atime();
   atime->set_sec(tv->tv_sec);

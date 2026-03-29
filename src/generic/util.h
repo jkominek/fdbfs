@@ -33,6 +33,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -167,6 +168,15 @@ pack_local_oplog_span_range(uint64_t start_op_id, uint64_t stop_op_id);
 
 [[nodiscard]] extern bool
 filename_length_check(const char *, size_t maxlength = MAXFILENAMELEN);
+
+enum class DentryNameKind {
+  Normal,
+  Self,
+  Parent,
+};
+
+[[nodiscard]] extern DentryNameKind
+classify_dentry_name(std::string_view name);
 
 extern int compare_timespec_value(const struct timespec &a,
                                   const struct timespec &b);

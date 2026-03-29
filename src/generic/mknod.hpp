@@ -220,6 +220,11 @@ ActionT Inflight_mknod<ActionT, INodeHandlerT>::oplog_recovery(
 
 template <typename ActionT, typename INodeHandlerT>
 InflightCallbackT<ActionT> Inflight_mknod<ActionT, INodeHandlerT>::issue() {
+  const auto name_kind = classify_dentry_name(name);
+  if (name_kind != DentryNameKind::Normal) {
+    return []() { return ActionT::Abort(EEXIST); };
+  }
+
   a().ino = 0x47d8d31b9848016f;
   do {
     if (getrandom(reinterpret_cast<void *>(&a().ino), sizeof(a().ino),

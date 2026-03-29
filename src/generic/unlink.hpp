@@ -79,7 +79,7 @@ private:
   // provided name and length
   const std::string name;
   // computed key of the dirent.
-  const std::vector<uint8_t> dirent_key;
+  std::vector<uint8_t> dirent_key;
   // how we were invoked, rmdir or unlink
   const Op op;
 };
@@ -89,7 +89,7 @@ Inflight_unlink_rmdir<ActionT>::Inflight_unlink_rmdir(
     req_t req, fdbfs_ino_t parent, std::string name, Op op,
     unique_transaction transaction)
     : Base(req, std::move(transaction)), parent(parent), name(std::move(name)),
-      dirent_key(pack_dentry_key(parent, this->name)), op(op) {
+      op(op) {
   track_inode_for_fsync(parent);
 }
 
@@ -122,9 +122,8 @@ ActionT Inflight_unlink_rmdir<ActionT>::rmdir_inode_dirlist_check() {
 
   // TODO check the metadata for permission to erase
 
-  const auto parsed =
-      parse_unlink_target_inode(a().inode_lookup.get(), a().inode_use_fetch.get(),
-                                a().ino);
+  const auto parsed = parse_unlink_target_inode(
+      a().inode_lookup.get(), a().inode_use_fetch.get(), a().ino);
   if (!parsed.has_value()) {
     if (parsed.error().err != EIO) {
       return ActionT::FDBError(parsed.error().err);
@@ -160,9 +159,8 @@ template <typename ActionT>
 ActionT Inflight_unlink_rmdir<ActionT>::inode_check() {
   // TODO check the metadata for permission to erase
 
-  const auto parsed =
-      parse_unlink_target_inode(a().inode_lookup.get(), a().inode_use_fetch.get(),
-                                a().ino);
+  const auto parsed = parse_unlink_target_inode(
+      a().inode_lookup.get(), a().inode_use_fetch.get(), a().ino);
   if (!parsed.has_value()) {
     if (parsed.error().err != EIO) {
       return ActionT::FDBError(parsed.error().err);
@@ -268,14 +266,13 @@ ActionT Inflight_unlink_rmdir<ActionT>::postlookup() {
       {
         const auto [start, stop] = pack_inode_use_subspace_range(a().ino);
 
-        wait_on_future(fdb_transaction_get_range(
-                           transaction.get(),
-                           FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start.data(),
-                                                             start.size()),
-                           FDB_KEYSEL_FIRST_GREATER_THAN(stop.data(),
-                                                         stop.size()),
-                           1, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-                       a().inode_use_fetch);
+        wait_on_future(
+            fdb_transaction_get_range(
+                transaction.get(),
+                FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start.data(), start.size()),
+                FDB_KEYSEL_FIRST_GREATER_THAN(stop.data(), stop.size()), 1, 0,
+                FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+            a().inode_use_fetch);
       }
 
       // we want to scan for any directory entries inside of this
@@ -318,14 +315,13 @@ ActionT Inflight_unlink_rmdir<ActionT>::postlookup() {
         const auto [start, stop] = pack_inode_use_subspace_range(a().ino);
 
         // we'll use this to check if there are any use records at all.
-        wait_on_future(fdb_transaction_get_range(
-                           transaction.get(),
-                           FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start.data(),
-                                                             start.size()),
-                           FDB_KEYSEL_FIRST_GREATER_THAN(stop.data(),
-                                                         stop.size()),
-                           1, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-                       a().inode_use_fetch);
+        wait_on_future(
+            fdb_transaction_get_range(
+                transaction.get(),
+                FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start.data(), start.size()),
+                FDB_KEYSEL_FIRST_GREATER_THAN(stop.data(), stop.size()), 1, 0,
+                FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+            a().inode_use_fetch);
       }
       return ActionT::BeginWait(
           std::bind(&Inflight_unlink_rmdir<ActionT>::inode_check, this));
@@ -338,6 +334,20 @@ ActionT Inflight_unlink_rmdir<ActionT>::postlookup() {
 
 template <typename ActionT>
 InflightCallbackT<ActionT> Inflight_unlink_rmdir<ActionT>::issue() {
+  const auto name_kind = classify_dentry_name(name);
+  if (name_kind != DentryNameKind::Normal) {
+    if (op == Op::Unlink) {
+      return []() { return ActionT::Abort(EISDIR); };
+    } else if (name_kind == DentryNameKind::Self) {
+      return []() { return ActionT::Abort(EINVAL); };
+    } else if (name_kind == DentryNameKind::Parent) {
+      return []() { return ActionT::Abort(ENOTEMPTY); };
+    }
+    std::unreachable();
+  }
+
+  dirent_key = pack_dentry_key(parent, name);
+
   // fetch parent inode so we can check permissions
   const auto key = pack_inode_key(parent);
   wait_on_future(

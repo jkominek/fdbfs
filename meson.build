@@ -107,6 +107,7 @@ test(
 )
 
 inflight_test_sources = files(
+  'tests/inflight/test_dentry_names.cc',
   'tests/inflight/test_getattr.cc',
   'tests/inflight/test_getinode.cc',
   'tests/inflight/test_readdir.cc',

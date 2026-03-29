@@ -138,8 +138,8 @@ ActionT Inflight_link<ActionT, INodeHandlerT>::check() {
       return ActionT::Abort(ENOTDIR);
     }
     // update times on destination dir
-    if (auto it = update_directory_times(
-            transaction.get(), dirinode, DirectoryUpdateKind::ContentsDeferred);
+    if (auto it = update_directory_times(transaction.get(), dirinode,
+                                         DirectoryUpdateKind::ContentsDeferred);
         !it.has_value()) {
       return ActionT::FDBError(it.error());
     }
@@ -189,6 +189,11 @@ ActionT Inflight_link<ActionT, INodeHandlerT>::check() {
 
 template <typename ActionT, typename INodeHandlerT>
 InflightCallbackT<ActionT> Inflight_link<ActionT, INodeHandlerT>::issue() {
+  const auto newname_kind = classify_dentry_name(newname);
+  if (newname_kind != DentryNameKind::Normal) {
+    return []() { return ActionT::Abort(EEXIST); };
+  }
+
   // check that the file is a file
   {
     const auto key = pack_inode_key(ino);

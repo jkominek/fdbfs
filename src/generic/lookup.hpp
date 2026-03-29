@@ -36,6 +36,7 @@ template <typename ActionT>
 struct AttemptState_lookup : public AttemptStateT<ActionT> {
   fdbfs_ino_t target = 0;
   unique_future dirent_fetch;
+  unique_future intermediate_inode_fetch;
   unique_future inode_fetch;
 };
 
@@ -62,6 +63,7 @@ private:
 
   // issue looks up the dirent and then...
   ActionT lookup_inode();
+  ActionT process_intermediate_inode();
   ActionT process_inode();
 };
 
@@ -110,6 +112,47 @@ ActionT Inflight_lookup<ActionT, INodeHandlerT>::process_inode() {
 }
 
 template <typename ActionT, typename INodeHandlerT>
+ActionT Inflight_lookup<ActionT, INodeHandlerT>::process_intermediate_inode() {
+  // we've been asked to lookup ".." so to get its inode record, we first
+  // have to get the inode record of the directory that was provided to us
+  // as "ino". that's what is now in intermediate_inode_fetch
+  fdb_bool_t present = 0;
+  const uint8_t *val;
+  int vallen;
+  fdb_error_t err;
+
+  err = fdb_future_get_value(a().intermediate_inode_fetch.get(), &present, &val,
+                             &vallen);
+  if (err)
+    return ActionT::FDBError(err);
+
+  if (present) {
+    INodeRecord inode;
+    inode.ParseFromArray(val, vallen);
+    if (!inode.has_parentinode()) {
+      return ActionT::Abort(EIO, "directory lacks parent inode");
+    }
+    a().target = inode.parentinode();
+
+    const auto [start_key, stop_key] = pack_inode_and_fields_range(a().target);
+    wait_on_future(
+        fdb_transaction_get_range(
+            transaction.get(),
+            FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(),
+                                              start_key.size()),
+            FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop_key.data(), stop_key.size()),
+            4, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+        a().inode_fetch);
+    return ActionT::BeginWait(std::bind(
+        &Inflight_lookup<ActionT, INodeHandlerT>::process_inode, this));
+  } else {
+    // ...this should be impossible; our parent directory
+    // just disappeared on us.
+    return ActionT::Abort(ENOENT);
+  }
+}
+
+template <typename ActionT, typename INodeHandlerT>
 ActionT Inflight_lookup<ActionT, INodeHandlerT>::lookup_inode() {
   fdb_bool_t present = 0;
   const uint8_t *val;
@@ -149,11 +192,36 @@ ActionT Inflight_lookup<ActionT, INodeHandlerT>::lookup_inode() {
 
 template <typename ActionT, typename INodeHandlerT>
 InflightCallbackT<ActionT> Inflight_lookup<ActionT, INodeHandlerT>::issue() {
-  const auto key = pack_dentry_key(parent, name);
+  const auto name_kind = classify_dentry_name(name);
+  if (name_kind == DentryNameKind::Normal) {
+    const auto key = pack_dentry_key(parent, name);
 
-  wait_on_future(
-      fdb_transaction_get(transaction.get(), key.data(), key.size(), 1),
-      a().dirent_fetch);
-  return std::bind(&Inflight_lookup<ActionT, INodeHandlerT>::lookup_inode,
-                   this);
+    wait_on_future(
+        fdb_transaction_get(transaction.get(), key.data(), key.size(), 1),
+        a().dirent_fetch);
+    return std::bind(&Inflight_lookup<ActionT, INodeHandlerT>::lookup_inode,
+                     this);
+  } else if (name_kind == DentryNameKind::Self) {
+    a().target = parent;
+    const auto [start_key, stop_key] = pack_inode_and_fields_range(a().target);
+    wait_on_future(
+        fdb_transaction_get_range(
+            transaction.get(),
+            FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start_key.data(),
+                                              start_key.size()),
+            FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(stop_key.data(), stop_key.size()),
+            4, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+        a().inode_fetch);
+    return std::bind(&Inflight_lookup<ActionT, INodeHandlerT>::process_inode,
+                     this);
+  } else if (name_kind == DentryNameKind::Parent) {
+    const auto key = pack_inode_key(parent);
+    wait_on_future(
+        fdb_transaction_get(transaction.get(), key.data(), key.size(), 1),
+        a().intermediate_inode_fetch);
+    return std::bind(
+        &Inflight_lookup<ActionT, INodeHandlerT>::process_intermediate_inode,
+        this);
+  }
+  std::unreachable();
 }
