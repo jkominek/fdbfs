@@ -35,7 +35,8 @@ struct AttemptState_rename : public AttemptStateT<ActionT> {
   unique_future destination_lookup;
   DirectoryEntry destination_dirent;
   unique_future directory_listing_fetch;
-  unique_future inode_metadata_fetch;
+  unique_future destination_inode_lookup;
+  unique_future destination_inode_use_fetch;
 };
 
 template <typename ActionT>
@@ -127,8 +128,9 @@ template <typename ActionT> ActionT Inflight_rename<ActionT>::complicated() {
     }
   }
 
-  const auto parsed = parse_unlink_target_inode(a().inode_metadata_fetch.get(),
-                                                a().destination_dirent.inode());
+  const auto parsed = parse_unlink_target_inode(
+      a().destination_inode_lookup.get(), a().destination_inode_use_fetch.get(),
+      a().destination_dirent.inode());
   if (!parsed.has_value()) {
     if (parsed.error().err != EIO) {
       return ActionT::FDBError(parsed.error().err);
@@ -422,22 +424,28 @@ template <typename ActionT> ActionT Inflight_rename<ActionT>::check() {
                      a().directory_listing_fetch);
     }
 
-    /**
-     * Regardless of what the destination is, we need to
-     * fetch its inode and use records.
-     */
-    const auto [key_start, key_stop] =
-        pack_inode_metadata_and_use_range(a().destination_dirent.inode());
+    // Regardless of what the destination is, we need to
+    // fetch its inode and use records.
+    {
+      const auto key = pack_inode_key(a().destination_dirent.inode());
+      wait_on_future(
+          fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
+          a().destination_inode_lookup);
+    }
 
-    wait_on_future(fdb_transaction_get_range(
-                       transaction.get(), key_start.data(), key_start.size(), 0,
-                       1, key_stop.data(), key_stop.size(), 0, 1,
-                       // we don't care how many use
-                       // records there are, we just
-                       // need to know if there are
-                       // 0, or >0. so, limit=2
-                       2, 0, FDB_STREAMING_MODE_EXACT, 0, 0, 0),
-                   a().inode_metadata_fetch);
+    {
+      const auto [key_start, key_stop] =
+          pack_inode_use_subspace_range(a().destination_dirent.inode());
+
+      wait_on_future(
+          fdb_transaction_get_range(
+              transaction.get(),
+              FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(key_start.data(),
+                                                key_start.size()),
+              FDB_KEYSEL_FIRST_GREATER_THAN(key_stop.data(), key_stop.size()),
+              1, 0, FDB_STREAMING_MODE_EXACT, 0, 0, 0),
+          a().destination_inode_use_fetch);
+    }
     return ActionT::BeginWait(
         std::bind(&Inflight_rename<ActionT>::complicated, this));
   } else {

@@ -29,7 +29,7 @@ struct UnlinkApplyOptions {
 keyvalue_range_is_empty(FDBFuture *future);
 
 [[nodiscard]] std::expected<UnlinkParsedInode, UnlinkParseError>
-parse_unlink_target_inode(FDBFuture *inode_metadata_future,
+parse_unlink_target_inode(FDBFuture *inode_future, FDBFuture *inode_use_future,
                           fdbfs_ino_t expected_ino);
 
 [[nodiscard]] std::expected<void, int>

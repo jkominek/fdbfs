@@ -109,8 +109,7 @@ pack_pid_key(std::vector<uint8_t>, const std::vector<uint8_t> &suffix = {});
 [[nodiscard]] extern std::vector<uint8_t>
 pack_oplog_key(const std::vector<uint8_t> &owner_pid, uint64_t op_id);
 [[nodiscard]] extern std::vector<uint8_t>
-pack_inode_field_key(fdbfs_ino_t,
-                     const std::vector<uint8_t> &suffix = {});
+pack_inode_field_key(fdbfs_ino_t, const std::vector<uint8_t> &suffix = {});
 [[nodiscard]] extern std::vector<uint8_t> pack_inode_use_key(fdbfs_ino_t);
 [[nodiscard]] extern std::vector<uint8_t>
 pack_fileblock_key(fdbfs_ino_t, uint64_t,
@@ -153,7 +152,9 @@ pack_local_oplog_span_range(uint64_t start_op_id, uint64_t stop_op_id);
 [[nodiscard]] extern range_keys pack_inode_subspace_range(fdbfs_ino_t);
 [[nodiscard]] extern range_keys pack_inode_and_fields_range(fdbfs_ino_t);
 [[nodiscard]] extern range_keys pack_inode_use_subspace_range(fdbfs_ino_t);
-[[nodiscard]] extern range_keys pack_inode_metadata_and_use_range(fdbfs_ino_t);
+[[deprecated("This covers the inode, inode fields, and use records which "
+             "probably isn't what you want.")]] [[nodiscard]] extern range_keys
+    pack_inode_metadata_and_use_range(fdbfs_ino_t);
 [[nodiscard]] extern range_keys pack_fileblock_single_range(fdbfs_ino_t,
                                                             uint64_t);
 [[nodiscard]] extern range_keys pack_fileblock_span_range(fdbfs_ino_t, uint64_t,

@@ -38,8 +38,10 @@ struct AttemptState_unlink_rmdir : public AttemptStateT<ActionT> {
   unique_future parent_lookup;
   // for fetching the dirent given parent inode and path name
   unique_future dirent_lookup;
-  // fetches inode metadata except xattrs
-  unique_future inode_metadata_fetch;
+  // fetches the inode record
+  unique_future inode_lookup;
+  // fetches 0-1 use records
+  unique_future inode_use_fetch;
   // fetches 0-1 of the directory entries in a directory
   unique_future directory_listing_fetch;
   // inode of the thing we're removing
@@ -121,7 +123,8 @@ ActionT Inflight_unlink_rmdir<ActionT>::rmdir_inode_dirlist_check() {
   // TODO check the metadata for permission to erase
 
   const auto parsed =
-      parse_unlink_target_inode(a().inode_metadata_fetch.get(), a().ino);
+      parse_unlink_target_inode(a().inode_lookup.get(), a().inode_use_fetch.get(),
+                                a().ino);
   if (!parsed.has_value()) {
     if (parsed.error().err != EIO) {
       return ActionT::FDBError(parsed.error().err);
@@ -158,7 +161,8 @@ ActionT Inflight_unlink_rmdir<ActionT>::inode_check() {
   // TODO check the metadata for permission to erase
 
   const auto parsed =
-      parse_unlink_target_inode(a().inode_metadata_fetch.get(), a().ino);
+      parse_unlink_target_inode(a().inode_lookup.get(), a().inode_use_fetch.get(),
+                                a().ino);
   if (!parsed.has_value()) {
     if (parsed.error().err != EIO) {
       return ActionT::FDBError(parsed.error().err);
@@ -255,13 +259,23 @@ ActionT Inflight_unlink_rmdir<ActionT>::postlookup() {
       // dirents in the directory.
 
       {
-        const auto [start, stop] = pack_inode_metadata_and_use_range(a().ino);
+        const auto key = pack_inode_key(a().ino);
+        wait_on_future(
+            fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
+            a().inode_lookup);
+      }
+
+      {
+        const auto [start, stop] = pack_inode_use_subspace_range(a().ino);
 
         wait_on_future(fdb_transaction_get_range(
-                           transaction.get(), start.data(), start.size(), 0, 1,
-                           stop.data(), stop.size(), 0, 1, 1000, 0,
-                           FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-                       a().inode_metadata_fetch);
+                           transaction.get(),
+                           FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start.data(),
+                                                             start.size()),
+                           FDB_KEYSEL_FIRST_GREATER_THAN(stop.data(),
+                                                         stop.size()),
+                           1, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+                       a().inode_use_fetch);
       }
 
       // we want to scan for any directory entries inside of this
@@ -293,15 +307,26 @@ ActionT Inflight_unlink_rmdir<ActionT>::postlookup() {
       fdb_transaction_clear(transaction.get(), dirent_key.data(),
                             dirent_key.size());
 
-      const auto [start, stop] = pack_inode_metadata_and_use_range(a().ino);
+      {
+        const auto key = pack_inode_key(a().ino);
+        wait_on_future(
+            fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
+            a().inode_lookup);
+      }
 
-      // we'll use this to decrement st_nlink, check if it has reached zero
-      // and if it has, and proceed with the plan.
-      wait_on_future(fdb_transaction_get_range(
-                         transaction.get(), start.data(), start.size(), 0, 1,
-                         stop.data(), stop.size(), 0, 1, 1000, 0,
-                         FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
-                     a().inode_metadata_fetch);
+      {
+        const auto [start, stop] = pack_inode_use_subspace_range(a().ino);
+
+        // we'll use this to check if there are any use records at all.
+        wait_on_future(fdb_transaction_get_range(
+                           transaction.get(),
+                           FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(start.data(),
+                                                             start.size()),
+                           FDB_KEYSEL_FIRST_GREATER_THAN(stop.data(),
+                                                         stop.size()),
+                           1, 0, FDB_STREAMING_MODE_WANT_ALL, 0, 0, 0),
+                       a().inode_use_fetch);
+      }
       return ActionT::BeginWait(
           std::bind(&Inflight_unlink_rmdir<ActionT>::inode_check, this));
     } else {

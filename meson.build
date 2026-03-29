@@ -81,6 +81,7 @@ fsck_exe = executable('fsck.fdbfs', 'src/utils/fsck.fdbfs.cc', generated,
 # -------------------------
 
 catch2_dep = dependency('catch2-with-main', version : '>=3.4.0', required : true)
+test_cpp_args = cc.get_supported_arguments(['-Wno-deprecated-declarations'])
 
 pure_helpers_sources = files(
   'src/generic/util.cc',
@@ -95,6 +96,7 @@ pure_helpers_exe = executable(
   generated,
   dependencies : [catch2_dep] + core_deps,
   include_directories : project_includes,
+  cpp_args : test_cpp_args,
 )
 
 test(
@@ -127,6 +129,7 @@ inflight_test_exe = executable(
   generated,
   dependencies : [catch2_dep] + core_deps,
   include_directories : project_includes,
+  cpp_args : test_cpp_args,
 )
 
 test(
@@ -169,6 +172,7 @@ test_exe = executable(
   test_sources,
   dependencies : [catch2_dep],
   include_directories : project_includes,
+  cpp_args : test_cpp_args,
   # Useful while developing integration tests:
   # cpp_args : cc.get_supported_arguments(['-O0', '-g']),
 )

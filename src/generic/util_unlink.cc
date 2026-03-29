@@ -17,36 +17,26 @@ std::expected<bool, int> keyvalue_range_is_empty(FDBFuture *future) {
 }
 
 std::expected<UnlinkParsedInode, UnlinkParseError>
-parse_unlink_target_inode(FDBFuture *inode_metadata_future,
+parse_unlink_target_inode(FDBFuture *inode_future, FDBFuture *inode_use_future,
                           fdbfs_ino_t expected_ino) {
-  const FDBKeyValue *kvs;
-  int kvcount;
-  fdb_bool_t more;
-  const fdb_error_t err = fdb_future_get_keyvalue_array(inode_metadata_future,
-                                                        &kvs, &kvcount, &more);
+  fdb_bool_t present;
+  const uint8_t *value;
+  int valuelen;
+  fdb_error_t err =
+      fdb_future_get_value(inode_future, &present, &value, &valuelen);
   // step 1 check that there's a KV there
   if (err) {
     return std::unexpected(
-        UnlinkParseError{.err = err, .why = "inode metadata fetch failed"});
+        UnlinkParseError{.err = err, .why = "inode fetch failed"});
   }
-  if (kvcount <= 0) {
+  if (!present) {
     return std::unexpected(
         UnlinkParseError{.err = EIO, .why = "target inode missing"});
   }
 
-  // step 2 check that the key length matches the expectation
-  const auto expected_inode_key = pack_inode_key(expected_ino);
-  const FDBKeyValue inode_kv = kvs[0];
-  if ((inode_kv.key_length != static_cast<int>(expected_inode_key.size())) ||
-      (memcmp(inode_kv.key, expected_inode_key.data(),
-              expected_inode_key.size()) != 0)) {
-    return std::unexpected(
-        UnlinkParseError{.err = EIO, .why = "target inode key mismatch"});
-  }
-
-  // step 3 verify that the inode protobuf is valid
+  // step 2 verify that the inode protobuf is valid
   UnlinkParsedInode parsed;
-  if (!(parsed.inode.ParseFromArray(inode_kv.value, inode_kv.value_length) &&
+  if (!(parsed.inode.ParseFromArray(value, valuelen) &&
         parsed.inode.IsInitialized() && parsed.inode.has_nlinks())) {
     return std::unexpected(
         UnlinkParseError{.err = EIO, .why = "target inode malformed"});
@@ -56,9 +46,17 @@ parse_unlink_target_inode(FDBFuture *inode_metadata_future,
         UnlinkParseError{.err = EIO, .why = "target inode id mismatch"});
   }
 
-  // step 4 check for use records
+  // step 3 check for use records
   parsed.inode_in_use = false;
-  for (int i = 1; i < kvcount; i++) {
+  const FDBKeyValue *kvs;
+  int kvcount;
+  fdb_bool_t more;
+  err = fdb_future_get_keyvalue_array(inode_use_future, &kvs, &kvcount, &more);
+  if (err) {
+    return std::unexpected(
+        UnlinkParseError{.err = err, .why = "inode use fetch failed"});
+  }
+  for (int i = 0; i < kvcount; i++) {
     const FDBKeyValue &kv = kvs[i];
     // not a use key, so it doesn't count
     if ((kv.key_length <= inode_key_length) ||
