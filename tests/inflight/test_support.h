@@ -34,7 +34,7 @@ InflightTestServices &inflight_test_services();
 class TestINode {
 public:
   TestINode() = default;
-  TestINode(fdbfs_ino_t ino, INodeRecord inode, bool tracked);
+  TestINode(INodeRecord inode, bool tracked);
   ~TestINode();
 
   TestINode(const TestINode &) = delete;
@@ -43,12 +43,10 @@ public:
   TestINode &operator=(TestINode &&other) noexcept;
 
   [[nodiscard]] bool valid() const;
-  [[nodiscard]] fdbfs_ino_t ino() const;
   [[nodiscard]] const INodeRecord &inode_record() const;
   void reset() noexcept;
 
 private:
-  fdbfs_ino_t ino_ = 0;
   INodeRecord inode_;
   bool tracked_ = false;
 };

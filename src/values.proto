@@ -131,6 +131,9 @@ message INodeRecord {
   optional Timespec ctime = 202;
   optional Timespec btime = 203;
 
+  // 300... directory block
+  optional fixed64 parentinode = 300;
+
   // 1000... unix weirdness
   optional string symlink = 1000;
 }

@@ -76,7 +76,8 @@ rootdir_inode_value.inode = rootdir_inode
 rootdir_inode_value.size = 0
 rootdir_inode_value.type = msgs.ft_directory
 rootdir_inode_value.nlinks = 2
-rootdir_inode_value.mode = 0o555
+rootdir_inode_value.mode = 0o755
+rootdir_inode_value.parentinode = rootdir_inode
 
 print_set(inode_key(rootdir_inode), rootdir_inode_value.SerializeToString())
 

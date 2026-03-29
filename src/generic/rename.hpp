@@ -35,8 +35,12 @@ struct AttemptState_rename : public AttemptStateT<ActionT> {
   unique_future destination_lookup;
   DirectoryEntry destination_dirent;
   unique_future directory_listing_fetch;
+
+  unique_future origin_inode_lookup;
   unique_future destination_inode_lookup;
   unique_future destination_inode_use_fetch;
+  bool update_origin_parentinode = false;
+  bool update_destination_parentinode = false;
 };
 
 template <typename ActionT>
@@ -69,6 +73,8 @@ private:
 
   ActionT check();
   ActionT complicated();
+  std::expected<void, ActionT> apply_inode_parent_updates();
+  ActionT update_inode_parents();
   ActionT oplog_recovery(const OpLogRecord &) override;
   bool write_success_oplog_result();
 };
@@ -106,9 +112,11 @@ template <typename ActionT> ActionT Inflight_rename<ActionT>::complicated() {
    * complicated case for rename. We're in the case where we
    * have to unlink the destination, and then do our normal
    * work.
-   * TODO should we do the rename work up in the main function
-   * and then just somehow call unlink?
    */
+
+  if (auto it = apply_inode_parent_updates(); !it.has_value()) {
+    return it.error();
+  }
 
   // remove the old dirent
   {
@@ -354,6 +362,33 @@ template <typename ActionT> ActionT Inflight_rename<ActionT>::check() {
     }
   }
 
+  // alright, now we have to answer the question "do we need to update the
+  // parentinode fields of the target(s) of rename?" step one: if the old and
+  // new parent directories are the same, then there's nothing to do.
+  if (oldparent != newparent) {
+    // step two: we only track parentinode on directories, so if the origin
+    // item isn't a directory, then it's clear
+    if (is_directory(a().origin_dirent)) {
+      a().update_origin_parentinode = true;
+      track_inode_for_fsync(a().origin_dirent.inode());
+      const auto key = pack_inode_key(a().origin_dirent.inode());
+      wait_on_future(
+          fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
+          a().origin_inode_lookup);
+    }
+    // step three: in the unlikely event we're doing an EXCHANGE and the
+    // destination is a directory, then we'll have to update the destination
+    // thingy's INodeRecord.
+    if ((flags == RENAME_EXCHANGE) && is_directory(a().destination_dirent)) {
+      a().update_destination_parentinode = true;
+      track_inode_for_fsync(a().destination_dirent.inode());
+      const auto key = pack_inode_key(a().destination_dirent.inode());
+      wait_on_future(
+          fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
+          a().destination_inode_lookup);
+    }
+  }
+
   /****************************************************
    * We've established that we (so far) have all of the
    * information necessary to finish this request.
@@ -425,8 +460,9 @@ template <typename ActionT> ActionT Inflight_rename<ActionT>::check() {
     }
 
     // Regardless of what the destination is, we need to
-    // fetch its inode and use records.
-    {
+    // fetch its inode and use records. But we might already
+    // be grabbing it
+    if (a().destination_inode_lookup == nullptr) {
       const auto key = pack_inode_key(a().destination_dirent.inode());
       wait_on_future(
           fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
@@ -452,11 +488,81 @@ template <typename ActionT> ActionT Inflight_rename<ActionT>::check() {
     return ActionT::Abort(ENOSYS);
   }
 
-  /**
-   * If we've made it here, then we were in a simple case, and
-   * we're all done except for the commit. So schedule that,
-   * and head off to the commit callback when it finishes.
-   */
+  // alright so if we need to update any parentinode fields, because we
+  // moved something from one directory to another, then we'll take care
+  // of that before we drop into finish_check
+  if (a().update_origin_parentinode || a().update_destination_parentinode) {
+    return ActionT::BeginWait(
+        std::bind(&Inflight_rename<ActionT>::update_inode_parents, this));
+  } else {
+    /**
+     * If we've made it here, then we were in a simple case, and
+     * we're all done except for the commit. So schedule that,
+     * and head off to the commit callback when it finishes.
+     */
+    if (!write_success_oplog_result()) {
+      return ActionT::Abort(EIO);
+    }
+    return commit(ActionT::OK);
+  }
+}
+
+template <typename ActionT>
+std::expected<void, ActionT>
+Inflight_rename<ActionT>::apply_inode_parent_updates() {
+  const auto helper =
+      [](FDBTransaction *transaction, FDBFuture *inodefuture,
+         fdbfs_ino_t newparent) -> std::expected<void, ActionT> {
+    fdb_bool_t present;
+    const uint8_t *val;
+    int vallen;
+    fdb_error_t err;
+
+    err = fdb_future_get_value(inodefuture, &present, &val, &vallen);
+    if (err)
+      return std::unexpected(ActionT::FDBError(err));
+    if (!present)
+      return std::unexpected(ActionT::Abort(ENOENT));
+
+    INodeRecord inode;
+    inode.ParseFromArray(val, vallen);
+    if (!(inode.IsInitialized() && inode.type() == ft_directory)) {
+      return std::unexpected(ActionT::Abort(EIO));
+    }
+    inode.set_parentinode(newparent);
+    if (auto it =
+            fdb_set_protobuf(transaction, pack_inode_key(inode.inode()), inode);
+        !it) {
+      return std::unexpected(ActionT::FDBError(it.error()));
+    }
+
+    return {};
+  };
+
+  if (a().update_origin_parentinode) {
+    if (auto it =
+            helper(transaction.get(), a().origin_inode_lookup.get(), newparent);
+        !it.has_value()) {
+      return std::unexpected(it.error());
+    }
+  }
+  if (a().update_destination_parentinode) {
+    if (auto it = helper(transaction.get(), a().destination_inode_lookup.get(),
+                         oldparent);
+        !it.has_value()) {
+      return std::unexpected(it.error());
+    }
+  }
+
+  return {};
+}
+
+template <typename ActionT>
+ActionT Inflight_rename<ActionT>::update_inode_parents() {
+  if (auto it = apply_inode_parent_updates(); !it.has_value()) {
+    return it.error();
+  }
+
   if (!write_success_oplog_result()) {
     return ActionT::Abort(EIO);
   }

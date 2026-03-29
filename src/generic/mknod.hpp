@@ -154,6 +154,8 @@ ActionT Inflight_mknod<ActionT, INodeHandlerT>::postverification() {
     inode.set_symlink(symlink_target);
   inode.set_mode(mode);
   inode.set_nlinks((type == ft_directory) ? 2 : 1);
+  if (type == ft_directory)
+    inode.set_parentinode(parent);
   if (type == ft_symlink)
     inode.set_size(symlink_target.size());
   else

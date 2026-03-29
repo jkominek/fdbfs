@@ -314,15 +314,13 @@ int rename_name(std::string_view from, std::string_view to, unsigned flags,
   return wait_status(op);
 }
 
-TestINode::TestINode(fdbfs_ino_t ino, INodeRecord inode, bool tracked)
-    : ino_(ino), inode_(std::move(inode)), tracked_(tracked) {}
+TestINode::TestINode(INodeRecord inode, bool tracked)
+    : inode_(std::move(inode)), tracked_(tracked) {}
 
 TestINode::~TestINode() { reset(); }
 
 TestINode::TestINode(TestINode &&other) noexcept
-    : ino_(other.ino_), inode_(std::move(other.inode_)),
-      tracked_(other.tracked_) {
-  other.ino_ = 0;
+    : inode_(std::move(other.inode_)), tracked_(other.tracked_) {
   other.tracked_ = false;
 }
 
@@ -331,25 +329,20 @@ TestINode &TestINode::operator=(TestINode &&other) noexcept {
     return *this;
   }
   reset();
-  ino_ = other.ino_;
   inode_ = std::move(other.inode_);
   tracked_ = other.tracked_;
-  other.ino_ = 0;
   other.tracked_ = false;
   return *this;
 }
 
-bool TestINode::valid() const { return ino_ != 0; }
-
-fdbfs_ino_t TestINode::ino() const { return ino_; }
+bool TestINode::valid() const { return inode_.inode() != 0; }
 
 const INodeRecord &TestINode::inode_record() const { return inode_; }
 
 void TestINode::reset() noexcept {
-  if (tracked_ && (ino_ != 0)) {
-    forget_inode_best_effort(ino_);
+  if (tracked_ && (inode_.inode() != 0)) {
+    forget_inode_best_effort(inode_.inode());
   }
-  ino_ = 0;
   inode_.Clear();
   tracked_ = false;
 }
@@ -372,7 +365,7 @@ std::expected<TestINode, int> get_test_inode(fdbfs_ino_t ino) {
   }
 
   INodeRecord inode = std::get<TestReplyINode>(*reply).inode;
-  return TestINode(inode.inode(), std::move(inode), false);
+  return TestINode(std::move(inode), false);
 }
 
 std::expected<TestINode, int> lookup_test_inode(fdbfs_ino_t parent,
@@ -396,7 +389,7 @@ std::expected<TestINode, int> lookup_test_inode(fdbfs_ino_t parent,
   }
 
   INodeRecord inode = std::get<TestReplyINode>(*reply).inode;
-  return TestINode(inode.inode(), std::move(inode), true);
+  return TestINode(std::move(inode), true);
 }
 
 std::expected<TestINode, int> resolve_test_path(std::string_view path) {
@@ -432,7 +425,7 @@ std::expected<TestINode, int> resolve_test_path(std::string_view path) {
       return std::unexpected(EINVAL);
     }
 
-    auto next = lookup_test_inode(current.ino(), component);
+    auto next = lookup_test_inode(current.inode_record().inode(), component);
     if (!next.has_value()) {
       return std::unexpected(next.error());
     }
