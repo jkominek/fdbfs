@@ -293,6 +293,17 @@ INodeRecord create_directory(std::string_view name, mode_t mode,
   return *std::move(created);
 }
 
+INodeRecord create_symlink(std::string_view name, std::string_view target,
+                           fdbfs_ino_t parent) {
+  auto op = start_test_op<Inflight_mknod<TestInflightAction, std::monostate>>(
+      parent, std::string(name), 0777, ft_symlink, 0,
+      inflight_test_services().make_transaction(), std::string(target),
+      std::monostate{});
+  auto created = wait_getinode(op);
+  REQUIRE(created.has_value());
+  return *std::move(created);
+}
+
 INodeRecord create_child_file(fdbfs_ino_t parent, std::string_view name,
                               mode_t mode) {
   return create_regular_file(name, mode, parent);

@@ -90,6 +90,8 @@ INodeRecord create_regular_file(std::string_view name, mode_t mode = 0644,
                                 fdbfs_ino_t parent = kTestRootIno);
 INodeRecord create_directory(std::string_view name, mode_t mode = 0755,
                              fdbfs_ino_t parent = kTestRootIno);
+INodeRecord create_symlink(std::string_view name, std::string_view target,
+                           fdbfs_ino_t parent = kTestRootIno);
 INodeRecord create_child_file(fdbfs_ino_t parent, std::string_view name,
                               mode_t mode = 0644);
 INodeRecord create_hardlink(fdbfs_ino_t ino, std::string_view name,

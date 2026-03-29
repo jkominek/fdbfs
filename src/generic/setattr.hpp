@@ -269,6 +269,9 @@ ActionT Inflight_setattr<ActionT, INodeHandlerT>::callback() {
     substantial_update = true;
   }
   if (to_set.has(SetAttrBit::Size)) {
+    if (a().inode.type() != ft_regular) {
+      return ActionT::Abort(EINVAL);
+    }
     if (static_cast<uint64_t>(attr.st_size) < a().inode.size()) {
       // they want to truncate the file. compute what blocks
       // need to be cleared.

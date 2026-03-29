@@ -137,3 +137,49 @@ TEST_CASE("setattr substantial update clears setuid/setgid on regular files",
     CHECK((after.st_mode & 01777) == 0755);
   });
 }
+
+TEST_CASE("truncate on symlink path follows the target or fails for dangling",
+          "[integration][setattr][symlink]") {
+  scenario([&](FdbfsEnv &env) {
+    const fs::path target = env.p("truncate_target");
+    const fs::path link = env.p("truncate_link");
+    int fd = ::open(target.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    FDBFS_REQUIRE_NONNEG(fd);
+    const char payload[] = "payload";
+    write_all_fd(fd, reinterpret_cast<const uint8_t *>(payload),
+                 sizeof(payload) - 1);
+    FDBFS_REQUIRE_OK(::close(fd));
+
+    FDBFS_REQUIRE_OK(::symlink(target.filename().c_str(), link.c_str()));
+
+    struct stat target_before {};
+    struct stat link_before {};
+    FDBFS_REQUIRE_OK(::stat(target.c_str(), &target_before));
+    FDBFS_REQUIRE_OK(::lstat(link.c_str(), &link_before));
+
+    FDBFS_REQUIRE_OK(::truncate(link.c_str(), 1));
+
+    struct stat target_after {};
+    struct stat link_after {};
+    FDBFS_REQUIRE_OK(::stat(target.c_str(), &target_after));
+    FDBFS_REQUIRE_OK(::lstat(link.c_str(), &link_after));
+
+    CHECK(target_after.st_size == 1);
+    CHECK(link_after.st_size == link_before.st_size);
+
+    const fs::path dangling = env.p("truncate_dangling");
+    const std::string missing_target = "does-not-exist";
+    FDBFS_REQUIRE_OK(::symlink(missing_target.c_str(), dangling.c_str()));
+
+    struct stat dangling_before {};
+    FDBFS_REQUIRE_OK(::lstat(dangling.c_str(), &dangling_before));
+
+    errno = 0;
+    CHECK(::truncate(dangling.c_str(), 1) == -1);
+    CHECK(errno == ENOENT);
+
+    struct stat dangling_after {};
+    FDBFS_REQUIRE_OK(::lstat(dangling.c_str(), &dangling_after));
+    CHECK(dangling_after.st_size == dangling_before.st_size);
+  });
+}

@@ -111,6 +111,7 @@ inflight_test_sources = files(
   'tests/inflight/test_getinode.cc',
   'tests/inflight/test_readdir.cc',
   'tests/inflight/test_rename.cc',
+  'tests/inflight/test_setattr.cc',
   'tests/inflight/test_statfs.cc',
   'tests/inflight/test_support.cc',
   'src/generic/fdb_service.cc',
