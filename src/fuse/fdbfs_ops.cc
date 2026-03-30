@@ -133,8 +133,9 @@ extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
 }
 
 // ==== readdir ====
-extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
-                              off_t off, struct fuse_file_info *fi) {
+template <template <typename> typename InflightT, bool DoPlus>
+inline void fdbfs_readdir_common(fuse_req_t req, fuse_ino_t ino, size_t size,
+                                 off_t off, struct fuse_file_info *fi) {
   auto dh = extract_fuse_handle<DirectoryHandle>(fi);
   if (!dh || dh->is_closed()) {
     fuse_reply_err(req, EBADF);
@@ -142,54 +143,51 @@ extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
   }
 
   std::string_view start_name;
-  if (off != 0) {
+  ReaddirStartKind start_kind = ReaddirStartKind::Beginning;
+  if (off < 0) {
+    fuse_reply_err(req, EINVAL);
+    return;
+  }
+  if (off < static_cast<off_t>(ReaddirStartKind::AfterName)) {
+    start_kind = static_cast<ReaddirStartKind>(off);
+  } else {
     auto start_name_opt = dh->cookie_to_filename(static_cast<uint64_t>(off));
     if (!start_name_opt.has_value()) {
       fuse_reply_err(req, EINVAL);
       return;
     }
     start_name = *start_name_opt;
+    start_kind = ReaddirStartKind::AfterName;
   }
 
-  // let's not read more than 64k in a go, even if we think we can.
+  const size_t collector_size =
+      std::min(size, DoPlus ? static_cast<size_t>(1 << 12)
+                            : static_cast<size_t>(1 << 16));
   auto collector_spec = FuseInflightAction::make_dirent_collector_spec(
-      std::min(size, static_cast<size_t>(1 << 16)), false, dh);
-  auto *inflight = new Inflight_readdir<FuseInflightAction>(
-      req, to_fdbfs_ino(ino), collector_spec, start_name, make_transaction());
-
+      collector_size, DoPlus, dh);
+  auto *inflight = new InflightT<FuseInflightAction>(
+      req, to_fdbfs_ino(ino), collector_spec, start_kind, start_name,
+      make_transaction());
   inflight->start();
+}
+
+extern "C" void fdbfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
+                              off_t off, struct fuse_file_info *fi) {
+  fdbfs_readdir_common<Inflight_readdir, false>(req, ino, size, off, fi);
 }
 
 // ==== readdirplus ====
 extern "C" void fdbfs_readdirplus(fuse_req_t req, fuse_ino_t ino, size_t size,
                                   off_t off, struct fuse_file_info *fi) {
-  auto dh = extract_fuse_handle<DirectoryHandle>(fi);
-  if (!dh || dh->is_closed()) {
-    fuse_reply_err(req, EBADF);
-    return;
-  }
-
-  std::string_view start_name;
-  if (off != 0) {
-    auto start_name_opt = dh->cookie_to_filename(static_cast<uint64_t>(off));
-    if (!start_name_opt.has_value()) {
-      fuse_reply_err(req, EINVAL);
-      return;
-    }
-    start_name = *start_name_opt;
-  }
-
-  auto collector_spec =
-      FuseInflightAction::make_dirent_collector_spec(size, true, dh);
-  auto *inflight = new Inflight_readdirplus<FuseInflightAction>(
-      req, to_fdbfs_ino(ino), collector_spec, start_name, make_transaction());
-  inflight->start();
+  fdbfs_readdir_common<Inflight_readdirplus, true>(req, ino, size, off, fi);
 }
 
 extern "C" void fdbfs_opendir(fuse_req_t req, fuse_ino_t ino,
                               struct fuse_file_info *fi) {
-  auto slot =
-      new std::shared_ptr<DirectoryHandle>(std::make_shared<DirectoryHandle>(ino));
+  auto handle = std::make_shared<DirectoryHandle>(ino);
+  handle->reserve_cookies_through(
+      static_cast<uint64_t>(ReaddirStartKind::AfterDotDot));
+  auto slot = new std::shared_ptr<DirectoryHandle>(std::move(handle));
   *(extract_fuse_handle_slot<DirectoryHandle>(fi)) = slot;
   if (fuse_reply_open(req, fi) < 0) {
     free_fuse_handle_slot<DirectoryHandle>(fi);

@@ -448,10 +448,12 @@ std::expected<TestINode, int> resolve_test_path(std::string_view path) {
 }
 
 std::vector<std::string> readdir_names_once(fdbfs_ino_t ino,
+                                            ReaddirStartKind start_kind,
                                             std::string_view start_name) {
   auto spec = TestInflightAction::make_dirent_collector_spec(4096, false);
   auto op = start_test_op<Inflight_readdir<TestInflightAction>>(
-      ino, spec, start_name, inflight_test_services().make_transaction());
+      ino, spec, start_kind, start_name,
+      inflight_test_services().make_transaction());
   TestResult result = wait_test_result(op);
   REQUIRE(result.has_value());
   INFO("actual reply=" << describe_test_reply(*result));
@@ -468,10 +470,12 @@ std::vector<std::string> readdir_names_once(fdbfs_ino_t ino,
 }
 
 std::vector<std::string> readdirplus_names_once(fdbfs_ino_t ino,
+                                                ReaddirStartKind start_kind,
                                                 std::string_view start_name) {
   auto spec = TestInflightAction::make_dirent_collector_spec(4096, true);
   auto op = start_test_op<Inflight_readdirplus<TestInflightAction>>(
-      ino, spec, start_name, inflight_test_services().make_transaction());
+      ino, spec, start_kind, start_name,
+      inflight_test_services().make_transaction());
   TestResult result = wait_test_result(op);
   REQUIRE(result.has_value());
   INFO("actual reply=" << describe_test_reply(*result));
@@ -486,4 +490,11 @@ std::vector<std::string> readdirplus_names_once(fdbfs_ino_t ino,
     names.push_back(entry.name);
   }
   return names;
+}
+
+std::vector<std::string> readdirplus_names_once(fdbfs_ino_t ino,
+                                                std::string_view start_name) {
+  const auto start_kind = start_name.empty() ? ReaddirStartKind::Beginning
+                                             : ReaddirStartKind::AfterName;
+  return readdirplus_names_once(ino, start_kind, start_name);
 }

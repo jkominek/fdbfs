@@ -83,6 +83,22 @@ bool DirectoryHandle::is_closed() const {
 
 fuse_ino_t DirectoryHandle::inode() const { return ino; }
 
+void DirectoryHandle::reserve_cookies_through(uint64_t res) {
+  std::scoped_lock<std::mutex> guard(cookie_mutex);
+  assert(cookie_filenames.empty() && "reservation should be made before use");
+  assert(filename_cookies.empty());
+
+  reserved_cookies = res;
+  if (res >= static_cast<uint64_t>(ReaddirStartKind::AfterDot)) {
+    cookie_filenames.push_back(".");
+    filename_cookies.emplace(cookie_filenames.back(), cookie_filenames.size());
+  }
+  if (res >= static_cast<uint64_t>(ReaddirStartKind::AfterDotDot)) {
+    cookie_filenames.push_back("..");
+    filename_cookies.emplace(cookie_filenames.back(), cookie_filenames.size());
+  }
+}
+
 void DirectoryHandle::read_complete() {
   struct timespec now{};
   clock_gettime(CLOCK_REALTIME, &now);
@@ -128,7 +144,7 @@ uint64_t DirectoryHandle::filename_to_cookie(std::string_view name) {
 std::optional<std::string_view>
 DirectoryHandle::cookie_to_filename(uint64_t cookie) const {
   std::scoped_lock<std::mutex> guard(cookie_mutex);
-  if (cookie == 0) {
+  if (cookie <= reserved_cookies) {
     return std::nullopt;
   }
 

@@ -2,6 +2,7 @@
 #define __FUSE_INFLIGHT_ACTION_H__
 
 #include <cassert>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -56,7 +57,7 @@ public:
       assert(this->spec.directory_handle != nullptr);
     }
 
-    [[nodiscard]] size_t estimate_remaining_entries() const {
+    [[nodiscard]] int estimate_remaining_entries() const {
       const size_t remaining = buf.size() - consumed;
       if (remaining == 0) {
         return 0;
@@ -69,7 +70,9 @@ public:
         if (estimated_entry_size == 0) {
           estimated_entry_size = 1;
         }
-        return std::max<size_t>(1, remaining / estimated_entry_size);
+        const size_t estimate = std::max<size_t>(1, remaining / estimated_entry_size);
+        return static_cast<int>(std::min(
+            estimate, static_cast<size_t>(std::numeric_limits<int>::max())));
       }
 
       struct stat dummy_attr{};
@@ -78,7 +81,9 @@ public:
       if (estimated_entry_size == 0) {
         estimated_entry_size = 1;
       }
-      return std::max<size_t>(1, remaining / estimated_entry_size);
+      const size_t estimate = std::max<size_t>(1, remaining / estimated_entry_size);
+      return static_cast<int>(std::min(
+          estimate, static_cast<size_t>(std::numeric_limits<int>::max())));
     }
 
     [[nodiscard]] DirentAddResult try_add(std::string_view name,
@@ -90,8 +95,15 @@ public:
       }
 
       const std::string name_copy(name);
-      const off_t entry_offset =
-          static_cast<off_t>(spec.directory_handle->filename_to_cookie(name));
+      const off_t entry_offset = [&]() -> off_t {
+        if (name == ".") {
+          return static_cast<off_t>(ReaddirStartKind::AfterDot);
+        }
+        if (name == "..") {
+          return static_cast<off_t>(ReaddirStartKind::AfterDotDot);
+        }
+        return static_cast<off_t>(spec.directory_handle->filename_to_cookie(name));
+      }();
 
       if (spec.plus_mode) {
         if (inode == nullptr) {

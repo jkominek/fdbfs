@@ -35,11 +35,11 @@ public:
     explicit DirentCollector(const DirentCollectorSpec &spec)
         : plus_mode_(spec.plus_mode), max_entries_(spec.max_entries) {}
 
-    [[nodiscard]] size_t estimate_remaining_entries() const {
+    [[nodiscard]] int estimate_remaining_entries() const {
       if (count_ >= max_entries_) {
         return 0;
       }
-      return max_entries_ - count_;
+      return static_cast<int>(max_entries_ - count_);
     }
 
     [[nodiscard]] DirentAddResult try_add(std::string_view,

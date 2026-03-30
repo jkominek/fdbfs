@@ -14,6 +14,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "util.h"
+
 class DirectoryHandle {
 public:
   explicit DirectoryHandle(fuse_ino_t ino);
@@ -28,6 +30,7 @@ public:
   [[nodiscard]] bool is_closed() const;
   [[nodiscard]] fuse_ino_t inode() const;
   void read_complete();
+  void reserve_cookies_through(uint64_t res);
   [[nodiscard]] uint64_t filename_to_cookie(std::string_view name);
   [[nodiscard]] std::optional<std::string_view>
   cookie_to_filename(uint64_t cookie) const;
@@ -42,6 +45,7 @@ private:
   bool closed = false;
   mutable std::mutex cookie_mutex;
   mutable std::mutex state_mutex;
+  uint64_t reserved_cookies = 0;
   std::vector<std::string> cookie_filenames;
   std::unordered_map<std::string, uint64_t> filename_cookies;
   std::optional<struct timespec> latest_read;

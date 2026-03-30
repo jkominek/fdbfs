@@ -175,8 +175,14 @@ enum class DentryNameKind {
   Parent,
 };
 
-[[nodiscard]] extern DentryNameKind
-classify_dentry_name(std::string_view name);
+[[nodiscard]] extern DentryNameKind classify_dentry_name(std::string_view name);
+
+enum class ReaddirStartKind {
+  Beginning = 0,
+  AfterDot = 1,
+  AfterDotDot = 2,
+  AfterName = 3,
+};
 
 extern int compare_timespec_value(const struct timespec &a,
                                   const struct timespec &b);

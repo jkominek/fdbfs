@@ -15,6 +15,17 @@
 
 namespace {
 
+std::optional<std::string> readdir_next_name(DIR *d) {
+  errno = 0;
+  struct dirent *ent = ::readdir(d);
+  if (ent == nullptr) {
+    INFO("readdir errno=" << errno_with_message(errno));
+    REQUIRE(errno == 0);
+    return std::nullopt;
+  }
+  return std::string(ent->d_name);
+}
+
 std::optional<std::string> readdir_next_non_dot(DIR *d) {
   while (true) {
     errno = 0;
@@ -175,6 +186,65 @@ TEST_CASE("readdir restart positions survive deleting earlier entries",
     SECTION("resume near beginning") { check_resume_after_deletes(1); }
     SECTION("resume from middle") { check_resume_after_deletes(3); }
     SECTION("resume at final entry") { check_resume_after_deletes(5); }
+
+    FDBFS_REQUIRE_OK(::closedir(d));
+  });
+}
+
+TEST_CASE("readdir dot entries stay at the front and seekdir can re-enter them",
+          "[integration][readdir][seekdir][telldir][dot]") {
+  scenario([&](FdbfsEnv &env) {
+    if (is_host_backend()) {
+      SKIP("host backend does not guarantee our synthetic dot-entry ordering");
+    }
+
+    const fs::path dir = env.p("dotdot_front");
+    FDBFS_REQUIRE_OK(::mkdir(dir.c_str(), 0755));
+
+    for (std::string_view name :
+         {" leading-space", "-dash", ",comma", ".-between", "alpha"}) {
+      int fd = ::open((dir / name).c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+      FDBFS_REQUIRE_NONNEG(fd);
+      FDBFS_REQUIRE_OK(::close(fd));
+    }
+
+    DIR *d = ::opendir(dir.c_str());
+    REQUIRE(d != nullptr);
+
+    auto first = readdir_next_name(d);
+    REQUIRE(first.has_value());
+    CHECK(*first == ".");
+    const long after_dot = ::telldir(d);
+
+    auto second = readdir_next_name(d);
+    REQUIRE(second.has_value());
+    CHECK(*second == "..");
+    const long after_dotdot = ::telldir(d);
+
+    auto third = readdir_next_name(d);
+    REQUIRE(third.has_value());
+    CHECK(*third != ".");
+    CHECK(*third != "..");
+
+    ::seekdir(d, after_dot);
+    auto resumed_after_dot = readdir_next_name(d);
+    REQUIRE(resumed_after_dot.has_value());
+    CHECK(*resumed_after_dot == "..");
+
+    ::seekdir(d, after_dotdot);
+    auto resumed_after_dotdot = readdir_next_name(d);
+    REQUIRE(resumed_after_dotdot.has_value());
+    CHECK(*resumed_after_dotdot != ".");
+    CHECK(*resumed_after_dotdot != "..");
+
+    const auto names = readdir_names(dir);
+    CHECK(names.count(".") == 1);
+    CHECK(names.count("..") == 1);
+    require_contains(names, " leading-space");
+    require_contains(names, "-dash");
+    require_contains(names, ",comma");
+    require_contains(names, ".-between");
+    require_contains(names, "alpha");
 
     FDBFS_REQUIRE_OK(::closedir(d));
   });

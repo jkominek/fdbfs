@@ -72,7 +72,7 @@ public:
 
   class DirentCollector {
   public:
-    [[nodiscard]] size_t estimate_remaining_entries() const { return 0; }
+    [[nodiscard]] int estimate_remaining_entries() const { return 0; }
 
     [[nodiscard]] DirentAddResult try_add(std::string_view,
                                           const DirectoryEntry &,
