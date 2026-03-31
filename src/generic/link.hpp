@@ -156,6 +156,13 @@ ActionT Inflight_link<ActionT, INodeHandlerT>::check() {
     return ActionT::Abort(EEXIST);
   }
 
+  if (a().inode.nlinks() == 0) {
+    // if we're about to create a new dirent for something without
+    // any, that means it has a garbage collection record we need to
+    // get rid of
+    const auto key = pack_garbage_key(ino);
+    fdb_transaction_clear(transaction.get(), key.data(), key.size());
+  }
   // need to update the inode attributes
   a().inode.set_nlinks(a().inode.nlinks() + 1);
   struct timespec tv;
