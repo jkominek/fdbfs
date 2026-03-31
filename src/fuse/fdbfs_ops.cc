@@ -132,6 +132,18 @@ extern "C" void fdbfs_getattr(fuse_req_t req, fuse_ino_t ino,
   inflight->start();
 }
 
+extern "C" void fdbfs_statx(fuse_req_t req, fuse_ino_t ino, int flags, int mask,
+                            struct fuse_file_info *fi) {
+  (void)flags;
+  (void)fi;
+  auto *inflight = new Inflight_getinode<FuseInflightAction, INodeHandler>(
+      req, to_fdbfs_ino(ino), make_transaction(),
+      FuseInflightAction::INodeHandlerStatxMask{
+          .mask = static_cast<uint32_t>(mask),
+      });
+  inflight->start();
+}
+
 // ==== readdir ====
 template <template <typename> typename InflightT, bool DoPlus>
 inline void fdbfs_readdir_common(fuse_req_t req, fuse_ino_t ino, size_t size,

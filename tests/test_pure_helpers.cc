@@ -538,7 +538,7 @@ TEST_CASE("inode/stat packing helpers preserve expected fields",
     CHECK(st.st_ctim.tv_sec == 30);
     CHECK(st.st_ctim.tv_nsec == 31);
     CHECK(st.st_blksize == static_cast<decltype(st.st_blksize)>(BLOCKSIZE));
-    CHECK(st.st_blocks == 1);
+    CHECK(st.st_blocks == 0);
   }
 }
 

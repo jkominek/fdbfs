@@ -75,6 +75,9 @@ static struct fuse_lowlevel_ops fdbfs_oper = {
     .setlk = fdbfs_setlk,
     .forget_multi = fdbfs_forget_multi,
     .readdirplus = fdbfs_readdirplus,
+#if FUSE_VERSION >= FUSE_MAKE_VERSION(3, 18)
+    .statx = fdbfs_statx,
+#endif
 };
 
 namespace {

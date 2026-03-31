@@ -70,7 +70,8 @@ public:
         if (estimated_entry_size == 0) {
           estimated_entry_size = 1;
         }
-        const size_t estimate = std::max<size_t>(1, remaining / estimated_entry_size);
+        const size_t estimate =
+            std::max<size_t>(1, remaining / estimated_entry_size);
         return static_cast<int>(std::min(
             estimate, static_cast<size_t>(std::numeric_limits<int>::max())));
       }
@@ -81,7 +82,8 @@ public:
       if (estimated_entry_size == 0) {
         estimated_entry_size = 1;
       }
-      const size_t estimate = std::max<size_t>(1, remaining / estimated_entry_size);
+      const size_t estimate =
+          std::max<size_t>(1, remaining / estimated_entry_size);
       return static_cast<int>(std::min(
           estimate, static_cast<size_t>(std::numeric_limits<int>::max())));
     }
@@ -102,7 +104,8 @@ public:
         if (name == "..") {
           return static_cast<off_t>(ReaddirStartKind::AfterDotDot);
         }
-        return static_cast<off_t>(spec.directory_handle->filename_to_cookie(name));
+        return static_cast<off_t>(
+            spec.directory_handle->filename_to_cookie(name));
       }();
 
       if (spec.plus_mode) {
@@ -153,8 +156,7 @@ public:
     size_t consumed = 0;
   };
 
-  static DirentCollectorSpec
-  make_dirent_collector_spec(
+  static DirentCollectorSpec make_dirent_collector_spec(
       size_t max_bytes, bool plus_mode = false,
       std::shared_ptr<DirectoryHandle> directory_handle = nullptr) {
     return DirentCollectorSpec{
@@ -179,7 +181,7 @@ public:
     return std::string(buf);
   }
   static bool request_interrupted(req_t req) {
-    //return fuse_req_interrupted(req);
+    // return fuse_req_interrupted(req);
     // apparently, just because fuse/the kernel think a request might
     // have been interrupted, that doesn't mean we should stop
     // processing it.
@@ -294,10 +296,14 @@ public:
               fuse_reply_attr(i->req, &attr, 0.0);
             });
           } else if constexpr (std::is_same_v<T, INodeHandlerStatxMask>) {
-            // TODO unimplemented path
-            (void)selected.mask;
-            return Self(true, false, false, [](InflightT<Self> *i) {
+            struct statx attr{};
+            pack_inode_record_into_statx(inode, attr, selected.mask);
+            return Self(true, false, false, [attr](InflightT<Self> *i) mutable {
+#if FUSE_VERSION >= FUSE_MAKE_VERSION(3, 18)
+              fuse_reply_statx(i->req, 0, &attr, 0.01);
+#else
               fuse_reply_err(i->req, ENOSYS);
+#endif
             });
           } else if constexpr (std::is_same_v<T, INodeHandlerEntry>) {
             struct stat attr{};

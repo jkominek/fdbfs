@@ -161,6 +161,7 @@ test_sources = files(
   'tests/fuse_integrated/test_rename.cc',
   'tests/fuse_integrated/test_rmdir.cc',
   'tests/fuse_integrated/test_setattr.cc',
+  'tests/fuse_integrated/test_statx.cc',
   'tests/test_support.cc',
   'tests/fuse_integrated/test_unlink.cc',
   'tests/fuse_integrated/test_write.cc',

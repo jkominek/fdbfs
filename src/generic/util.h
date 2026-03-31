@@ -124,6 +124,9 @@ pack_xattr_data_key(fdbfs_ino_t ino, const std::string &name);
 extern void print_key(std::vector<uint8_t>);
 extern void pack_inode_record_into_stat(const INodeRecord &inode,
                                         struct stat &attr);
+extern void pack_inode_record_into_statx(const INodeRecord &inode,
+                                         struct statx &attr,
+                                         uint32_t requested_mask);
 template <typename T> void print_bytes(const T *str, int strlength) {
   for (int i = 0; i < strlength; i++) {
     if (isprint(str[i])) {

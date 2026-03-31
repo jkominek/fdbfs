@@ -598,7 +598,7 @@ void pack_inode_record_into_stat(const INodeRecord &inode, struct stat &attr) {
   }
 
   attr.st_blksize = BLOCKSIZE;
-  attr.st_blocks = (attr.st_size / 512) + 1;
+  attr.st_blocks = (attr.st_size / 512);
 
   /*
   printf("stat struct\n");
@@ -609,6 +609,68 @@ void pack_inode_record_into_stat(const INodeRecord &inode, struct stat &attr) {
   printf("  uid: %i\n", attr.st_uid);
   printf("  gid: %i\n", attr.st_gid);
   */
+}
+
+void pack_inode_record_into_statx(const INodeRecord &inode, struct statx &attr,
+                                  uint32_t requested_mask) {
+  (void)requested_mask;
+
+  attr = {};
+  attr.stx_ino = inode.inode();
+  attr.stx_mask |= STATX_INO;
+
+  attr.stx_mode = inode.type();
+  attr.stx_mask |= STATX_TYPE;
+  if (inode.has_mode()) {
+    attr.stx_mode |= inode.mode();
+    attr.stx_mask |= STATX_MODE;
+  }
+
+  attr.stx_nlink = inode.nlinks();
+  attr.stx_mask |= STATX_NLINK;
+
+  if (inode.has_uid()) {
+    attr.stx_uid = inode.uid();
+    attr.stx_mask |= STATX_UID;
+  }
+
+  if (inode.has_gid()) {
+    attr.stx_gid = inode.gid();
+    attr.stx_mask |= STATX_GID;
+  }
+
+  if (inode.has_size()) {
+    attr.stx_size = inode.size();
+    attr.stx_blocks = (attr.stx_size / 512);
+    attr.stx_mask |= STATX_SIZE;
+    attr.stx_mask |= STATX_BLOCKS;
+  }
+
+  attr.stx_blksize = BLOCKSIZE;
+
+  if (inode.has_atime()) {
+    attr.stx_atime.tv_sec = inode.atime().sec();
+    attr.stx_atime.tv_nsec = inode.atime().nsec();
+    attr.stx_mask |= STATX_ATIME;
+  }
+
+  if (inode.has_mtime()) {
+    attr.stx_mtime.tv_sec = inode.mtime().sec();
+    attr.stx_mtime.tv_nsec = inode.mtime().nsec();
+    attr.stx_mask |= STATX_MTIME;
+  }
+
+  if (inode.has_ctime()) {
+    attr.stx_ctime.tv_sec = inode.ctime().sec();
+    attr.stx_ctime.tv_nsec = inode.ctime().nsec();
+    attr.stx_mask |= STATX_CTIME;
+  }
+
+  if (inode.has_btime()) {
+    attr.stx_btime.tv_sec = inode.btime().sec();
+    attr.stx_btime.tv_nsec = inode.btime().nsec();
+    attr.stx_mask |= STATX_BTIME;
+  }
 }
 
 range_keys offset_size_to_range_keys(fdbfs_ino_t ino, size_t off, size_t size) {
