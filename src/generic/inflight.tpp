@@ -136,7 +136,7 @@ bool InflightT<ActionT>::write_oplog_result(const OpLogResultVariant &result) {
   return write_oplog_record(std::move(record));
 }
 
-template <typename ActionT> void InflightT<ActionT>::cleanup() {
+template <typename ActionT> InflightT<ActionT>::~InflightT() {
   if (op_id.has_value()) {
     mark_oplog_dead(*op_id);
   }
@@ -339,7 +339,6 @@ template <typename ActionT> bool InflightT<ActionT>::run_current_callback() {
 
     if (a.delete_this) {
       // we're dead and done, for whatever reason
-      cleanup();
       delete this;
       return false;
     }
@@ -424,7 +423,6 @@ void InflightT<ActionT>::fail(int err, const char *why,
   if (!suppress_errors) {
     ActionT::report_failure(this, err);
   }
-  cleanup();
   delete this;
 }
 

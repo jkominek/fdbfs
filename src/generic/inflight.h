@@ -90,7 +90,7 @@ public:
 
   void future_ready(FDBFuture *);
 
-  virtual ~InflightT() = default;
+  virtual ~InflightT();
 
   // the transaction we're tied to. will we ever want
   // two separate chains of computation using the same
@@ -105,10 +105,6 @@ public:
   void start();
 
   ActionT commit(InflightCallbackT<ActionT>);
-
-  // run before delete, in case there is anything a subclass
-  // wants to take care of.
-  virtual void cleanup();
   void set_on_done(std::function<void(int err)> callback);
 
   inline ReadWrite read_write() { return policy->read_write; };

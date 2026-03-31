@@ -54,6 +54,7 @@ public:
   Inflight_mknod(req_t, fdbfs_ino_t, std::optional<std::string>, mode_t,
                  filetype, dev_t, unique_transaction,
                  std::optional<std::string>, INodeHandlerT);
+  ~Inflight_mknod() override;
   InflightCallbackT<ActionT> issue();
 
 private:
@@ -69,7 +70,6 @@ private:
 
   ActionT postverification();
   ActionT oplog_recovery(const OpLogRecord &) override;
-  void cleanup() override;
 };
 
 template <typename ActionT, typename INodeHandlerT>
@@ -324,7 +324,7 @@ InflightCallbackT<ActionT> Inflight_mknod<ActionT, INodeHandlerT>::issue() {
 }
 
 template <typename ActionT, typename INodeHandlerT>
-void Inflight_mknod<ActionT, INodeHandlerT>::cleanup() {
+Inflight_mknod<ActionT, INodeHandlerT>::~Inflight_mknod() {
   if (tmpfile_lookup_needs_cleanup && pending_tmpfile_lookup.has_value()) {
     auto generation = decrement_lookup_count(*pending_tmpfile_lookup, 1);
     if (generation.has_value()) {
@@ -333,5 +333,4 @@ void Inflight_mknod<ActionT, INodeHandlerT>::cleanup() {
     pending_tmpfile_lookup = std::nullopt;
     tmpfile_lookup_needs_cleanup = false;
   }
-  Base::cleanup();
 }
