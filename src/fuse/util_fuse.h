@@ -7,6 +7,8 @@
 #include <cassert>
 #include <memory>
 
+#include "values.pb.h"
+
 struct fdbfs_filehandle;
 
 template <typename T>
@@ -44,5 +46,7 @@ void free_fuse_handle_slot(struct fuse_file_info *fi) {
 
 int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
                            struct fuse_file_info *fi);
+int reply_create_with_handle(fuse_req_t req, const INodeRecord &inode,
+                             struct fuse_file_info *fi);
 
 #endif

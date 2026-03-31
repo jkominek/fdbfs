@@ -108,7 +108,7 @@ public:
 
   // run before delete, in case there is anything a subclass
   // wants to take care of.
-  void cleanup();
+  virtual void cleanup();
   void set_on_done(std::function<void(int err)> callback);
 
   inline ReadWrite read_write() { return policy->read_write; };

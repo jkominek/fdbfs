@@ -46,6 +46,7 @@ using INodeHandler = FuseInflightAction::INodeHandler;
 using INodeHandlerAttr = FuseInflightAction::INodeHandlerAttr;
 using INodeHandlerEntry = FuseInflightAction::INodeHandlerEntry;
 using INodeHandlerOpen = FuseInflightAction::INodeHandlerOpen;
+using INodeHandlerTmpfile = FuseInflightAction::INodeHandlerTmpfile;
 
 LockManagerService *g_lock_manager_service = nullptr;
 
@@ -300,8 +301,9 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name,
   }
 
   auto *inflight = new Inflight_mknod<FuseInflightAction, INodeHandler>(
-      req, to_fdbfs_ino(parent), name, mode & (~S_IFMT), deduced_type, rdev,
-      make_transaction(), std::nullopt, INodeHandlerEntry{});
+      req, to_fdbfs_ino(parent), std::string(name), mode & (~S_IFMT),
+      deduced_type, rdev, make_transaction(), std::nullopt,
+      INodeHandlerEntry{});
   inflight->start();
 }
 
@@ -312,8 +314,16 @@ extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
     return;
   }
   auto *inflight = new Inflight_mknod<FuseInflightAction, INodeHandler>(
-      req, to_fdbfs_ino(parent), name, mode & (~S_IFMT), ft_directory, 0,
-      make_transaction(), std::nullopt, INodeHandlerEntry{});
+      req, to_fdbfs_ino(parent), std::string(name), mode & (~S_IFMT),
+      ft_directory, 0, make_transaction(), std::nullopt, INodeHandlerEntry{});
+  inflight->start();
+}
+
+extern "C" void fdbfs_tmpfile(fuse_req_t req, fuse_ino_t parent, mode_t mode,
+                              struct fuse_file_info *fi) {
+  auto *inflight = new Inflight_mknod<FuseInflightAction, INodeHandler>(
+      req, to_fdbfs_ino(parent), std::nullopt, mode & (~S_IFMT), ft_regular, 0,
+      make_transaction(), std::nullopt, INodeHandlerTmpfile{fi->flags});
   inflight->start();
 }
 
@@ -325,8 +335,9 @@ extern "C" void fdbfs_symlink(fuse_req_t req, const char *target,
     return;
   }
   auto *inflight = new Inflight_mknod<FuseInflightAction, INodeHandler>(
-      req, to_fdbfs_ino(parent), name, 0777 & (~S_IFMT), ft_symlink, 0,
-      make_transaction(), std::string(target), INodeHandlerEntry{});
+      req, to_fdbfs_ino(parent), std::string(name), 0777 & (~S_IFMT),
+      ft_symlink, 0, make_transaction(), std::string(target),
+      INodeHandlerEntry{});
   inflight->start();
 }
 

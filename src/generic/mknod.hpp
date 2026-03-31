@@ -51,27 +51,31 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_mknod(req_t, fdbfs_ino_t, std::string, mode_t, filetype, dev_t,
-                 unique_transaction, std::optional<std::string>, INodeHandlerT);
+  Inflight_mknod(req_t, fdbfs_ino_t, std::optional<std::string>, mode_t,
+                 filetype, dev_t, unique_transaction,
+                 std::optional<std::string>, INodeHandlerT);
   InflightCallbackT<ActionT> issue();
 
 private:
   const fdbfs_ino_t parent;
-  const std::string name;
+  const std::optional<std::string> name;
   const filetype type;
   const mode_t mode;
   const dev_t rdev;
   const std::string symlink_target;
   const INodeHandlerT inode_handler;
+  std::optional<fdbfs_ino_t> pending_tmpfile_lookup;
+  bool tmpfile_lookup_needs_cleanup = false;
 
   ActionT postverification();
   ActionT oplog_recovery(const OpLogRecord &) override;
+  void cleanup() override;
 };
 
 template <typename ActionT, typename INodeHandlerT>
 Inflight_mknod<ActionT, INodeHandlerT>::Inflight_mknod(
-    req_t req, fdbfs_ino_t parent, std::string name, mode_t mode, filetype type,
-    dev_t rdev, unique_transaction transaction,
+    req_t req, fdbfs_ino_t parent, std::optional<std::string> name, mode_t mode,
+    filetype type, dev_t rdev, unique_transaction transaction,
     std::optional<std::string> symlink_target_opt, INodeHandlerT inode_handler)
     : Base(req, std::move(transaction)), parent(parent), name(std::move(name)),
       type(type), mode(mode), rdev(rdev),
@@ -105,10 +109,14 @@ ActionT Inflight_mknod<ActionT, INodeHandlerT>::postverification() {
     return ActionT::Abort(EIO);
   }
 
-  err = fdb_future_get_value(a().dirent_check.get(), &dirent_present, &value,
-                             &valuelen);
-  if (err)
-    return ActionT::FDBError(err);
+  if (name.has_value()) {
+    err = fdb_future_get_value(a().dirent_check.get(), &dirent_present, &value,
+                               &valuelen);
+    if (err)
+      return ActionT::FDBError(err);
+  } else {
+    dirent_present = false;
+  }
 
   err = fdb_future_get_value(a().inode_check.get(), &inode_present, &value,
                              &valuelen);
@@ -127,24 +135,28 @@ ActionT Inflight_mknod<ActionT, INodeHandlerT>::postverification() {
   }
 
   // TODO we need to fetch the parent inode for permissions checking
+  // even for tmpfile-style unnamed creates, since the containing directory
+  // still governs the operation.
   if (parentinode.nlinks() <= 1) {
     // directory is unlinked, no new entries to be created
     return ActionT::Abort(ENOENT);
   }
 
-  if (type == ft_directory) {
-    if (parentinode.nlinks() == std::numeric_limits<uint64_t>::max()) {
-      return ActionT::Abort(EMLINK);
+  if (name.has_value()) {
+    if (type == ft_directory) {
+      if (parentinode.nlinks() == std::numeric_limits<uint64_t>::max()) {
+        return ActionT::Abort(EMLINK);
+      }
+      parentinode.set_nlinks(parentinode.nlinks() + 1);
     }
-    parentinode.set_nlinks(parentinode.nlinks() + 1);
-  }
-  // update parent directory times
-  if (auto it = update_directory_times(
-          transaction.get(), parentinode,
-          type == ft_directory ? DirectoryUpdateKind::ContentsPersist
-                               : DirectoryUpdateKind::ContentsDeferred);
-      !it.has_value()) {
-    return ActionT::FDBError(it.error());
+    // update parent directory times
+    if (auto it = update_directory_times(
+            transaction.get(), parentinode,
+            type == ft_directory ? DirectoryUpdateKind::ContentsPersist
+                                 : DirectoryUpdateKind::ContentsDeferred);
+        !it.has_value()) {
+      return ActionT::FDBError(it.error());
+    }
   }
 
   INodeRecord inode;
@@ -153,7 +165,12 @@ ActionT Inflight_mknod<ActionT, INodeHandlerT>::postverification() {
   if (type == ft_symlink)
     inode.set_symlink(symlink_target);
   inode.set_mode(mode);
-  inode.set_nlinks((type == ft_directory) ? 2 : 1);
+  if (name.has_value()) {
+    inode.set_nlinks((type == ft_directory) ? 2 : 1);
+  } else {
+    // tmpfile, no dirent
+    inode.set_nlinks(0);
+  }
   if (type == ft_directory)
     inode.set_parentinode(parent);
   if (type == ft_symlink)
@@ -187,9 +204,31 @@ ActionT Inflight_mknod<ActionT, INodeHandlerT>::postverification() {
   dirent.set_inode(a().ino);
   dirent.set_type(type);
 
-  if (!fdb_set_protobuf(transaction.get(), pack_dentry_key(parent, name),
-                        dirent))
-    return ActionT::Abort(EIO);
+  if (name.has_value()) {
+    if (!fdb_set_protobuf(transaction.get(), pack_dentry_key(parent, *name),
+                          dirent))
+      return ActionT::Abort(EIO);
+  } else {
+    auto generation = increment_lookup_count(a().ino);
+    if (!generation.has_value()) {
+      return ActionT::Abort(EIO);
+    }
+
+    const auto use_key = pack_inode_use_key(a().ino);
+    const uint64_t generation_le = htole64(*generation);
+    fdb_transaction_atomic_op(transaction.get(), use_key.data(),
+                              use_key.size(),
+                              reinterpret_cast<const uint8_t *>(&generation_le),
+                              sizeof(generation_le), FDB_MUTATION_TYPE_MAX);
+
+    pending_tmpfile_lookup = a().ino;
+    tmpfile_lookup_needs_cleanup = true;
+
+    const auto garbage_key = pack_garbage_key(a().ino);
+    const uint8_t b = 0x00;
+    fdb_transaction_set(transaction.get(), garbage_key.data(),
+                        garbage_key.size(), &b, 1);
+  }
 
   OpLogResultEntry result_entry;
   result_entry.set_ino(a().ino);
@@ -201,7 +240,9 @@ ActionT Inflight_mknod<ActionT, INodeHandlerT>::postverification() {
     return ActionT::Abort(EIO);
   }
 
-  return commit([inode = std::move(inode), inode_handler = inode_handler]() {
+  return commit([this, inode = std::move(inode), inode_handler = inode_handler]() {
+    tmpfile_lookup_needs_cleanup = false;
+    pending_tmpfile_lookup = std::nullopt;
     return ActionT::INode(inode, inode_handler);
   });
 }
@@ -215,14 +256,27 @@ ActionT Inflight_mknod<ActionT, INodeHandlerT>::oplog_recovery(
   if (!record.entry().has_attr()) {
     return ActionT::Abort(EIO);
   }
+  tmpfile_lookup_needs_cleanup = false;
+  pending_tmpfile_lookup = std::nullopt;
   return ActionT::INode(record.entry().attr(), inode_handler);
 }
 
 template <typename ActionT, typename INodeHandlerT>
 InflightCallbackT<ActionT> Inflight_mknod<ActionT, INodeHandlerT>::issue() {
-  const auto name_kind = classify_dentry_name(name);
-  if (name_kind != DentryNameKind::Normal) {
-    return []() { return ActionT::Abort(EEXIST); };
+  if (tmpfile_lookup_needs_cleanup && pending_tmpfile_lookup.has_value()) {
+    auto generation = decrement_lookup_count(*pending_tmpfile_lookup, 1);
+    if (generation.has_value()) {
+      best_effort_clear_inode_use_record(*pending_tmpfile_lookup, *generation);
+    }
+    pending_tmpfile_lookup = std::nullopt;
+    tmpfile_lookup_needs_cleanup = false;
+  }
+
+  if (name.has_value()) {
+    const auto name_kind = classify_dentry_name(*name);
+    if (name_kind != DentryNameKind::Normal) {
+      return []() { return ActionT::Abort(EEXIST); };
+    }
   }
 
   a().ino = 0x47d8d31b9848016f;
@@ -251,8 +305,8 @@ InflightCallbackT<ActionT> Inflight_mknod<ActionT, INodeHandlerT>::issue() {
         a().dirinode_fetch);
   }
 
-  {
-    const auto key = pack_dentry_key(parent, name);
+  if (name.has_value()) {
+    const auto key = pack_dentry_key(parent, *name);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
         a().dirent_check);
@@ -267,4 +321,17 @@ InflightCallbackT<ActionT> Inflight_mknod<ActionT, INodeHandlerT>::issue() {
 
   return std::bind(&Inflight_mknod<ActionT, INodeHandlerT>::postverification,
                    this);
+}
+
+template <typename ActionT, typename INodeHandlerT>
+void Inflight_mknod<ActionT, INodeHandlerT>::cleanup() {
+  if (tmpfile_lookup_needs_cleanup && pending_tmpfile_lookup.has_value()) {
+    auto generation = decrement_lookup_count(*pending_tmpfile_lookup, 1);
+    if (generation.has_value()) {
+      best_effort_clear_inode_use_record(*pending_tmpfile_lookup, *generation);
+    }
+    pending_tmpfile_lookup = std::nullopt;
+    tmpfile_lookup_needs_cleanup = false;
+  }
+  Base::cleanup();
 }

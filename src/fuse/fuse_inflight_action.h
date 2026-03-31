@@ -25,9 +25,13 @@ public:
   struct INodeHandlerOpen {
     int flags = 0;
   };
+  struct INodeHandlerTmpfile {
+    int flags = 0;
+  };
   using INodeHandler =
       std::variant<INodeHandlerAttr, INodeHandlerStatxMask, INodeHandlerEntry,
-                   INodeHandlerImmediateEntry, INodeHandlerOpen>;
+                   INodeHandlerImmediateEntry, INodeHandlerOpen,
+                   INodeHandlerTmpfile>;
 
   // TODO these two things are kind of obnoxious, and stem from serializing
   // the open flags into the oplog. that's almost certainly unnecessary, but
@@ -356,6 +360,15 @@ public:
                           i->completion_error = 0;
                           (void)reply_open_with_handle(
                               i->req, static_cast<fuse_ino_t>(ino), &fi);
+                        });
+          } else if constexpr (std::is_same_v<T, INodeHandlerTmpfile>) {
+            return Self(true, false, false,
+                        [inode,
+                         flags = selected.flags](InflightT<Self> *i) mutable {
+                          struct fuse_file_info fi{};
+                          fi.flags = flags;
+                          i->completion_error = 0;
+                          (void)reply_create_with_handle(i->req, inode, &fi);
                         });
           }
         },

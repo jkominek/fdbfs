@@ -32,6 +32,8 @@ extern "C" void fdbfs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name,
                             mode_t mode, dev_t rdev);
 extern "C" void fdbfs_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
                             mode_t mode);
+extern "C" void fdbfs_tmpfile(fuse_req_t req, fuse_ino_t parent, mode_t mode,
+                              struct fuse_file_info *fi);
 extern "C" void fdbfs_unlink(fuse_req_t req, fuse_ino_t parent,
                              const char *name);
 extern "C" void fdbfs_rmdir(fuse_req_t req, fuse_ino_t parent,

@@ -22,9 +22,9 @@
 #include <string>
 #include <thread>
 
+#include "fdb_service.h"
 #include "fdbfs_ops.h"
 #include "garbage_collector.h"
-#include "fdb_service.h"
 #include "liveness.h"
 #include "util.h"
 #include "util_locks.h"
@@ -75,6 +75,9 @@ static struct fuse_lowlevel_ops fdbfs_oper = {
     .setlk = fdbfs_setlk,
     .forget_multi = fdbfs_forget_multi,
     .readdirplus = fdbfs_readdirplus,
+#if FUSE_VERSION >= FUSE_MAKE_VERSION(3, 17)
+    .tmpfile = fdbfs_tmpfile,
+#endif
 #if FUSE_VERSION >= FUSE_MAKE_VERSION(3, 18)
     .statx = fdbfs_statx,
 #endif
