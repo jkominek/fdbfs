@@ -124,7 +124,7 @@ template <typename ActionT> ActionT Inflight_statfs<ActionT>::process_status() {
 
   output->f_fsid = 0;
   output->f_flag = 0;
-  output->f_namemax = 1024;
+  output->f_namemax = MAXFILENAMELEN;
 
   return ActionT::Statfs(std::move(output));
 }
