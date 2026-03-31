@@ -17,19 +17,19 @@
 class FuseInflightAction;
 template <typename ActionT> class InflightT;
 
-// Per-filehandle serializer used to enforce request ordering for operations
-// that share a FUSE file handle.
-class FilehandleSerializer {
+// Per-filehandle state used to enforce request ordering for operations that
+// share a FUSE file handle.
+class FileHandle {
 public:
-  explicit FilehandleSerializer(fuse_ino_t ino) : ino(ino) {}
-  ~FilehandleSerializer() = default;
+  explicit FileHandle(fuse_ino_t ino) : ino(ino) {}
+  ~FileHandle() = default;
 
-  FilehandleSerializer(const FilehandleSerializer &) = delete;
-  FilehandleSerializer &operator=(const FilehandleSerializer &) = delete;
-  FilehandleSerializer(FilehandleSerializer &&) = delete;
-  FilehandleSerializer &operator=(FilehandleSerializer &&) = delete;
+  FileHandle(const FileHandle &) = delete;
+  FileHandle &operator=(const FileHandle &) = delete;
+  FileHandle(FileHandle &&) = delete;
+  FileHandle &operator=(FileHandle &&) = delete;
 
-  // Enqueue an inflight that should run under this serializer.
+  // Enqueue an inflight that should run under this filehandle.
   [[nodiscard]] bool
   enqueue_inflight(InflightT<FuseInflightAction> *inflight,
                    std::optional<ByteRange> range =
@@ -51,6 +51,7 @@ public:
   [[nodiscard]] bool is_running() const;
   [[nodiscard]] std::size_t queued_count() const;
   [[nodiscard]] fuse_ino_t inode() const { return ino; }
+  bool do_atime = true;
 
   // latest (unstored) read time, for setting atime
   std::optional<struct timespec> latest_read;
@@ -83,34 +84,6 @@ private:
   int stored_error = 0;
   bool atime_update_needed = false;
   bool atime_update_running = false;
-};
-
-struct fdbfs_filehandle {
-  explicit fdbfs_filehandle(fuse_ino_t ino, bool atime)
-      : atime(atime), atime_update_needed(false), serializer(ino) {}
-
-  // TODO include a 'noatime' flag, possibly an enum with multiple settings
-  // such as: none, normal, rel, lazy.
-  // we also need to track the latest atime here, along with whatever Inflight
-  // is trying to update the atime. only want to try running one at a time
-  // per inode, since we've got to read and then write the inode to update the
-  // atime, there's an opportunity for multiple reads to finish, incrementing
-  // the atime here before we get around to applying it to fdb. we'll need
-  // to be able to lock the value.
-
-  // immutable; if true, update atime field when appropriate.
-  bool atime;
-  // take before manipulating any of the atime fields
-  std::mutex atime_mutex;
-  bool atime_update_needed;
-  // the time of our most recent access. when updating the database,
-  // wait to take the lock and read this for as long as possible.
-  struct timespec atime_target;
-  // update this whenever we're sure the atime is a larger value.
-  // other systems might dramatically increase the atime, at which point
-  // we can avoid wasting our time attempting updates.
-  struct timespec atime_last_known;
-  FilehandleSerializer serializer;
 };
 
 #endif

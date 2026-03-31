@@ -136,7 +136,7 @@ private:
   // static behavior selected by the subclass policy.
   const InflightRuntimePolicy *policy;
 
-  // single callback for completion, intended for use by FilehandleSerializer
+  // single callback for completion, intended for use by FileHandle
   std::function<void(int err)> on_done;
   // this is sent back via the on_done callback. generally it will be
   // 0, EIO, or some other unixy error code (ENOSPC, EPERM maybe, etc)

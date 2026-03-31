@@ -248,7 +248,7 @@ extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
     return;
   }
 
-  auto fh = extract_fuse_handle<struct fdbfs_filehandle>(fi);
+  auto fh = extract_fuse_handle<FileHandle>(fi);
   if (!fh) {
     fuse_reply_err(req, EBADF);
     return;
@@ -259,8 +259,8 @@ extern "C" void fdbfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
   // with fuse_reply_buf
   auto *inflight = new Inflight_read<FuseInflightAction>(
       req, to_fdbfs_ino(ino), size, off, make_transaction());
-  auto &serializer = fh->serializer;
-  if (!serializer.enqueue_inflight(inflight,
+  auto &filehandle = *fh;
+  if (!filehandle.enqueue_inflight(inflight,
                                    offset_size_to_byte_range(off, size))) {
     delete inflight;
     fuse_reply_err(req, EBADF);
@@ -397,14 +397,14 @@ extern "C" void fdbfs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
       return;
     }
     // we're doing a truncate on an open file, so we have to be serialized
-    auto fh = extract_fuse_handle<struct fdbfs_filehandle>(fi);
+    auto fh = extract_fuse_handle<FileHandle>(fi);
     if (!fh) {
       delete inflight;
       fuse_reply_err(req, EBADF);
       return;
     }
-    auto &serializer = fh->serializer;
-    if (!serializer.enqueue_inflight(
+    auto &filehandle = *fh;
+    if (!filehandle.enqueue_inflight(
             inflight, ByteRange::closed(attr->st_size,
                                         std::numeric_limits<off_t>::max()))) {
       delete inflight;
@@ -457,7 +457,7 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
     return;
   }
 
-  auto fh = extract_fuse_handle<struct fdbfs_filehandle>(fi);
+  auto fh = extract_fuse_handle<FileHandle>(fi);
   if (!fh) {
     fuse_reply_err(req, EBADF);
     return;
@@ -474,8 +474,8 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
   auto *inflight = new Inflight_write<FuseInflightAction>(
       req, to_fdbfs_ino(ino), buffer, pos, make_transaction());
 
-  auto &serializer = fh->serializer;
-  if (!serializer.enqueue_inflight(inflight,
+  auto &filehandle = *fh;
+  if (!filehandle.enqueue_inflight(inflight,
                                    offset_size_to_byte_range(off, size))) {
     delete inflight;
     fuse_reply_err(req, EBADF);
@@ -591,7 +591,7 @@ extern "C" void fdbfs_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size) {
 // ==== flush ====
 extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
                             struct fuse_file_info *fi) {
-  auto fh = extract_fuse_handle<struct fdbfs_filehandle>(fi);
+  auto fh = extract_fuse_handle<FileHandle>(fi);
   if (!fh) {
     fuse_reply_err(req, EBADF);
     return;
@@ -617,7 +617,7 @@ extern "C" void fdbfs_flush(fuse_req_t req, fuse_ino_t ino,
     barrier_callback = [req](int err) { fuse_reply_err(req, err); };
   }
 
-  if (!fh->serializer.enqueue_barrier(barrier_callback)) {
+  if (!fh->enqueue_barrier(barrier_callback)) {
     fuse_reply_err(req, EBADF);
     return;
   }
@@ -643,20 +643,20 @@ extern "C" void fdbfs_fsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync,
 // ==== release ====
 extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
                               struct fuse_file_info *fi) {
-  auto fh = extract_fuse_handle<struct fdbfs_filehandle>(fi);
+  auto fh = extract_fuse_handle<FileHandle>(fi);
   if (!fh) {
     fuse_reply_err(req, EBADF);
     return;
   }
 
-  if (!fh->serializer.enqueue_barrier(
+  if (!fh->enqueue_barrier(
           [req, ino, fh](int err) {
             auto generation = decrement_lookup_count(to_fdbfs_ino(ino), 1);
             if (generation.has_value()) {
               best_effort_clear_inode_use_record(to_fdbfs_ino(ino),
                                                  *generation);
             }
-            fh->serializer.close();
+            fh->close();
             fuse_reply_err(req, 0);
           },
           true)) {
@@ -664,7 +664,7 @@ extern "C" void fdbfs_release(fuse_req_t req, fuse_ino_t ino,
     return;
   }
 
-  free_fuse_handle_slot<struct fdbfs_filehandle>(fi);
+  free_fuse_handle_slot<FileHandle>(fi);
 }
 
 // ==== posix_locks ====

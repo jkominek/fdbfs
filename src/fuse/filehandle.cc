@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-bool FilehandleSerializer::enqueue_inflight(
+bool FileHandle::enqueue_inflight(
     InflightT<FuseInflightAction> *inflight, std::optional<ByteRange> range) {
   std::unique_lock lk(mu);
   if (closed) {
@@ -25,8 +25,8 @@ bool FilehandleSerializer::enqueue_inflight(
   return true;
 }
 
-bool FilehandleSerializer::enqueue_barrier(std::function<void(int)> callback,
-                                           bool close_after_enqueue) {
+bool FileHandle::enqueue_barrier(std::function<void(int)> callback,
+                                 bool close_after_enqueue) {
   std::unique_lock lk(mu);
   if (closed) {
     return false;
@@ -43,7 +43,7 @@ bool FilehandleSerializer::enqueue_barrier(std::function<void(int)> callback,
   return true;
 }
 
-void FilehandleSerializer::on_inflight_done(
+void FileHandle::on_inflight_done(
     InflightT<FuseInflightAction> *inflight, int err) {
   std::unique_lock lk(mu);
   // keep any non-zero error we already have
@@ -55,7 +55,7 @@ void FilehandleSerializer::on_inflight_done(
 
   if (it->second.readonly) {
     inflight_reads -= std::make_pair(it->second.range, 1);
-    if (!err) {
+    if (!err && do_atime) {
       // just finished a successful read, update in-memory atime
       struct timespec now{};
       clock_gettime(CLOCK_REALTIME, &now);
@@ -73,27 +73,27 @@ void FilehandleSerializer::on_inflight_done(
   maybe_start_next_locked(lk);
 }
 
-void FilehandleSerializer::close() {
+void FileHandle::close() {
   std::scoped_lock lk(mu);
   closed = true;
 }
 
-bool FilehandleSerializer::is_closed() const {
+bool FileHandle::is_closed() const {
   std::scoped_lock lk(mu);
   return closed;
 }
 
-bool FilehandleSerializer::is_running() const {
+bool FileHandle::is_running() const {
   std::scoped_lock lk(mu);
   return !active.empty();
 }
 
-std::size_t FilehandleSerializer::queued_count() const {
+std::size_t FileHandle::queued_count() const {
   std::scoped_lock lk(mu);
   return queue.size();
 }
 
-void FilehandleSerializer::maybe_start_atime_update_locked(
+void FileHandle::maybe_start_atime_update_locked(
     std::unique_lock<std::mutex> &lk) {
   if (closed || atime_update_running || !atime_update_needed ||
       !latest_read.has_value()) {
@@ -124,7 +124,7 @@ void FilehandleSerializer::maybe_start_atime_update_locked(
   lk.lock();
 }
 
-void FilehandleSerializer::maybe_start_next_locked(
+void FileHandle::maybe_start_next_locked(
     std::unique_lock<std::mutex> &lk) {
   if (atime_update_running) {
     return;

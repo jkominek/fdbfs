@@ -100,6 +100,51 @@ TEST_CASE("open O_CREAT updates parent ctime/mtime",
   });
 }
 
+TEST_CASE("open O_NOATIME prevents file atime updates",
+          "[integration][open][stat]") {
+  scenario([&](FdbfsEnv &env) {
+#ifndef O_NOATIME
+    SKIP("O_NOATIME is not available on this platform");
+    return;
+#endif
+    if (is_host_backend()) {
+      SKIP("host backend does not exercise fdbfs O_NOATIME handling");
+    }
+
+    const fs::path p = env.p("noatime");
+    const std::string payload = "x";
+
+    int fd = ::open(p.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    FDBFS_REQUIRE_NONNEG(fd);
+    REQUIRE(::write(fd, payload.data(), payload.size()) ==
+            static_cast<ssize_t>(payload.size()));
+    FDBFS_REQUIRE_OK(::close(fd));
+
+    struct stat before{};
+    require_stat_mode(p, before, S_IFREG);
+
+    ::sleep(1);
+
+    fd = ::open(p.c_str(), O_RDONLY | O_NOATIME);
+    FDBFS_REQUIRE_NONNEG(fd);
+    char c = '\0';
+    REQUIRE(::read(fd, &c, 1) == 1);
+    FDBFS_REQUIRE_OK(::close(fd));
+
+    struct timespec ts{
+        .tv_sec = 0,
+        .tv_nsec = 50 * 1000 * 1000,
+    };
+    FDBFS_REQUIRE_OK(::nanosleep(&ts, nullptr));
+
+    struct stat after{};
+    require_stat_mode(p, after, S_IFREG);
+    CHECK(compare_timespec(after.st_atim, before.st_atim) == 0);
+    CHECK(compare_timespec(after.st_mtim, before.st_mtim) == 0);
+    CHECK(compare_timespec(after.st_ctim, before.st_ctim) == 0);
+  });
+}
+
 TEST_CASE("open existing file does not update parent ctime/mtime",
           "[integration][open][stat]") {
   scenario([&](FdbfsEnv &env) {

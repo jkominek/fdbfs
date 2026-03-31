@@ -8,13 +8,13 @@
 
 int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
                            struct fuse_file_info *fi) {
-  bool atime = true;
+  auto slot = new std::shared_ptr<FileHandle>(std::make_shared<FileHandle>(ino));
 #ifdef O_NOATIME
-  atime = ((fi->flags & O_NOATIME) == 0);
+  (**slot).do_atime = ((fi->flags & O_NOATIME) == 0);
+#else
+  (**slot).do_atime = true;
 #endif
-  auto slot = new std::shared_ptr<struct fdbfs_filehandle>(
-      std::make_shared<struct fdbfs_filehandle>(ino, atime));
-  *(extract_fuse_handle_slot<struct fdbfs_filehandle>(fi)) = slot;
+  *(extract_fuse_handle_slot<FileHandle>(fi)) = slot;
 
   auto generation = increment_lookup_count(static_cast<fdbfs_ino_t>(ino));
   // open should only arrive for an inode that was already looked up.
@@ -22,7 +22,7 @@ int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
 
   if (fuse_reply_open(req, fi) < 0) {
     // release won't be called if open failed.
-    free_fuse_handle_slot<struct fdbfs_filehandle>(fi);
+    free_fuse_handle_slot<FileHandle>(fi);
 
     auto clear_generation =
         decrement_lookup_count(static_cast<fdbfs_ino_t>(ino), 1);
@@ -35,13 +35,14 @@ int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
 
 int reply_create_with_handle(fuse_req_t req, const INodeRecord &inode,
                              struct fuse_file_info *fi) {
-  bool atime = true;
+  auto slot =
+      new std::shared_ptr<FileHandle>(std::make_shared<FileHandle>(inode.inode()));
 #ifdef O_NOATIME
-  atime = ((fi->flags & O_NOATIME) == 0);
+  (**slot).do_atime = ((fi->flags & O_NOATIME) == 0);
+#else
+  (**slot).do_atime = true;
 #endif
-  auto slot = new std::shared_ptr<struct fdbfs_filehandle>(
-      std::make_shared<struct fdbfs_filehandle>(inode.inode(), atime));
-  *(extract_fuse_handle_slot<struct fdbfs_filehandle>(fi)) = slot;
+  *(extract_fuse_handle_slot<FileHandle>(fi)) = slot;
 
   struct fuse_entry_param e{};
   e.ino = static_cast<fuse_ino_t>(inode.inode());
@@ -51,7 +52,7 @@ int reply_create_with_handle(fuse_req_t req, const INodeRecord &inode,
   e.entry_timeout = 0.01;
 
   if (fuse_reply_create(req, &e, fi) < 0) {
-    free_fuse_handle_slot<struct fdbfs_filehandle>(fi);
+    free_fuse_handle_slot<FileHandle>(fi);
 
     auto clear_generation =
         decrement_lookup_count(static_cast<fdbfs_ino_t>(inode.inode()), 1);

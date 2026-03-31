@@ -9,7 +9,7 @@
 
 #include "values.pb.h"
 
-struct fdbfs_filehandle;
+class FileHandle;
 
 template <typename T>
 [[nodiscard]] std::shared_ptr<T> **extract_fuse_handle_slot(
