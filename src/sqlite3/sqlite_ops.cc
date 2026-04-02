@@ -34,8 +34,6 @@
 #define SHARED_FIRST (PENDING_BYTE + 2)
 #define SHARED_SIZE 510
 
-std::unique_ptr<FdbfsRuntime> g_sqlite3_runtime;
-
 namespace {
 
 constexpr sqlite3_int64 kJulianUnixEpochMillis = 210866760000000LL;
@@ -531,7 +529,7 @@ int fdbfs_sqlite3_file_xLock(sqlite3_file *file_, int mode) {
   }
   fdbfs_ino_t ino = file->ino;
 
-  auto lockmanager = g_sqlite3_runtime->get<LockManagerService>();
+  auto lockmanager = g_fdbfs_runtime->get<LockManagerService>();
   // the sqlite3_file* is a unique thing that we can turn into
   // an arbitrary 64 bit value to use as the lock owner.
   auto lockowner = reinterpret_cast<uint64_t>(file);
@@ -641,7 +639,7 @@ int fdbfs_sqlite3_file_xUnlock(sqlite3_file *file_, int mode) {
   }
   fdbfs_ino_t ino = file->ino;
 
-  auto lockmanager = g_sqlite3_runtime->get<LockManagerService>();
+  auto lockmanager = g_fdbfs_runtime->get<LockManagerService>();
   // the sqlite3_file* is a unique thing that we can turn into
   // an arbitrary 64 bit value to use as the lock owner.
   auto lockowner = reinterpret_cast<uint64_t>(file);
@@ -727,7 +725,7 @@ int fdbfs_sqlite3_file_xCheckReservedLock(sqlite3_file *file_,
   }
 
   struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
-  auto lockmanager = g_sqlite3_runtime->get<LockManagerService>();
+  auto lockmanager = g_fdbfs_runtime->get<LockManagerService>();
 
   auto conflict = lockmanager->query_lock_conflict(
       file->ino, 0, F_RDLCK, ByteRange::right_open(PENDING_BYTE, SHARED_FIRST));

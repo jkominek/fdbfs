@@ -17,7 +17,6 @@ struct fdbfs_file {
   fdbfs_file(fdbfs_ino_t ino) : ino(ino) {}
 };
 
-extern std::unique_ptr<FdbfsRuntime> g_sqlite3_runtime;
 bool fdbfs_sqlite3_ensure_runtime();
 
 int fdbfs_sqlite3_file_xClose(sqlite3_file *file);

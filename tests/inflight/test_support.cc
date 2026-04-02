@@ -155,6 +155,7 @@ public:
         []() { return std::make_unique<GarbageCollectorService>(); });
     runtime.add_restartable<LockManagerService>(
         []() { return std::make_unique<LockManagerService>(); });
+    g_fdbfs_runtime = &runtime;
     runtime.start_all();
   }
 

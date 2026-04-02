@@ -23,6 +23,7 @@
 #include <thread>
 
 #include "fdb_service.h"
+#include "fdbfs_runtime.h"
 #include "fdbfs_ops.h"
 #include "garbage_collector.h"
 #include "liveness.h"
@@ -259,6 +260,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
   try {
+    std::unique_ptr<FdbfsRuntime> runtime_owner;
     fdbfs_set_lock_manager_service(nullptr);
     FuseSessionService session(args, opts.mountpoint, fdbfs_oper,
                                sizeof(fdbfs_oper));
@@ -271,11 +273,19 @@ int main(int argc, char *argv[]) {
     }
     */
 
-    FdbService fdb_service(fdbfs_opts.buggify != 0);
-    LivenessService liveness([se]() { fuse_session_exit(se); });
-    GarbageCollectorService gc;
-    LockManagerService lock_manager;
-    fdbfs_set_lock_manager_service(&lock_manager);
+    runtime_owner = std::make_unique<FdbfsRuntime>();
+    runtime_owner->add_persistent<FdbService>([&fdbfs_opts]() {
+      return std::make_unique<FdbService>(fdbfs_opts.buggify != 0);
+    });
+    runtime_owner->add_restartable<LivenessService>(
+        [se]() { return std::make_unique<LivenessService>([se]() { fuse_session_exit(se); }); });
+    runtime_owner->add_restartable<GarbageCollectorService>(
+        []() { return std::make_unique<GarbageCollectorService>(); });
+    runtime_owner->add_restartable<LockManagerService>(
+        []() { return std::make_unique<LockManagerService>(); });
+    g_fdbfs_runtime = runtime_owner.get();
+    runtime_owner->start_all();
+    fdbfs_set_lock_manager_service(g_fdbfs_runtime->get<LockManagerService>());
 
     if (opts.singlethread) {
       err = fuse_session_loop(se);
@@ -286,8 +296,14 @@ int main(int argc, char *argv[]) {
     }
 
     fdbfs_set_lock_manager_service(nullptr);
+    shut_it_down();
+    if (g_fdbfs_runtime != nullptr) {
+      g_fdbfs_runtime->stop_restartable();
+    }
+    runtime_owner.reset();
   } catch (const std::exception &e) {
     fdbfs_set_lock_manager_service(nullptr);
+    shut_it_down();
     fprintf(stderr, "fdbfs startup/shutdown error: %s\n", e.what());
     err = 1;
   }

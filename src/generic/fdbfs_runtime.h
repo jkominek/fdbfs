@@ -111,4 +111,6 @@ private:
   bool restartable_started = false;
 };
 
+extern FdbfsRuntime *g_fdbfs_runtime;
+
 #endif // __FDBFS_RUNTIME_H__

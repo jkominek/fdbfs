@@ -2,6 +2,8 @@
 
 #include <exception>
 
+FdbfsRuntime *g_fdbfs_runtime = nullptr;
+
 FdbfsRuntime::~FdbfsRuntime() {
   stop_restartable();
   stop_slots(persistent_services);
