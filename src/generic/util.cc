@@ -1,4 +1,6 @@
 #include "util.h"
+#include "fdb_service.h"
+#include "fdbfs_runtime.h"
 #include "liveness.h" // manages pid
 
 #include <assert.h>
@@ -75,15 +77,10 @@ int compare_proto_timespec(const Timespec &a, const struct timespec &b) {
 } // namespace
 
 unique_transaction make_transaction() {
-  unique_transaction ut;
-  FDBTransaction *t;
-  if (fdb_database_create_transaction(database, &t)) {
-    // this is catastrophic. we can no longer communicate with the database.
-    // TODO log a message or something
+  if (g_fdbfs_runtime == nullptr) {
     std::terminate();
   }
-  ut.reset(t);
-  return ut;
+  return g_fdbfs_runtime->require<FdbService>().make_transaction();
 }
 
 unique_future wrap_future(FDBFuture *f) {

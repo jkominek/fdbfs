@@ -84,6 +84,8 @@ catch2_dep = dependency('catch2-with-main', version : '>=3.4.0', required : true
 test_cpp_args = cc.get_supported_arguments(['-Wno-deprecated-declarations'])
 
 pure_helpers_sources = files(
+  'src/generic/fdb_service.cc',
+  'src/generic/fdbfs_runtime.cc',
   'src/generic/util.cc',
   'tests/test_support.cc',
   'tests/test_pure_helpers.cc',

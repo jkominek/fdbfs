@@ -16,7 +16,6 @@
 #include "util.h"
 
 // Test-local definitions for globals normally owned by fs main/liveness.
-FDBDatabase *database = nullptr;
 uint8_t BLOCKBITS = 13;
 uint32_t BLOCKSIZE = 1u << 13;
 std::vector<uint8_t> pid(PID_LENGTH, 0x42);

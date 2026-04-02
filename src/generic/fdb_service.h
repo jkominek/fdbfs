@@ -19,6 +19,7 @@ public:
   [[nodiscard]] unique_transaction make_transaction() const;
 
 private:
+  FDBDatabase *database_ = nullptr;
   pthread_t network_thread_{};
   bool network_thread_created_ = false;
   bool network_setup_done_ = false;

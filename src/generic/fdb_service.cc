@@ -7,9 +7,6 @@
 
 #include "fdb_service.h"
 
-// will be filled out before operation begins
-FDBDatabase *database = nullptr;
-
 namespace {
 
 /* Purely to get the FoundationDB network stuff running in a
@@ -49,16 +46,16 @@ FdbService::FdbService(bool buggify) {
   }
   network_thread_created_ = true;
 
-  if (fdb_create_database(nullptr, &database)) {
-    database = nullptr;
+  if (fdb_create_database(nullptr, &database_)) {
+    database_ = nullptr;
     throw std::runtime_error("fdb_create_database failed");
   }
 }
 
 FdbService::~FdbService() {
-  if (database) {
-    fdb_database_destroy(database);
-    database = nullptr;
+  if (database_) {
+    fdb_database_destroy(database_);
+    database_ = nullptr;
   }
 
   if (network_setup_done_) {
@@ -71,5 +68,12 @@ FdbService::~FdbService() {
 }
 
 unique_transaction FdbService::make_transaction() const {
-  return ::make_transaction();
+  unique_transaction ut;
+  FDBTransaction *t;
+  if (fdb_database_create_transaction(database_, &t)) {
+    // this is catastrophic. we can no longer communicate with the database.
+    std::terminate();
+  }
+  ut.reset(t);
+  return ut;
 }

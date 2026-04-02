@@ -72,8 +72,6 @@ struct fdbfs_request_ctx {
   mode_t umask;
 };
 
-// will be filled out before operation begins
-extern FDBDatabase *database;
 // must NOT be modified after it is set.
 extern std::vector<uint8_t> key_prefix;
 extern uint8_t BLOCKBITS;
