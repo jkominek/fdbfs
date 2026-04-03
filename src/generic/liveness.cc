@@ -39,42 +39,9 @@
  * records of dead ones.
  */
 
-std::vector<uint8_t> pid;
-static LivenessService *active_liveness_service = nullptr;
-
-struct ObservedPidState {
-  std::optional<ProcessTableEntry> entry;
-  std::optional<uint64_t> max_counter_seen;
-  std::optional<struct timespec> max_counter_increase_boottime;
-  uint64_t seen_in_scan_epoch = 0;
-  std::optional<struct timespec> missing_since_boottime;
-  bool malformed_entry = false;
-};
-
-std::mutex observed_pid_table_mutex;
-std::map<std::vector<uint8_t>, ObservedPidState> observed_pid_table;
-std::map<std::vector<uint8_t>, struct timespec> bogon_pids;
-uint64_t observed_pid_scan_epoch = 0;
-std::optional<struct timespec> observed_pid_last_scan_complete_boottime;
-std::atomic<uint64_t> observed_pid_consecutive_scan_failures = 0;
 constexpr time_t stale_pid_reap_after_sec = 5 * 60;
 constexpr time_t bogon_dead_after_sec = 5 * 60;
 constexpr time_t complete_scan_fresh_sec = 10;
-
-struct RawPidRecord {
-  std::vector<uint8_t> key;
-  std::vector<uint8_t> value;
-};
-struct StalePidCandidate {
-  std::vector<uint8_t> observed_pid;
-  uint64_t expected_counter;
-};
-
-struct PidScanResult {
-  std::vector<RawPidRecord> records;
-  bool complete = false;
-  struct timespec scan_boottime = {};
-};
 
 static uint64_t elapsed_seconds(const struct timespec &start,
                                 const struct timespec &end) {
@@ -110,7 +77,11 @@ void LivenessService::request_shutdown_due_to_liveness_failure() {
   }
 }
 
-static PidScanResult scan_pid_table() {
+const std::vector<uint8_t> &LivenessService::current_pid() const {
+  return current_pid_;
+}
+
+PidScanResult LivenessService::scan_pid_table() {
   const auto [start, stop] = pack_pid_subspace_range();
 
   PidScanResult result;
@@ -174,9 +145,9 @@ static PidScanResult scan_pid_table() {
   }
 }
 
-static void merge_pid_table_scan(const std::vector<RawPidRecord> &records,
-                                 bool complete_scan,
-                                 const struct timespec &scan_boottime) {
+void LivenessService::merge_pid_table_scan(
+    const std::vector<RawPidRecord> &records, bool complete_scan,
+    const struct timespec &scan_boottime) {
   const size_t pid_prefix_length = pack_pid_key({}).size();
   const size_t pid_key_length = pid_prefix_length + PID_LENGTH;
 
@@ -194,7 +165,7 @@ static void merge_pid_table_scan(const std::vector<RawPidRecord> &records,
     }
     std::vector<uint8_t> observed_pid(record.key.begin() + pid_prefix_length,
                                       record.key.end());
-    if (observed_pid == pid) {
+    if (observed_pid == current_pid_) {
       // we only cache observations for other processes.
       continue;
     }
@@ -242,7 +213,7 @@ static void merge_pid_table_scan(const std::vector<RawPidRecord> &records,
   }
 }
 
-static void refresh_observed_pid_table() {
+void LivenessService::refresh_observed_pid_table() {
   const auto result = scan_pid_table();
   if ((result.records.size() > 0) || result.complete) {
     merge_pid_table_scan(result.records, result.complete, result.scan_boottime);
@@ -253,8 +224,8 @@ static void refresh_observed_pid_table() {
   }
 }
 
-static bool reap_pid_if_still_stale(const std::vector<uint8_t> &observed_pid,
-                                    uint64_t expected_counter) {
+bool LivenessService::reap_pid_if_still_stale(
+    const std::vector<uint8_t> &observed_pid, uint64_t expected_counter) {
   auto maybe = run_sync_transaction<bool>([&](FDBTransaction *t) -> bool {
     const auto key = pack_pid_key(observed_pid);
     unique_future f =
@@ -303,7 +274,7 @@ static bool reap_pid_if_still_stale(const std::vector<uint8_t> &observed_pid,
   return *maybe;
 }
 
-static void reap_stale_pid_entries() {
+void LivenessService::reap_stale_pid_entries() {
   struct timespec now = {};
   clock_gettime(CLOCK_BOOTTIME, &now);
 
@@ -353,8 +324,9 @@ static void reap_stale_pid_entries() {
   }
 }
 
-PidLiveness classify_pid(const std::vector<uint8_t> &candidate_pid) {
-  if (candidate_pid == pid) {
+PidLiveness
+LivenessService::classify_pid(const std::vector<uint8_t> &candidate_pid) {
+  if (candidate_pid == current_pid_) {
     return PidLiveness::Alive;
   }
 
@@ -427,11 +399,11 @@ PidLiveness classify_pid(const std::vector<uint8_t> &candidate_pid) {
 
 bool LivenessService::send_pt_entry(bool startup) {
   std::function<bool(FDBTransaction *)> f = [this, startup](FDBTransaction *t) {
-    const auto key = pack_pid_key(pid);
+    const auto key = pack_pid_key(current_pid_);
     fdb_error_t err;
     if (!startup) {
-      unique_future g;
-      g.reset(fdb_transaction_get(t, key.data(), key.size(), 0));
+      unique_future g =
+          wrap_future(fdb_transaction_get(t, key.data(), key.size(), 0));
       err = fdb_future_block_until_ready(g.get());
       if (err != 0) {
         throw err;
@@ -514,31 +486,26 @@ void LivenessService::liveness_manager(std::stop_token stop_token) {
 
 LivenessService::LivenessService(std::function<void()> shutdown_cb)
     : shutdown_system(std::move(shutdown_cb)) {
-  if (active_liveness_service != nullptr) {
-    throw std::runtime_error("liveness service already active");
-  }
-  active_liveness_service = this;
-
-  pid.clear();
+  current_pid_.clear();
 
   // fill PID_LENGTH bytes from the kernel RNG.
-  pid.resize(PID_LENGTH);
+  current_pid_.resize(PID_LENGTH);
   size_t bytes_read = 0;
-  while (bytes_read < pid.size()) {
+  while (bytes_read < current_pid_.size()) {
     const ssize_t n =
-        getrandom(pid.data() + bytes_read, pid.size() - bytes_read, 0);
+        getrandom(current_pid_.data() + bytes_read,
+                  current_pid_.size() - bytes_read, 0);
     if (n < 0) {
       if (errno == EINTR) {
         continue;
       }
-      pid.clear();
-      active_liveness_service = nullptr;
+      current_pid_.clear();
       throw std::runtime_error("failed to generate liveness pid");
     }
     bytes_read += static_cast<size_t>(n);
   }
 
-  pt_entry.set_pid(pid.data(), pid.size());
+  pt_entry.set_pid(current_pid_.data(), current_pid_.size());
   pt_entry.set_liveness_counter(0);
   update_pt_entry_time();
   struct utsname buf;
@@ -547,8 +514,7 @@ LivenessService::LivenessService(std::function<void()> shutdown_cb)
 
   if (!send_pt_entry(true)) {
     pt_entry.Clear();
-    pid.clear();
-    active_liveness_service = nullptr;
+    current_pid_.clear();
     throw std::runtime_error("failed to write initial process-table entry");
   }
   refresh_observed_pid_table();
@@ -562,8 +528,7 @@ LivenessService::LivenessService(std::function<void()> shutdown_cb)
   } catch (const std::system_error &) {
     terminate.store(true, std::memory_order_relaxed);
     pt_entry.Clear();
-    pid.clear();
-    active_liveness_service = nullptr;
+    current_pid_.clear();
     throw std::runtime_error("failed to start liveness thread");
   }
 
@@ -571,8 +536,7 @@ LivenessService::LivenessService(std::function<void()> shutdown_cb)
 }
 
 LivenessService::~LivenessService() {
-  active_liveness_service = nullptr;
-  if (!started || pid.empty()) {
+  if (!started || current_pid_.empty()) {
     return;
   }
 
@@ -584,9 +548,9 @@ LivenessService::~LivenessService() {
   }
 
   // clear our PID record
-  std::function<int(FDBTransaction *)> f = [](FDBTransaction *t) {
-    fdbfs_transaction_clear_range(t, pack_pid_record_range(pid));
-    fdbfs_transaction_clear_range(t, pack_oplog_subspace_range(pid));
+  std::function<int(FDBTransaction *)> f = [this](FDBTransaction *t) {
+    fdbfs_transaction_clear_range(t, pack_pid_record_range(current_pid_));
+    fdbfs_transaction_clear_range(t, pack_oplog_subspace_range(current_pid_));
     return 0;
   };
   run_sync_transaction(f);
@@ -618,6 +582,6 @@ LivenessService::~LivenessService() {
       /* if there was failure, don't advance it; we'll try again. */;
   }
 
-  pid.clear();
+  current_pid_.clear();
   pt_entry.Clear();
 }

@@ -86,6 +86,7 @@ test_cpp_args = cc.get_supported_arguments(['-Wno-deprecated-declarations'])
 pure_helpers_sources = files(
   'src/generic/fdb_service.cc',
   'src/generic/fdbfs_runtime.cc',
+  'src/generic/liveness.cc',
   'src/generic/util.cc',
   'tests/test_support.cc',
   'tests/test_pure_helpers.cc',

@@ -11,6 +11,7 @@
 #include <memory>
 #include <stdexcept>
 
+#include "fdbfs_runtime.h"
 #include "liveness.h"
 #include "oplog.h"
 
@@ -101,7 +102,11 @@ bool InflightT<ActionT>::write_oplog_record(OpLogRecord record) {
     return false;
   }
   return static_cast<bool>(
-      fdb_set_protobuf(transaction.get(), pack_oplog_key(pid, *op_id), record));
+      fdb_set_protobuf(
+          transaction.get(),
+          pack_oplog_key(g_fdbfs_runtime->require<LivenessService>().current_pid(),
+                         *op_id),
+          record));
 }
 
 template <typename ActionT>
@@ -239,7 +244,8 @@ template <typename ActionT> void InflightT<ActionT>::start() {
       fail(EIO, "oplog check requested without op_id");
       return;
     }
-    const auto key = pack_oplog_key(pid, *op_id);
+    const auto key = pack_oplog_key(
+        g_fdbfs_runtime->require<LivenessService>().current_pid(), *op_id);
     wait_on_future(
         fdb_transaction_get(transaction.get(), key.data(), key.size(), 0),
         attempt_state().oplog_fetch);

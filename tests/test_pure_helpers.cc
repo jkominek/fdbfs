@@ -18,7 +18,7 @@
 // Test-local definitions for globals normally owned by fs main/liveness.
 uint8_t BLOCKBITS = 13;
 uint32_t BLOCKSIZE = 1u << 13;
-std::vector<uint8_t> pid(PID_LENGTH, 0x42);
+std::vector<uint8_t> test_pid(PID_LENGTH, 0x42);
 extern uint64_t next_lookup_generation;
 
 namespace {
@@ -167,8 +167,8 @@ TEST_CASE("prefix_range_end ordering and tightness", "[pure][helpers][range]") {
     }
 
     for (size_t i = 0; i + 1 < op_ids.size(); i++) {
-      const auto k = pack_oplog_key(pid, op_ids[i]);
-      const auto knext = pack_oplog_key(pid, op_ids[i + 1]);
+      const auto k = pack_oplog_key(test_pid, op_ids[i]);
+      const auto knext = pack_oplog_key(test_pid, op_ids[i + 1]);
       CHECK(knext >= prefix_range_end(k));
     }
   }
@@ -221,8 +221,8 @@ TEST_CASE("pack helpers: monotonic numeric ordering", "[pure][helpers][pack]") {
       const uint64_t a = op_ids[i];
       const uint64_t b = op_ids[i + 1];
       REQUIRE(a < b);
-      CHECK(pack_oplog_key(pid, a) < pack_oplog_key(pid, b));
-      CHECK(pack_oplog_key(pid, b) > pack_oplog_key(pid, a));
+      CHECK(pack_oplog_key(test_pid, a) < pack_oplog_key(test_pid, b));
+      CHECK(pack_oplog_key(test_pid, b) > pack_oplog_key(test_pid, a));
     }
   }
 }
@@ -254,15 +254,16 @@ TEST_CASE("pack range helpers: start-stop and containment",
       CHECK(range_contains(r, pack_pid_key(record_pid)));
     }
 
-    const auto oplog_space = pack_oplog_subspace_range(pid);
+    const auto oplog_space = pack_oplog_subspace_range(test_pid);
     CHECK(oplog_space.first < oplog_space.second);
-    CHECK(range_contains(oplog_space, pack_oplog_key(pid, 1)));
+    CHECK(range_contains(oplog_space, pack_oplog_key(test_pid, 1)));
 
+    const std::vector<uint8_t> local_pid = {};
     const auto oplog_span = pack_local_oplog_span_range(1, 5);
     CHECK(oplog_span.first < oplog_span.second);
-    CHECK(range_contains(oplog_span, pack_oplog_key(pid, 1)));
-    CHECK(range_contains(oplog_span, pack_oplog_key(pid, 4)));
-    CHECK(!range_contains(oplog_span, pack_oplog_key(pid, 5)));
+    CHECK(range_contains(oplog_span, pack_oplog_key(local_pid, 1)));
+    CHECK(range_contains(oplog_span, pack_oplog_key(local_pid, 4)));
+    CHECK(!range_contains(oplog_span, pack_oplog_key(local_pid, 5)));
 
     for (fdbfs_ino_t ino : inodes) {
       const auto inode_r = pack_inode_subspace_range(ino);

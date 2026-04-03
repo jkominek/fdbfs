@@ -28,6 +28,18 @@ thread_pool pool;
 
 namespace {
 
+const std::vector<uint8_t> &current_use_pid() {
+  static const auto *empty = new std::vector<uint8_t>;
+  if (g_fdbfs_runtime == nullptr) {
+    return *empty;
+  }
+  auto *liveness = g_fdbfs_runtime->get<LivenessService>();
+  if (liveness == nullptr) {
+    return *empty;
+  }
+  return liveness->current_pid();
+}
+
 bool trace_errors_enabled() {
   static const bool enabled = (getenv("FDBFS_TRACE_ERRORS") != nullptr);
   return enabled;
@@ -290,7 +302,8 @@ std::vector<uint8_t> pack_inode_field_key(fdbfs_ino_t ino,
 std::vector<uint8_t> pack_inode_use_key(fdbfs_ino_t ino) {
   auto key = pack_inode_key(ino);
   key.push_back(INODE_USE_PREFIX);
-  key.insert(key.end(), pid.begin(), pid.end());
+  const auto &owner_pid = current_use_pid();
+  key.insert(key.end(), owner_pid.begin(), owner_pid.end());
   return key;
 }
 
@@ -394,8 +407,9 @@ range_keys pack_oplog_subspace_range(const std::vector<uint8_t> &owner_pid) {
 range_keys pack_local_oplog_span_range(uint64_t start_op_id,
                                        uint64_t stop_op_id) {
   assert(start_op_id < stop_op_id);
-  auto start = pack_oplog_key(pid, start_op_id);
-  auto stop = pack_oplog_key(pid, stop_op_id);
+  const auto &owner_pid = current_use_pid();
+  auto start = pack_oplog_key(owner_pid, start_op_id);
+  auto stop = pack_oplog_key(owner_pid, stop_op_id);
   assert(start < stop);
   return {start, stop};
 }

@@ -13,6 +13,7 @@
 #include <string.h>
 #include <thread>
 
+#include "fdbfs_runtime.h"
 #include "garbage_collector.h"
 #include "liveness.h"
 #include "oplog.h"
@@ -118,7 +119,7 @@ void GarbageCollectorService::process_gc_candidate(
 
       std::vector<uint8_t> key(kv.key, kv.key + kv.key_length);
       std::vector<uint8_t> use_pid(kv.key + pid_offset, kv.key + kv.key_length);
-      switch (classify_pid(use_pid)) {
+      switch (g_fdbfs_runtime->require<LivenessService>().classify_pid(use_pid)) {
       case PidLiveness::Dead:
         dead_use_keys.push_back(std::move(key));
         break;
