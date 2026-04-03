@@ -39,6 +39,9 @@ namespace {
 constexpr sqlite3_int64 kJulianUnixEpochMillis = 210866760000000LL;
 constexpr sqlite3_int64 kMicrosPerSecond = 1000000LL;
 constexpr sqlite3_int64 kMillisPerSecond = 1000LL;
+thread_local const char *g_last_error = "";
+
+inline void set_last_error(const char *message) { g_last_error = message; }
 
 sqlite3_int64 current_time_millis() {
   struct timespec now;
@@ -85,6 +88,7 @@ std::optional<std::filesystem::path> normalize_sqlite_path(const char *zName) {
 int fdbfs_sqlite3_xOpen(sqlite3_vfs *, sqlite3_filename zName,
                         sqlite3_file *file, int flags, int *out_flags) {
   if (zName == nullptr || file == nullptr) {
+    set_last_error((zName == nullptr) ? "zName==nullptr" : "file==nullptr");
     return SQLITE_CANTOPEN;
   }
 
@@ -95,17 +99,22 @@ int fdbfs_sqlite3_xOpen(sqlite3_vfs *, sqlite3_filename zName,
 
   auto normalized = normalize_sqlite_path(zName);
   if (!normalized.has_value() || !normalized->has_filename()) {
+    set_last_error(!normalized.has_value() ? "!normalized.has_value()"
+                                           : "!normalized->has_filename()");
     return SQLITE_CANTOPEN;
   }
 
   const std::filesystem::path parent_path = normalized->parent_path();
   const std::string filename = normalized->filename().string();
   if (filename.empty() || filename == "." || filename == "..") {
+    set_last_error(filename.empty() ? "filename.empty()"
+                                    : "filename is special");
     return SQLITE_CANTOPEN;
   }
 
   auto parent = resolve_path(parent_path, true);
   if (!parent.has_value()) {
+    set_last_error("!parent.has_value()");
     return SQLITE_CANTOPEN;
   }
 
@@ -117,10 +126,12 @@ int fdbfs_sqlite3_xOpen(sqlite3_vfs *, sqlite3_filename zName,
   if (!target.has_value()) {
     if ((flags & SQLITE_OPEN_CREATE) == 0) {
       forget_parent();
+      set_last_error("!target.has_value()");
       return SQLITE_CANTOPEN;
     }
     if ((parent->mode() & 0300) != 0300) {
       forget_parent();
+      set_last_error("(parent->mode() & 0300) != 0300");
       return SQLITE_PERM;
     }
 
@@ -137,9 +148,11 @@ int fdbfs_sqlite3_xOpen(sqlite3_vfs *, sqlite3_filename zName,
     auto result = wait_for_sqlite_result(future);
     forget_parent();
     if (!result.has_value()) {
+      set_last_error("!result.has_value()");
       return SQLITE_CANTOPEN;
     }
     if (!std::holds_alternative<SqliteReplyINode>(*result)) {
+      set_last_error("!holds_alternative<SqliteReplyINode>");
       return SQLITE_CANTOPEN;
     }
     target = std::get<SqliteReplyINode>(*result).inode;
@@ -148,15 +161,18 @@ int fdbfs_sqlite3_xOpen(sqlite3_vfs *, sqlite3_filename zName,
   }
 
   if (target->type() != ft_regular) {
+    set_last_error("target->type()!=ft_regular");
     return SQLITE_CANTOPEN;
   }
 
   if ((flags & SQLITE_OPEN_READWRITE) != 0) {
     if ((target->mode() & 0600) != 0600) {
+      set_last_error("(target->mode() & 0600) != 0600");
       return SQLITE_PERM;
     }
   } else if ((flags & SQLITE_OPEN_READONLY) != 0) {
     if ((target->mode() & 0400) != 0400) {
+      set_last_error("(target->mode() & 0400) != 0400");
       return SQLITE_PERM;
     }
   }
@@ -173,22 +189,28 @@ int fdbfs_sqlite3_xDelete(sqlite3_vfs *, const char *zName, int syncdir) {
   (void)syncdir;
 
   if (zName == nullptr) {
+    set_last_error("zName==nullptr");
     return SQLITE_IOERR_DELETE;
   }
 
   auto normalized = normalize_sqlite_path(zName);
   if (!normalized.has_value() || !normalized->has_filename()) {
+    set_last_error(!normalized.has_value() ? "!normalized.has_value()"
+                                           : "!normalized->has_filename()");
     return SQLITE_IOERR_DELETE;
   }
 
   const std::filesystem::path parent_path = normalized->parent_path();
   const std::string filename = normalized->filename().string();
   if (filename.empty() || filename == "." || filename == "..") {
+    set_last_error(filename.empty() ? "filename.empty()"
+                                    : "filename is special");
     return SQLITE_IOERR_DELETE;
   }
 
   auto parent = resolve_path(parent_path, true);
   if (!parent.has_value()) {
+    set_last_error("!parent.has_value()");
     return SQLITE_IOERR_DELETE;
   }
 
@@ -196,6 +218,7 @@ int fdbfs_sqlite3_xDelete(sqlite3_vfs *, const char *zName, int syncdir) {
     // we act on owner permissions; so if the owner of the
     // parent directory doesn't have permission to delete the
     // file, then we refuse.
+    set_last_error("!(parent->mode() & 0300)");
     return SQLITE_IOERR_DELETE;
   }
 
@@ -208,6 +231,7 @@ int fdbfs_sqlite3_xDelete(sqlite3_vfs *, const char *zName, int syncdir) {
   auto result = wait_for_sqlite_result(future);
   forget_inodes_best_effort({parent->inode()});
   if (!result.has_value()) {
+    set_last_error("!result.has_value()");
     return SQLITE_IOERR_DELETE;
   }
   return SQLITE_OK;
@@ -216,6 +240,8 @@ int fdbfs_sqlite3_xDelete(sqlite3_vfs *, const char *zName, int syncdir) {
 int fdbfs_sqlite3_xAccess(sqlite3_vfs *, const char *zName, int flags,
                           int *result_out) {
   if (zName == nullptr || result_out == nullptr) {
+    set_last_error((zName == nullptr) ? "zName==nullptr"
+                                      : "result_out==nullptr");
     return SQLITE_IOERR_ACCESS;
   }
 
@@ -253,16 +279,22 @@ int fdbfs_sqlite3_xAccess(sqlite3_vfs *, const char *zName, int flags,
 int fdbfs_sqlite3_xFullPathname(sqlite3_vfs *, const char *zName, int nOut,
                                 char *zOut) {
   if (zName == nullptr || zOut == nullptr || nOut <= 0) {
+    set_last_error((zName == nullptr)
+                       ? "zName==nullptr"
+                       : ((zOut == nullptr) ? "zOut==nullptr" : "nOut<=0"));
     return SQLITE_CANTOPEN;
   }
 
   auto normalized = normalize_sqlite_path(zName);
   if (!normalized.has_value() || !normalized->has_filename()) {
+    set_last_error(!normalized.has_value() ? "!normalized.has_value()"
+                                           : "!normalized->has_filename()");
     return SQLITE_CANTOPEN;
   }
 
   const std::string normalized_name = normalized->string();
   if (normalized_name.size() + 1 > static_cast<size_t>(nOut)) {
+    set_last_error("normalized_name.size()+1>nOut");
     return SQLITE_ERROR;
   }
 
@@ -272,9 +304,15 @@ int fdbfs_sqlite3_xFullPathname(sqlite3_vfs *, const char *zName, int nOut,
 
 void *fdbfs_sqlite3_xDlOpen(sqlite3_vfs *, const char *zFilename) {
   if (zFilename == nullptr) {
+    set_last_error("zFilename==nullptr");
     return nullptr;
   }
-  return dlopen(zFilename, RTLD_NOW | RTLD_LOCAL);
+  void *handle = dlopen(zFilename, RTLD_NOW | RTLD_LOCAL);
+  if (handle == nullptr) {
+    set_last_error("dlopen failed");
+    return nullptr;
+  }
+  return handle;
 }
 
 void fdbfs_sqlite3_xDlError(sqlite3_vfs *, int nByte, char *zErrMsg) {
@@ -293,9 +331,15 @@ void fdbfs_sqlite3_xDlError(sqlite3_vfs *, int nByte, char *zErrMsg) {
 void (*fdbfs_sqlite3_xDlSym(sqlite3_vfs *, void *handle,
                             const char *zSymbol))(void) {
   if (handle == nullptr || zSymbol == nullptr) {
+    set_last_error((handle == nullptr) ? "handle==nullptr"
+                                       : "zSymbol==nullptr");
     return nullptr;
   }
-  return reinterpret_cast<void (*)(void)>(dlsym(handle, zSymbol));
+  auto *sym = reinterpret_cast<void (*)(void)>(dlsym(handle, zSymbol));
+  if (sym == nullptr) {
+    set_last_error("dlsym failed");
+  }
+  return sym;
 }
 
 void fdbfs_sqlite3_xDlClose(sqlite3_vfs *, void *handle) {
@@ -338,6 +382,7 @@ int fdbfs_sqlite3_xSleep(sqlite3_vfs *, int microseconds) {
 
 int fdbfs_sqlite3_xCurrentTime(sqlite3_vfs *, double *time_out) {
   if (time_out == nullptr) {
+    set_last_error("time_out==nullptr");
     return SQLITE_IOERR;
   }
   *time_out = static_cast<double>(current_time_millis()) / 86400000.0;
@@ -346,13 +391,14 @@ int fdbfs_sqlite3_xCurrentTime(sqlite3_vfs *, double *time_out) {
 
 int fdbfs_sqlite3_xGetLastError(sqlite3_vfs *, int nByte, char *zErrMsg) {
   if (zErrMsg != nullptr && nByte > 0) {
-    zErrMsg[0] = '\0';
+    std::snprintf(zErrMsg, static_cast<size_t>(nByte), "%s", g_last_error);
   }
   return 0;
 }
 
 int fdbfs_sqlite3_xCurrentTimeInt64(sqlite3_vfs *, sqlite3_int64 *time_out) {
   if (time_out == nullptr) {
+    set_last_error("time_out==nullptr");
     return SQLITE_IOERR;
   }
   *time_out = current_time_millis();
@@ -363,6 +409,7 @@ int fdbfs_sqlite3_xCurrentTimeInt64(sqlite3_vfs *, sqlite3_int64 *time_out) {
 
 int fdbfs_sqlite3_file_xClose(sqlite3_file *file_) {
   if (file_ == nullptr) {
+    set_last_error("file_==nullptr");
     return SQLITE_MISUSE;
   }
   struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
@@ -374,11 +421,13 @@ int fdbfs_sqlite3_file_xClose(sqlite3_file *file_) {
 int fdbfs_sqlite3_file_xRead(sqlite3_file *file_, void *buf, int iAmt,
                              sqlite3_int64 iOfst) {
   if (file_ == nullptr || buf == nullptr) {
+    set_last_error((file_ == nullptr) ? "file_==nullptr" : "buf==nullptr");
     return SQLITE_MISUSE;
   }
   assert(iAmt <= 1024 * 1024);
   struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
   if (iAmt < 0 || iOfst < 0) {
+    set_last_error((iAmt < 0) ? "iAmt<0" : "iOfst<0");
     return SQLITE_IOERR_READ;
   }
 
@@ -391,9 +440,11 @@ int fdbfs_sqlite3_file_xRead(sqlite3_file *file_, void *buf, int iAmt,
 
   auto result = wait_for_sqlite_result(future);
   if (!result.has_value()) {
+    set_last_error("!result.has_value()");
     return SQLITE_IOERR_READ;
   }
   if (!std::holds_alternative<SqliteReplyBuf>(*result)) {
+    set_last_error("!holds_alternative<SqliteReplyBuf>");
     return SQLITE_IOERR_READ;
   }
 
@@ -405,6 +456,7 @@ int fdbfs_sqlite3_file_xRead(sqlite3_file *file_, void *buf, int iAmt,
   if (got < static_cast<size_t>(iAmt)) {
     std::memset(static_cast<uint8_t *>(buf) + got, 0,
                 static_cast<size_t>(iAmt) - got);
+    set_last_error("short read");
     return SQLITE_IOERR_SHORT_READ;
   }
   return SQLITE_OK;
@@ -413,11 +465,13 @@ int fdbfs_sqlite3_file_xRead(sqlite3_file *file_, void *buf, int iAmt,
 int fdbfs_sqlite3_file_xWrite(sqlite3_file *file_, const void *buf, int iAmt,
                               sqlite3_int64 iOfst) {
   if (file_ == nullptr || buf == nullptr) {
+    set_last_error((file_ == nullptr) ? "file_==nullptr" : "buf==nullptr");
     return SQLITE_MISUSE;
   }
   assert(iAmt <= 128 * 1024);
   struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
   if (iAmt < 0 || iOfst < 0) {
+    set_last_error((iAmt < 0) ? "iAmt<0" : "iOfst<0");
     return SQLITE_IOERR_WRITE;
   }
 
@@ -433,12 +487,15 @@ int fdbfs_sqlite3_file_xWrite(sqlite3_file *file_, const void *buf, int iAmt,
 
   auto result = wait_for_sqlite_result(future);
   if (!result.has_value()) {
+    set_last_error("!result.has_value()");
     return SQLITE_IOERR_WRITE;
   }
   if (!std::holds_alternative<SqliteReplyWrite>(*result)) {
+    set_last_error("!holds_alternative<SqliteReplyWrite>");
     return SQLITE_IOERR_WRITE;
   }
   if (std::get<SqliteReplyWrite>(*result).size != static_cast<size_t>(iAmt)) {
+    set_last_error("reply.size!=iAmt");
     return SQLITE_IOERR_WRITE;
   }
   return SQLITE_OK;
@@ -446,6 +503,7 @@ int fdbfs_sqlite3_file_xWrite(sqlite3_file *file_, const void *buf, int iAmt,
 
 int fdbfs_sqlite3_file_xTruncate(sqlite3_file *file_, sqlite3_int64 size) {
   if (file_ == nullptr) {
+    set_last_error("file_==nullptr");
     return SQLITE_MISUSE;
   }
   struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
@@ -462,6 +520,7 @@ int fdbfs_sqlite3_file_xTruncate(sqlite3_file *file_, sqlite3_int64 size) {
 
   auto result = wait_for_sqlite_result(future);
   if (!result.has_value()) {
+    set_last_error("!result.has_value()");
     return SQLITE_IOERR_TRUNCATE;
   }
   return SQLITE_OK;
@@ -469,6 +528,7 @@ int fdbfs_sqlite3_file_xTruncate(sqlite3_file *file_, sqlite3_int64 size) {
 
 int fdbfs_sqlite3_file_xSync(sqlite3_file *file_, int flags) {
   if (file_ == nullptr) {
+    set_last_error("file_==nullptr");
     return SQLITE_MISUSE;
   }
   struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
@@ -487,6 +547,7 @@ int fdbfs_sqlite3_file_xSync(sqlite3_file *file_, int flags) {
   });
 
   if (future.get()) {
+    set_last_error("fsync_async returned error");
     return SQLITE_IOERR_FSYNC;
   }
   return SQLITE_OK;
@@ -494,6 +555,7 @@ int fdbfs_sqlite3_file_xSync(sqlite3_file *file_, int flags) {
 
 int fdbfs_sqlite3_file_xFileSize(sqlite3_file *file_, sqlite3_int64 *size_out) {
   if (file_ == nullptr || size_out == nullptr) {
+    set_last_error((file_ == nullptr) ? "file_==nullptr" : "size_out==nullptr");
     return SQLITE_MISUSE;
   }
   struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
@@ -507,10 +569,12 @@ int fdbfs_sqlite3_file_xFileSize(sqlite3_file *file_, sqlite3_int64 *size_out) {
   auto result = wait_for_sqlite_result(future);
   if (!result.has_value()) {
     *size_out = 0;
+    set_last_error("!result.has_value()");
     return SQLITE_IOERR_FSTAT;
   }
   if (!std::holds_alternative<SqliteReplyINode>(*result)) {
     *size_out = 0;
+    set_last_error("!holds_alternative<SqliteReplyINode>");
     return SQLITE_IOERR_FSTAT;
   }
 
@@ -521,6 +585,7 @@ int fdbfs_sqlite3_file_xFileSize(sqlite3_file *file_, sqlite3_int64 *size_out) {
 
 int fdbfs_sqlite3_file_xLock(sqlite3_file *file_, int mode) {
   if (file_ == nullptr) {
+    set_last_error("file_==nullptr");
     return SQLITE_MISUSE;
   }
   struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
@@ -548,6 +613,7 @@ int fdbfs_sqlite3_file_xLock(sqlite3_file *file_, int mode) {
   switch (mode) {
   case SQLITE_LOCK_NONE: {
     // should only be seen in xUnlock
+    set_last_error("mode==SQLITE_LOCK_NONE");
     return SQLITE_MISUSE;
   }
   case SQLITE_LOCK_SHARED: {
@@ -564,8 +630,10 @@ int fdbfs_sqlite3_file_xLock(sqlite3_file *file_, int mode) {
           stage1_promise->set_value(result);
         });
     stage1_future.wait();
-    if (!stage1_future.get().has_value())
+    if (!stage1_future.get().has_value()) {
+      set_last_error("!stage1.has_value()");
       return SQLITE_ERROR;
+    }
 
     // okay now we can take a read lock on one of the shared bytes
     auto stage2_promise =
@@ -615,10 +683,14 @@ int fdbfs_sqlite3_file_xLock(sqlite3_file *file_, int mode) {
 
   future.wait();
   auto result = future.get();
-  if (!result.has_value())
+  if (!result.has_value()) {
+    set_last_error("!result.has_value()");
     return SQLITE_ERROR;
-  if (failed)
+  }
+  if (failed) {
+    set_last_error("failed");
     return SQLITE_ERROR;
+  }
 
   // now if we were upgrading, then release what we previously held.
   // if file->currentlock == SQLITE_LOCK_SHARED, then release
@@ -631,6 +703,7 @@ int fdbfs_sqlite3_file_xLock(sqlite3_file *file_, int mode) {
 
 int fdbfs_sqlite3_file_xUnlock(sqlite3_file *file_, int mode) {
   if (file_ == nullptr) {
+    set_last_error("file_==nullptr");
     return SQLITE_MISUSE;
   }
   struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
@@ -708,6 +781,7 @@ int fdbfs_sqlite3_file_xUnlock(sqlite3_file *file_, int mode) {
     break;
   }
   default:
+    set_last_error("invalid mode");
     return SQLITE_MISUSE;
   }
 
@@ -718,6 +792,8 @@ int fdbfs_sqlite3_file_xUnlock(sqlite3_file *file_, int mode) {
 int fdbfs_sqlite3_file_xCheckReservedLock(sqlite3_file *file_,
                                           int *result_out) {
   if (file_ == nullptr || result_out == nullptr) {
+    set_last_error((file_ == nullptr) ? "file_==nullptr"
+                                      : "result_out==nullptr");
     return SQLITE_MISUSE;
   }
   if (result_out != nullptr) {
@@ -738,6 +814,7 @@ int fdbfs_sqlite3_file_xCheckReservedLock(sqlite3_file *file_,
 
 int fdbfs_sqlite3_file_xFileControl(sqlite3_file *file_, int, void *) {
   if (file_ == nullptr) {
+    set_last_error("file_==nullptr");
     return SQLITE_MISUSE;
   }
   struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
