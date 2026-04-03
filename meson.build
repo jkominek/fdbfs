@@ -25,6 +25,7 @@ if sqlite3_dep.found()
     includes : true,
   )
 endif
+dl_dep = cc.find_library('dl', required : false)
 
 have_fuse = fuse_dep.found()
 have_sqlite3 = sqlite3_dep.found() and cc.has_header('sqlite3.h', dependencies : sqlite3_compile_deps)
@@ -146,6 +147,36 @@ test(
   timeout : 90,
   is_parallel : false,
 )
+
+if have_sqlite3
+  sqlite3_direct_sources = files(
+    'tests/sqlite3_direct/test_file_ops.cc',
+    'tests/sqlite3_direct/test_registration.cc',
+    'tests/sqlite3_direct/test_support.cc',
+    'tests/sqlite3_direct/test_vfs_paths.cc',
+  )
+
+  sqlite3_direct_exe = executable(
+    'fdbfs_sqlite3_direct_tests',
+    sqlite3_direct_sources,
+    dependencies : [catch2_dep] + sqlite3_compile_deps +
+      (dl_dep.found() ? [dl_dep] : []),
+    include_directories : project_includes,
+    cpp_args : test_cpp_args,
+    link_args : ['-Wl,--export-dynamic'],
+  )
+
+  test(
+    'fdbfs_sqlite3_direct',
+    sqlite3_direct_exe,
+    env : [
+      'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+      'FDBFS_SQLITE3_LIB=' + sqlite3_vfs_lib.full_path(),
+    ],
+    timeout : 120,
+    is_parallel : false,
+  )
+endif
 
 test_sources = files(
   'tests/fuse_integrated/test_dir_nlink.cc',
