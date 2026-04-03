@@ -7,6 +7,7 @@ protoc = find_program('protoc', required : true)
 
 fuse_dep = dependency('fuse3', required : false)
 sqlite3_dep = dependency('sqlite3', required : false)
+sqlite3_prog = find_program('sqlite3', required : false)
 core_deps = [
   dependency('libzstd'),
   dependency('protobuf'),
@@ -176,6 +177,33 @@ if have_sqlite3
     timeout : 120,
     is_parallel : false,
   )
+
+  if sqlite3_prog.found()
+    sqlite3_integrated_sources = files(
+      'tests/sqlite3_integrated/test_basic.cc',
+      'tests/sqlite3_integrated/test_support.cc',
+    )
+
+    sqlite3_integrated_exe = executable(
+      'fdbfs_sqlite3_integrated_tests',
+      sqlite3_integrated_sources,
+      dependencies : [catch2_dep],
+      include_directories : project_includes,
+      cpp_args : test_cpp_args,
+    )
+
+    test(
+      'fdbfs_sqlite3_integrated',
+      sqlite3_integrated_exe,
+      env : [
+        'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+        'FDBFS_SQLITE3_LIB=' + sqlite3_vfs_lib.full_path(),
+        'FDBFS_SQLITE3_BIN=' + sqlite3_prog.full_path(),
+      ],
+      timeout : 180,
+      is_parallel : false,
+    )
+  endif
 endif
 
 test_sources = files(

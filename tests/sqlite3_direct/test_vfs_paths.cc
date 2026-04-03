@@ -48,5 +48,14 @@ TEST_CASE("sqlite3 vfs open without create fails for missing file",
   CHECK(vfs->xOpen(vfs, "/missing.db", file.file(), SQLITE_OPEN_READWRITE,
                    nullptr) == SQLITE_CANTOPEN);
   CHECK(file.file()->pMethods == nullptr);
+  CHECK(sqlite3_last_error(vfs) == "!target.has_value()");
 }
 
+TEST_CASE("sqlite3 vfs last error reports argument checks",
+          "[sqlite3_direct][vfs][errors]") {
+  sqlite3_direct_reset_database();
+  sqlite3_vfs *vfs = sqlite3_direct_vfs();
+
+  CHECK(vfs->xFullPathname(vfs, nullptr, 16, nullptr) == SQLITE_CANTOPEN);
+  CHECK(sqlite3_last_error(vfs) == "zName==nullptr");
+}

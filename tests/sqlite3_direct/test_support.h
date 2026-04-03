@@ -35,6 +35,7 @@ private:
 std::string sqlite3_full_path(std::string_view path);
 int sqlite3_access(sqlite3_vfs *vfs, std::string_view path, int flags);
 int sqlite3_delete(sqlite3_vfs *vfs, std::string_view path);
+std::string sqlite3_last_error(sqlite3_vfs *vfs);
 
 Sqlite3DirectFile sqlite3_open_file(sqlite3_vfs *vfs, std::string_view path,
                                     int flags, int *out_flags = nullptr);

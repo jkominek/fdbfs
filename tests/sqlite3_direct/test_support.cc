@@ -172,6 +172,12 @@ int sqlite3_delete(sqlite3_vfs *vfs, std::string_view path) {
   return vfs->xDelete(vfs, std::string(path).c_str(), 0);
 }
 
+std::string sqlite3_last_error(sqlite3_vfs *vfs) {
+  char buf[128] = {};
+  CHECK(vfs->xGetLastError(vfs, sizeof(buf), buf) == 0);
+  return std::string(buf);
+}
+
 Sqlite3DirectFile sqlite3_open_file(sqlite3_vfs *vfs, std::string_view path,
                                     int flags, int *out_flags) {
   Sqlite3DirectFile holder(vfs);
