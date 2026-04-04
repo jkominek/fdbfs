@@ -496,6 +496,7 @@ range_keys pack_fileblock_single_range(fdbfs_ino_t ino, uint64_t block) {
 //   pack_fileblock_key(ino, stop_block + 1) ) with max-block fallback.
 range_keys pack_fileblock_span_range(fdbfs_ino_t ino, uint64_t start_block,
                                      uint64_t stop_block) {
+  assert(start_block <= stop_block);
   auto start = pack_fileblock_key(ino, start_block);
   std::vector<uint8_t> stop;
   if (stop_block != std::numeric_limits<uint64_t>::max()) {

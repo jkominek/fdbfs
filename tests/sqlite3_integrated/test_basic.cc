@@ -93,3 +93,22 @@ TEST_CASE("sqlite3 shell processes can alternate inserts into one database",
   }
   CHECK(verify_result.stdout_text == expected);
 }
+
+TEST_CASE("sqlite3 shell can scan many medium blobs and sum their lengths",
+          "[sqlite3_integrated][basic][reads]") {
+  sqlite3_integrated_reset_database();
+
+  Sqlite3CliProcess sqlite("large-scan.db");
+  auto result = sqlite.run(
+      "CREATE TABLE t(data BLOB);\n"
+      "WITH RECURSIVE cnt(x) AS ("
+      "  VALUES(1)"
+      "  UNION ALL"
+      "  SELECT x + 1 FROM cnt WHERE x < 100"
+      ")\n"
+      "INSERT INTO t(data) SELECT randomblob(32768) FROM cnt;\n"
+      "SELECT COUNT(*), SUM(length(data)) FROM t;");
+
+  CHECK(result.stderr_text.empty());
+  CHECK(result.stdout_text == "100|3276800\n");
+}

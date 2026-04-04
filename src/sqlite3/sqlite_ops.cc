@@ -8,6 +8,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <sys/random.h>
 #include <unistd.h>
@@ -20,6 +21,7 @@
 #include "generic/unlink.hpp"
 #include "generic/util_locks.h"
 #include "generic/write.hpp"
+#include "io_plan.h"
 #include "sqlite_inflight_action.h"
 #include "sqlite_ops.h"
 #include "util_sqlite.h"
@@ -418,85 +420,171 @@ int fdbfs_sqlite3_file_xClose(sqlite3_file *file_) {
   return SQLITE_OK;
 }
 
-int fdbfs_sqlite3_file_xRead(sqlite3_file *file_, void *buf, int iAmt,
+int fdbfs_sqlite3_file_xRead(sqlite3_file *file_, void *buf_, int iAmt,
                              sqlite3_int64 iOfst) {
-  if (file_ == nullptr || buf == nullptr) {
-    set_last_error((file_ == nullptr) ? "file_==nullptr" : "buf==nullptr");
+  if (file_ == nullptr || buf_ == nullptr) {
+    set_last_error((file_ == nullptr) ? "file_==nullptr" : "buf_==nullptr");
     return SQLITE_MISUSE;
   }
-  assert(iAmt <= 1024 * 1024);
-  struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
   if (iAmt < 0 || iOfst < 0) {
     set_last_error((iAmt < 0) ? "iAmt<0" : "iOfst<0");
     return SQLITE_IOERR_READ;
   }
+  struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
+  uint8_t *buf = static_cast<uint8_t *>(buf_);
+  if (iAmt == 0) {
+    return SQLITE_OK;
+  }
 
-  auto req = std::make_unique<SqliteRequest>();
-  auto future = take_future(req.get());
-  auto *inflight = new Inflight_read<SqliteInflightAction>(
-      req.get(), file->ino, static_cast<size_t>(iAmt),
-      static_cast<off_t>(iOfst), make_transaction());
-  inflight->start();
+  constexpr size_t kMaxReadSize = 1024 * 1024;
+  assert((kMaxReadSize % BLOCKSIZE) == 0);
 
-  auto result = wait_for_sqlite_result(future);
-  if (!result.has_value()) {
-    set_last_error("!result.has_value()");
+  const uint64_t request_begin = static_cast<uint64_t>(iOfst);
+  const uint64_t request_size = static_cast<uint64_t>(iAmt);
+  const uint64_t request_end = request_begin + request_size;
+  if (request_end < request_begin ||
+      request_end > static_cast<uint64_t>(std::numeric_limits<off_t>::max())) {
+    set_last_error("iOfst+iAmt overflow");
     return SQLITE_IOERR_READ;
   }
-  if (!std::holds_alternative<SqliteReplyBuf>(*result)) {
-    set_last_error("!holds_alternative<SqliteReplyBuf>");
-    return SQLITE_IOERR_READ;
+
+  auto plan = fdbfs_sqlite3_plan_io(iOfst, iAmt, kMaxReadSize);
+
+  struct PendingRead {
+    size_t dest_offset;
+    size_t requested_size;
+    std::unique_ptr<SqliteRequest> req;
+    std::future<SqliteResult> future;
+  };
+
+  std::vector<PendingRead> pending_reads;
+  pending_reads.reserve(plan.size());
+
+  size_t dest_offset = 0;
+  for (const SqliteIoChunk &chunk : plan) {
+    auto req = std::make_unique<SqliteRequest>();
+    auto future = take_future(req.get());
+    auto *inflight = new Inflight_read<SqliteInflightAction>(
+        req.get(), file->ino, chunk.size, static_cast<off_t>(chunk.offset),
+        make_transaction());
+    inflight->start();
+
+    pending_reads.push_back(PendingRead{
+        .dest_offset = dest_offset,
+        .requested_size = chunk.size,
+        .req = std::move(req),
+        .future = std::move(future),
+    });
+
+    dest_offset += chunk.size;
   }
 
-  auto &reply = std::get<SqliteReplyBuf>(*result);
-  const size_t got = std::min(reply.bytes.size(), static_cast<size_t>(iAmt));
-  if (got > 0) {
-    std::memcpy(buf, reply.bytes.data(), got);
+  bool saw_short_read = false;
+  for (PendingRead &pending : pending_reads) {
+    auto result = wait_for_sqlite_result(pending.future);
+    if (!result.has_value()) {
+      set_last_error("!result.has_value()");
+      return SQLITE_IOERR_READ;
+    }
+    if (!std::holds_alternative<SqliteReplyBuf>(*result)) {
+      set_last_error("!holds_alternative<SqliteReplyBuf>");
+      return SQLITE_IOERR_READ;
+    }
+
+    auto &reply = std::get<SqliteReplyBuf>(*result);
+    const size_t got = std::min(reply.bytes.size(),
+                                static_cast<size_t>(pending.requested_size));
+    if (got > 0) {
+      std::memcpy(buf + pending.dest_offset, reply.bytes.data(), got);
+    }
+    if (got < pending.requested_size) {
+      std::memset(buf + pending.dest_offset + got, 0,
+                  pending.requested_size - got);
+      saw_short_read = true;
+    }
   }
-  if (got < static_cast<size_t>(iAmt)) {
-    std::memset(static_cast<uint8_t *>(buf) + got, 0,
-                static_cast<size_t>(iAmt) - got);
+
+  if (saw_short_read) {
     set_last_error("short read");
     return SQLITE_IOERR_SHORT_READ;
   }
   return SQLITE_OK;
 }
 
-int fdbfs_sqlite3_file_xWrite(sqlite3_file *file_, const void *buf, int iAmt,
+int fdbfs_sqlite3_file_xWrite(sqlite3_file *file_, const void *buf_, int iAmt,
                               sqlite3_int64 iOfst) {
-  if (file_ == nullptr || buf == nullptr) {
-    set_last_error((file_ == nullptr) ? "file_==nullptr" : "buf==nullptr");
+  if (file_ == nullptr || buf_ == nullptr) {
+    set_last_error((file_ == nullptr) ? "file_==nullptr" : "buf_==nullptr");
     return SQLITE_MISUSE;
   }
-  assert(iAmt <= 128 * 1024);
-  struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
   if (iAmt < 0 || iOfst < 0) {
     set_last_error((iAmt < 0) ? "iAmt<0" : "iOfst<0");
     return SQLITE_IOERR_WRITE;
   }
+  struct fdbfs_file *file = reinterpret_cast<struct fdbfs_file *>(file_);
+  const uint8_t *buf = static_cast<const uint8_t *>(buf_);
+  if (iAmt == 0) {
+    return SQLITE_OK;
+  }
 
-  const uint8_t *start = static_cast<const uint8_t *>(buf);
-  std::vector<uint8_t> bytes(start, start + iAmt);
+  constexpr size_t kMaxWriteSize = 128 * 1024;
+  assert((kMaxWriteSize % BLOCKSIZE) == 0);
 
-  auto req = std::make_unique<SqliteRequest>();
-  auto future = take_future(req.get());
-  auto *inflight = new Inflight_write<SqliteInflightAction>(
-      req.get(), file->ino, std::move(bytes),
-      WritePosOffset{.off = static_cast<off_t>(iOfst)}, make_transaction());
-  inflight->start();
-
-  auto result = wait_for_sqlite_result(future);
-  if (!result.has_value()) {
-    set_last_error("!result.has_value()");
+  const uint64_t request_begin = static_cast<uint64_t>(iOfst);
+  const uint64_t request_size = static_cast<uint64_t>(iAmt);
+  const uint64_t request_end = request_begin + request_size;
+  if (request_end < request_begin ||
+      request_end > static_cast<uint64_t>(std::numeric_limits<off_t>::max())) {
+    set_last_error("iOfst+iAmt overflow");
     return SQLITE_IOERR_WRITE;
   }
-  if (!std::holds_alternative<SqliteReplyWrite>(*result)) {
-    set_last_error("!holds_alternative<SqliteReplyWrite>");
-    return SQLITE_IOERR_WRITE;
+
+  auto plan = fdbfs_sqlite3_plan_io(iOfst, iAmt, kMaxWriteSize);
+
+  struct PendingWrite {
+    size_t requested_size;
+    std::unique_ptr<SqliteRequest> req;
+    std::future<SqliteResult> future;
+  };
+
+  std::vector<PendingWrite> pending_writes;
+  pending_writes.reserve(plan.size());
+
+  size_t source_offset = 0;
+  for (const SqliteIoChunk &chunk : plan) {
+    std::vector<uint8_t> bytes(buf + source_offset, buf + source_offset + chunk.size);
+
+    auto req = std::make_unique<SqliteRequest>();
+    auto future = take_future(req.get());
+    auto *inflight = new Inflight_write<SqliteInflightAction>(
+        req.get(), file->ino, std::move(bytes),
+        WritePosOffset{.off = static_cast<off_t>(chunk.offset)},
+        make_transaction());
+    inflight->start();
+
+    pending_writes.push_back(PendingWrite{
+        .requested_size = chunk.size,
+        .req = std::move(req),
+        .future = std::move(future),
+    });
+
+    source_offset += chunk.size;
   }
-  if (std::get<SqliteReplyWrite>(*result).size != static_cast<size_t>(iAmt)) {
-    set_last_error("reply.size!=iAmt");
-    return SQLITE_IOERR_WRITE;
+
+  for (PendingWrite &pending : pending_writes) {
+    auto result = wait_for_sqlite_result(pending.future);
+    if (!result.has_value()) {
+      set_last_error("!result.has_value()");
+      return SQLITE_IOERR_WRITE;
+    }
+    if (!std::holds_alternative<SqliteReplyWrite>(*result)) {
+      set_last_error("!holds_alternative<SqliteReplyWrite>");
+      return SQLITE_IOERR_WRITE;
+    }
+    if (std::get<SqliteReplyWrite>(*result).size != pending.requested_size) {
+      set_last_error("reply.size!=requested_size");
+      return SQLITE_IOERR_WRITE;
+    }
   }
   return SQLITE_OK;
 }

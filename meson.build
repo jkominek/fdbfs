@@ -151,7 +151,9 @@ test(
 
 if have_sqlite3
   sqlite3_direct_sources = files(
+    'src/sqlite3/io_plan.cc',
     'tests/sqlite3_direct/test_file_ops.cc',
+    'tests/sqlite3_direct/test_io_plan.cc',
     'tests/sqlite3_direct/test_registration.cc',
     'tests/sqlite3_direct/test_support.cc',
     'tests/sqlite3_direct/test_vfs_paths.cc',

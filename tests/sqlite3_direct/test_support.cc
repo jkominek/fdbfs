@@ -77,6 +77,8 @@ void ensure_sqlite3_direct_database_ready() {
 
 } // namespace
 
+uint32_t BLOCKSIZE = 1u << 13;
+
 extern "C" int sqlite3_vfs_register(sqlite3_vfs *vfs, int) {
   g_registered_vfs = vfs;
   return SQLITE_OK;

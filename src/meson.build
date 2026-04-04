@@ -30,6 +30,7 @@ generic_source_files += files(
 )
 
 sqlite3_source_files += files(
+    'sqlite3/io_plan.cc',
     'sqlite3/lib.cc',
     'sqlite3/sqlite_ops.cc',
     'sqlite3/util_sqlite.cc',
