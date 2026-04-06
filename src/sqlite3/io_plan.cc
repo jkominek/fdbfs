@@ -1,4 +1,4 @@
-#include "io_plan.h"
+#include "sqlite3/io_plan.h"
 
 #include <cassert>
 

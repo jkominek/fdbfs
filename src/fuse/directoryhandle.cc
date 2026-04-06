@@ -1,8 +1,7 @@
-#include "directoryhandle.h"
-
-#include "atomicfield.hpp"
+#include "fuse/directoryhandle.h"
+#include "generic/atomicfield.hpp"
 #include "generic/util.h"
-#include "void_inflight_action.h"
+#include "generic/void_inflight_action.h"
 
 #include <time.h>
 

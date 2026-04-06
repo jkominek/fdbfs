@@ -1,14 +1,14 @@
-#include "util_fuse.h"
-
 #include <assert.h>
 #include <fcntl.h>
 
-#include "filehandle.h"
+#include "fuse/filehandle.h"
+#include "fuse/util_fuse.h"
 #include "generic/util.h"
 
 int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
                            struct fuse_file_info *fi) {
-  auto slot = new std::shared_ptr<FileHandle>(std::make_shared<FileHandle>(ino));
+  auto slot =
+      new std::shared_ptr<FileHandle>(std::make_shared<FileHandle>(ino));
 #ifdef O_NOATIME
   (**slot).do_atime = ((fi->flags & O_NOATIME) == 0);
 #else
@@ -35,8 +35,8 @@ int reply_open_with_handle(fuse_req_t req, fuse_ino_t ino,
 
 int reply_create_with_handle(fuse_req_t req, const INodeRecord &inode,
                              struct fuse_file_info *fi) {
-  auto slot =
-      new std::shared_ptr<FileHandle>(std::make_shared<FileHandle>(inode.inode()));
+  auto slot = new std::shared_ptr<FileHandle>(
+      std::make_shared<FileHandle>(inode.inode()));
 #ifdef O_NOATIME
   (**slot).do_atime = ((fi->flags & O_NOATIME) == 0);
 #else

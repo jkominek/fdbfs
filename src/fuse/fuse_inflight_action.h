@@ -6,9 +6,9 @@
 #include <memory>
 #include <string>
 
-#include "directoryhandle.h"
+#include "fuse/directoryhandle.h"
+#include "fuse/util_fuse.h"
 #include "generic/inflight.h"
-#include "util_fuse.h"
 
 class FuseInflightAction {
 public:
@@ -362,14 +362,14 @@ public:
                               i->req, static_cast<fuse_ino_t>(ino), &fi);
                         });
           } else if constexpr (std::is_same_v<T, INodeHandlerTmpfile>) {
-            return Self(true, false, false,
-                        [inode,
-                         flags = selected.flags](InflightT<Self> *i) mutable {
-                          struct fuse_file_info fi{};
-                          fi.flags = flags;
-                          i->completion_error = 0;
-                          (void)reply_create_with_handle(i->req, inode, &fi);
-                        });
+            return Self(
+                true, false, false,
+                [inode, flags = selected.flags](InflightT<Self> *i) mutable {
+                  struct fuse_file_info fi{};
+                  fi.flags = flags;
+                  i->completion_error = 0;
+                  (void)reply_create_with_handle(i->req, inode, &fi);
+                });
           }
         },
         selector);

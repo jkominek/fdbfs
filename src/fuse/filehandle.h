@@ -12,7 +12,7 @@
 #include <mutex>
 #include <unordered_map>
 
-#include "util.h"
+#include "generic/util.h"
 
 class FuseInflightAction;
 template <typename ActionT> class InflightT;

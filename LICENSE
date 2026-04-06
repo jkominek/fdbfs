@@ -1,4 +1,6 @@
-Copyright 2019 Jay Kominek
+# The Bulk of the Project
+
+Copyright 2019-2026 Jay Kominek
 
 Permission to use, copy, modify, and/or distribute this software for
 any purpose with or without fee is hereby granted, provided that the
@@ -14,3 +16,7 @@ PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
 TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 
+# thirdparty
+
+Each project is included as a git submodule, and contains its own
+license, which you should consult directly.

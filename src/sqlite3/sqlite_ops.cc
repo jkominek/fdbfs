@@ -21,10 +21,10 @@
 #include "generic/unlink.hpp"
 #include "generic/util_locks.h"
 #include "generic/write.hpp"
-#include "io_plan.h"
-#include "sqlite_inflight_action.h"
-#include "sqlite_ops.h"
-#include "util_sqlite.h"
+#include "sqlite3/io_plan.h"
+#include "sqlite3/sqlite_inflight_action.h"
+#include "sqlite3/sqlite_ops.h"
+#include "sqlite3/util_sqlite.h"
 
 // Special offsets in files used by sqlite for emulating
 // its internal locking system using posix locks.

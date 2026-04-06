@@ -1,13 +1,13 @@
-#include "filehandle.h"
-#include "atomicfield.hpp"
-#include "fuse_inflight_action.h"
-#include "void_inflight_action.h"
+#include "fuse/filehandle.h"
+#include "fuse/fuse_inflight_action.h"
+#include "generic/atomicfield.hpp"
+#include "generic/void_inflight_action.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 
-bool FileHandle::enqueue_inflight(
-    InflightT<FuseInflightAction> *inflight, std::optional<ByteRange> range) {
+bool FileHandle::enqueue_inflight(InflightT<FuseInflightAction> *inflight,
+                                  std::optional<ByteRange> range) {
   std::unique_lock lk(mu);
   if (closed) {
     return false;
@@ -43,8 +43,8 @@ bool FileHandle::enqueue_barrier(std::function<void(int)> callback,
   return true;
 }
 
-void FileHandle::on_inflight_done(
-    InflightT<FuseInflightAction> *inflight, int err) {
+void FileHandle::on_inflight_done(InflightT<FuseInflightAction> *inflight,
+                                  int err) {
   std::unique_lock lk(mu);
   // keep any non-zero error we already have
   if (stored_error == 0)
@@ -124,8 +124,7 @@ void FileHandle::maybe_start_atime_update_locked(
   lk.lock();
 }
 
-void FileHandle::maybe_start_next_locked(
-    std::unique_lock<std::mutex> &lk) {
+void FileHandle::maybe_start_next_locked(std::unique_lock<std::mutex> &lk) {
   if (atime_update_running) {
     return;
   }

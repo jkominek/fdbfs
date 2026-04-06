@@ -6,7 +6,7 @@
 #include <sqlite3ext.h>
 
 #include "generic/fdbfs_runtime.h"
-#include "util.h"
+#include "generic/util.h"
 
 struct fdbfs_file {
   sqlite3_file base; // must remain first

@@ -10,13 +10,13 @@
 #include <sqlite3ext.h>
 SQLITE_EXTENSION_INIT1
 
-#include "fdb_service.h"
-#include "fdbfs_runtime.h"
-#include "garbage_collector.h"
-#include "liveness.h"
-#include "sqlite_ops.h"
-#include "util.h"
-#include "util_locks.h"
+#include "generic/fdb_service.h"
+#include "generic/fdbfs_runtime.h"
+#include "generic/garbage_collector.h"
+#include "generic/liveness.h"
+#include "generic/util.h"
+#include "generic/util_locks.h"
+#include "sqlite3/sqlite_ops.h"
 #include "values.pb.h"
 
 uint8_t BLOCKBITS = 13;

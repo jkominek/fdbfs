@@ -22,13 +22,13 @@
 #include <string>
 #include <thread>
 
-#include "fdb_service.h"
-#include "fdbfs_runtime.h"
-#include "fdbfs_ops.h"
-#include "garbage_collector.h"
-#include "liveness.h"
-#include "util.h"
-#include "util_locks.h"
+#include "fuse/fdbfs_ops.h"
+#include "generic/fdb_service.h"
+#include "generic/fdbfs_runtime.h"
+#include "generic/garbage_collector.h"
+#include "generic/liveness.h"
+#include "generic/util.h"
+#include "generic/util_locks.h"
 #include "values.pb.h"
 
 uint8_t BLOCKBITS;
@@ -277,8 +277,10 @@ int main(int argc, char *argv[]) {
     runtime_owner->add_persistent<FdbService>([&fdbfs_opts]() {
       return std::make_unique<FdbService>(fdbfs_opts.buggify != 0);
     });
-    runtime_owner->add_restartable<LivenessService>(
-        [se]() { return std::make_unique<LivenessService>([se]() { fuse_session_exit(se); }); });
+    runtime_owner->add_restartable<LivenessService>([se]() {
+      return std::make_unique<LivenessService>(
+          [se]() { fuse_session_exit(se); });
+    });
     runtime_owner->add_restartable<GarbageCollectorService>(
         []() { return std::make_unique<GarbageCollectorService>(); });
     runtime_owner->add_restartable<LockManagerService>(

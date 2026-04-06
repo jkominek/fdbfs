@@ -1,5 +1,3 @@
-#include "util_sqlite.h"
-
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -10,7 +8,8 @@
 #include "generic/getinode.hpp"
 #include "generic/lookup.hpp"
 #include "generic/void_inflight_action.h"
-#include "sqlite_inflight_action.h"
+#include "sqlite3/sqlite_inflight_action.h"
+#include "sqlite3/util_sqlite.h"
 
 namespace {
 

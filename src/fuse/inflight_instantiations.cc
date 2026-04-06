@@ -1,4 +1,4 @@
-#include "fuse_inflight_action.h"
+#include "fuse/fuse_inflight_action.h"
 #include "generic/inflight.h"
 
 template class InflightT<FuseInflightAction>;

@@ -10,11 +10,11 @@
 #include <string>
 #include <vector>
 
-#include "fdbfs_ops.h"
-
-#include "directoryhandle.h"
-#include "filehandle.h"
-#include "fuse_inflight_action.h"
+#include "fuse/directoryhandle.h"
+#include "fuse/fdbfs_ops.h"
+#include "fuse/filehandle.h"
+#include "fuse/fuse_inflight_action.h"
+#include "fuse/util_fuse.h"
 #include "generic/forget.hpp"
 #include "generic/fsync.h"
 #include "generic/getinode.hpp"
@@ -36,7 +36,6 @@
 #include "generic/util.h"
 #include "generic/util_locks.h"
 #include "generic/write.hpp"
-#include "util_fuse.h"
 
 namespace {
 [[nodiscard]] inline fdbfs_ino_t to_fdbfs_ino(fuse_ino_t ino) {

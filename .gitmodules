@@ -1,3 +1,4 @@
 [submodule "thirdparty/concurrentqueue"]
 	path = thirdparty/concurrentqueue
 	url = https://github.com/cameron314/concurrentqueue.git
+	shallow = true
