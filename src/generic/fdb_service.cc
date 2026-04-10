@@ -25,7 +25,9 @@ void *network_runner(void *ignore) {
 
 } // namespace
 
-FdbService::FdbService(bool buggify) {
+FdbService::FdbService(bool buggify) : FdbService(nullptr, buggify) {}
+
+FdbService::FdbService(const char *cluster_file, bool buggify) {
   if (fdb_select_api_version(FDB_API_VERSION)) {
     throw std::runtime_error("fdb_select_api_version failed");
   }
@@ -46,7 +48,7 @@ FdbService::FdbService(bool buggify) {
   }
   network_thread_created_ = true;
 
-  if (fdb_create_database(nullptr, &database_)) {
+  if (fdb_create_database(cluster_file, &database_)) {
     database_ = nullptr;
     throw std::runtime_error("fdb_create_database failed");
   }

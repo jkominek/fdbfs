@@ -43,20 +43,25 @@ constexpr size_t kListExportsBatchSize = 128;
 
 struct PluginConfig {
   std::optional<std::string> key_prefix;
+  std::optional<std::string> cluster_file;
 
   int set_option(const char *key, const char *value) {
     if ((key == nullptr) || (value == nullptr)) {
       nbdkit_set_error(EINVAL);
       return -1;
     }
+    if (value[0] == '\0') {
+      nbdkit_set_error(EINVAL);
+      return -1;
+    }
 
     std::string_view key_sv(key);
     if (key_sv == "key_prefix") {
-      if (value[0] == '\0') {
-        nbdkit_set_error(EINVAL);
-        return -1;
-      }
       key_prefix = value;
+      return 0;
+    }
+    if (key_sv == "cluster_file") {
+      cluster_file = value;
       return 0;
     }
 
@@ -80,6 +85,13 @@ struct PluginConfig {
       return *key_prefix;
     }
     return kDefaultKeyPrefix;
+  }
+
+  const char *selected_cluster_file() const {
+    if (cluster_file.has_value()) {
+      return cluster_file->c_str();
+    }
+    return nullptr;
   }
 };
 
@@ -488,8 +500,10 @@ static int fdbfs_after_fork(void) {
 
   try {
     auto runtime = std::make_unique<FdbfsRuntime>();
-    runtime->add_persistent<FdbService>(
-        []() { return std::make_unique<FdbService>(false); });
+    runtime->add_persistent<FdbService>([]() {
+      return std::make_unique<FdbService>(g_config.selected_cluster_file(),
+                                          false);
+    });
     runtime->add_restartable<LivenessService>(
         []() { return std::make_unique<LivenessService>([]() {}); });
     runtime->add_restartable<GarbageCollectorService>(
@@ -597,7 +611,9 @@ static struct nbdkit_plugin plugin = {
     .unload = fdbfs_unload,
     .config = fdbfs_config,
     .config_complete = fdbfs_config_complete,
-    .config_help = "key_prefix=<prefix>  FoundationDB key prefix (default: FS)",
+    .config_help =
+        "key_prefix=<prefix>    FoundationDB key prefix (default: FS)\n"
+        "cluster_file=<path>   FoundationDB cluster file path",
     .open = fdbfs_open,
     .close = fdbfs_close,
     .get_size = fdbfs_get_size,

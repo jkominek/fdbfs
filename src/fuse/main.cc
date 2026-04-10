@@ -145,6 +145,7 @@ private:
 
 struct fdbfs_options {
   const char *key_prefix;
+  const char *cluster_file;
   int buggify;
 };
 
@@ -153,6 +154,7 @@ struct fdbfs_options {
 static const struct fuse_opt fdbfs_option_spec[] = {
     FDBFS_OPT("--key-prefix=%s", key_prefix),
     FDBFS_OPT("-k %s", key_prefix),
+    FDBFS_OPT("--cluster-file=%s", cluster_file),
     FDBFS_OPT("--buggify", buggify),
     FUSE_OPT_END,
 };
@@ -196,7 +198,8 @@ int main(int argc, char *argv[]) {
   struct fuse_session *se;
   struct fuse_cmdline_opts opts;
   struct fuse_loop_config config;
-  struct fdbfs_options fdbfs_opts = {.key_prefix = NULL, .buggify = 0};
+  struct fdbfs_options fdbfs_opts = {
+      .key_prefix = NULL, .cluster_file = NULL, .buggify = 0};
   int err = 1;
 
   setvbuf(stderr, nullptr, _IONBF, 0);
@@ -211,6 +214,10 @@ int main(int argc, char *argv[]) {
       (fdbfs_opts.key_prefix == NULL) ? "FS" : fdbfs_opts.key_prefix;
   if (selected_key_prefix[0] == '\0') {
     fprintf(stderr, "fdbfs: --key-prefix must be non-empty\n");
+    return 1;
+  }
+  if ((fdbfs_opts.cluster_file != NULL) && (fdbfs_opts.cluster_file[0] == '\0')) {
+    fprintf(stderr, "fdbfs: --cluster-file must be non-empty\n");
     return 1;
   }
 
@@ -243,6 +250,7 @@ int main(int argc, char *argv[]) {
     printf("fdbfs options:\n");
     printf("    --key-prefix=STR, -k STR   FoundationDB key prefix "
            "(default: FS)\n");
+    printf("    --cluster-file=PATH        FoundationDB cluster file path\n");
     printf("    --buggify                  Enable FoundationDB client "
            "buggify\n\n");
     fuse_cmdline_help();
@@ -275,7 +283,8 @@ int main(int argc, char *argv[]) {
 
     runtime_owner = std::make_unique<FdbfsRuntime>();
     runtime_owner->add_persistent<FdbService>([&fdbfs_opts]() {
-      return std::make_unique<FdbService>(fdbfs_opts.buggify != 0);
+      return std::make_unique<FdbService>(fdbfs_opts.cluster_file,
+                                          fdbfs_opts.buggify != 0);
     });
     runtime_owner->add_restartable<LivenessService>([se]() {
       return std::make_unique<LivenessService>(

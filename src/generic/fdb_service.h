@@ -9,6 +9,7 @@
 class FdbService {
 public:
   explicit FdbService(bool buggify);
+  FdbService(const char *cluster_file, bool buggify);
   ~FdbService();
 
   FdbService(const FdbService &) = delete;
