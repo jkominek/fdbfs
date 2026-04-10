@@ -36,6 +36,10 @@ sqlite3_source_files += files(
     'sqlite3/util_sqlite.cc',
 )
 
+nbdkit_source_files += files(
+    'nbdkit/plugin.cc',
+)
+
 if have_fuse
     project_source_files += fuse_source_files + generic_source_files
 endif
