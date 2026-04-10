@@ -490,7 +490,7 @@ void InflightT<ActionT>::error_checker(FDBFuture *f, void *p) {
   }
 
   // and finally toss the next bit of work onto the thread pool queue
-  pool.push_task([inflight, f]() { inflight->future_ready(f); });
+  pool().push_task([inflight, f]() { inflight->future_ready(f); });
 }
 
 // Inflight_markusedT

@@ -44,8 +44,8 @@
 #include "thread_pool.hpp"
 #include "values.pb.h"
 
-// Pool used for processing our callbacks
-extern thread_pool pool;
+// Pool used for processing our callbacks.
+[[nodiscard]] extern thread_pool &pool();
 
 #define INODE_PREFIX 'i'
 #define INODE_FIELD_PREFIX 0x00

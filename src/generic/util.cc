@@ -24,7 +24,10 @@
 
 #include "values.pb.h"
 
-thread_pool pool;
+thread_pool &pool() {
+  static thread_pool callback_pool;
+  return callback_pool;
+}
 
 namespace {
 
