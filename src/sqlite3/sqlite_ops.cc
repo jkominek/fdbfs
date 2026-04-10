@@ -557,7 +557,7 @@ int fdbfs_sqlite3_file_xWrite(sqlite3_file *file_, const void *buf_, int iAmt,
     auto req = std::make_unique<SqliteRequest>();
     auto future = take_future(req.get());
     auto *inflight = new Inflight_write<SqliteInflightAction>(
-        req.get(), file->ino, std::move(bytes),
+        req.get(), file->ino, WritePayloadBytes{.bytes = std::move(bytes)},
         WritePosOffset{.off = static_cast<off_t>(chunk.offset)},
         make_transaction());
     inflight->start();

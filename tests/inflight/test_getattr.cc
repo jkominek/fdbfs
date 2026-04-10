@@ -128,7 +128,8 @@ void read_single_byte_and_flush_atime(fdbfs_ino_t ino) {
 void write_single_byte(fdbfs_ino_t ino, off_t off, uint8_t value) {
   std::vector<uint8_t> buffer{value};
   auto write_op = start_test_op<Inflight_write<TestInflightAction>>(
-      ino, std::move(buffer), WritePosOffset{.off = off},
+      ino, WritePayloadBytes{.bytes = std::move(buffer)},
+      WritePosOffset{.off = off},
       inflight_test_services().make_transaction());
   TestResult write_result = wait_test_result(write_op);
   REQUIRE(write_result.has_value());

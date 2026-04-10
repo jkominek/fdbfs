@@ -227,10 +227,6 @@ set_fileblock(FDBTransaction *, const std::vector<uint8_t> &,
 [[nodiscard]] extern std::expected<size_t, int>
 decode_block(const FDBKeyValue *, int, std::span<uint8_t>, size_t);
 
-#ifndef DEBUG
-#define DEBUG 0
-#endif // DEBUG
-
 struct FDBTransactionDeleter {
   void operator()(FDBTransaction *t) { fdb_transaction_destroy(t); }
 };

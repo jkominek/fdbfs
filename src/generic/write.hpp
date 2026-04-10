@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <limits>
+#include <type_traits>
+#include <variant>
 
 #include "fsync.h"
 #include "inflight.h"
@@ -81,6 +83,14 @@ decode_fileblock_identity(const FDBKeyValue &kv) {
  * ???
  */
 
+struct WritePayloadBytes {
+  std::vector<uint8_t> bytes;
+};
+struct WritePayloadZeroes {
+  size_t size;
+};
+using WritePayload = std::variant<WritePayloadBytes, WritePayloadZeroes>;
+
 struct WritePosOffset {
   off_t off;
 };
@@ -116,15 +126,19 @@ public:
   using Base::wait_on_future;
   using Base::write_oplog_result;
 
-  Inflight_write(req_t, fdbfs_ino_t, std::vector<uint8_t>, WritePos,
+  Inflight_write(req_t, fdbfs_ino_t, WritePayload, WritePos,
                  unique_transaction);
   InflightCallbackT<ActionT> issue();
 
 private:
   const fdbfs_ino_t ino;
-  const std::vector<uint8_t> buffer;
+  const WritePayload payload;
   const WritePos pos;
   // const off_t off;
+
+  size_t payload_size() const;
+  bool payload_is_zeroes() const;
+  const std::vector<uint8_t> &payload_bytes() const;
 
   fdb_error_t configure_transaction() override;
   std::expected<INodeRecord, ActionT> decode_inode();
@@ -137,12 +151,35 @@ private:
 
 template <typename ActionT>
 Inflight_write<ActionT>::Inflight_write(req_t req, fdbfs_ino_t ino,
-                                        std::vector<uint8_t> buffer,
-                                        WritePos pos,
+                                        WritePayload payload, WritePos pos,
                                         unique_transaction transaction)
-    : Base(req, std::move(transaction)), ino(ino), buffer(std::move(buffer)),
+    : Base(req, std::move(transaction)), ino(ino), payload(std::move(payload)),
       pos(pos) {
   track_inode_for_fsync(ino);
+}
+
+template <typename ActionT>
+size_t Inflight_write<ActionT>::payload_size() const {
+  return std::visit(
+      [](const auto &payload) -> size_t {
+        using PayloadT = std::decay_t<decltype(payload)>;
+        if constexpr (std::is_same_v<PayloadT, WritePayloadBytes>) {
+          return payload.bytes.size();
+        } else {
+          return payload.size;
+        }
+      },
+      payload);
+}
+
+template <typename ActionT>
+bool Inflight_write<ActionT>::payload_is_zeroes() const {
+  return std::holds_alternative<WritePayloadZeroes>(payload);
+}
+
+template <typename ActionT>
+const std::vector<uint8_t> &Inflight_write<ActionT>::payload_bytes() const {
+  return std::get<WritePayloadBytes>(payload).bytes;
 }
 
 template <typename ActionT>
@@ -154,7 +191,7 @@ fdb_error_t Inflight_write<ActionT>::configure_transaction() {
 template <typename ActionT>
 bool Inflight_write<ActionT>::write_success_oplog_result() {
   OpLogResultWrite result;
-  result.set_size(buffer.size());
+  result.set_size(payload_size());
   return write_oplog_result(result);
 }
 
@@ -210,9 +247,9 @@ template <typename ActionT> ActionT Inflight_write<ActionT>::check() {
 
   // indicates that we must update the stored inode for correctness
   bool inode_updated = false;
-  if (inode.size() < (a().off.value() + buffer.size())) {
+  if (inode.size() < (a().off.value() + payload_size())) {
     // we need to expand size of the file
-    inode.set_size(a().off.value() + buffer.size());
+    inode.set_size(a().off.value() + payload_size());
     inode_updated = true;
   }
 
@@ -263,7 +300,7 @@ template <typename ActionT> ActionT Inflight_write<ActionT>::check() {
 
     const uint64_t copy_start_off = a().off.value() % BLOCKSIZE;
     const uint64_t copy_start_size =
-        std::min(buffer.size(), BLOCKSIZE - copy_start_off);
+        std::min(payload_size(), BLOCKSIZE - copy_start_off);
     // we don't know whats in the existing block, so we've got to plan on
     // it being full.
     const uint64_t total_buffer_size = BLOCKSIZE;
@@ -283,8 +320,12 @@ template <typename ActionT> ActionT Inflight_write<ActionT>::check() {
         return ActionT::Abort(EIO);
       }
     }
-    bcopy(buffer.data(), output_buffer.data() + copy_start_off,
-          copy_start_size);
+    if (payload_is_zeroes()) {
+      bzero(output_buffer.data() + copy_start_off, copy_start_size);
+    } else {
+      bcopy(payload_bytes().data(), output_buffer.data() + copy_start_off,
+            copy_start_size);
+    }
     auto key = pack_fileblock_key(ino, a().off.value() / BLOCKSIZE);
     const auto sret = set_fileblock(
         transaction.get(), key, std::span<const uint8_t>(output_buffer), false);
@@ -307,8 +348,8 @@ template <typename ActionT> ActionT Inflight_write<ActionT>::check() {
       return ActionT::Abort(EIO);
     }
 
-    const uint64_t copysize = ((a().off.value() + buffer.size()) % BLOCKSIZE);
-    const uint64_t bufcopystart = buffer.size() - copysize;
+    const uint64_t copysize = ((a().off.value() + payload_size()) % BLOCKSIZE);
+    const uint64_t bufcopystart = payload_size() - copysize;
     const uint64_t total_buffer_size = BLOCKSIZE;
     std::vector<uint8_t> output_buffer(total_buffer_size, 0);
     if (kvcount > 0) {
@@ -317,7 +358,7 @@ template <typename ActionT> ActionT Inflight_write<ActionT>::check() {
         return ActionT::Abort(EIO);
       }
       const uint64_t expected_block =
-          (a().off.value() + buffer.size()) / BLOCKSIZE;
+          (a().off.value() + payload_size()) / BLOCKSIZE;
       if ((identity->first != ino) || (identity->second != expected_block)) {
         return ActionT::Abort(EIO);
       }
@@ -327,9 +368,14 @@ template <typename ActionT> ActionT Inflight_write<ActionT>::check() {
         return ActionT::Abort(EIO);
       }
     }
-    bcopy(buffer.data() + bufcopystart, output_buffer.data(), copysize);
+    if (payload_is_zeroes()) {
+      bzero(output_buffer.data(), copysize);
+    } else {
+      bcopy(payload_bytes().data() + bufcopystart, output_buffer.data(),
+            copysize);
+    }
     auto key =
-        pack_fileblock_key(ino, (a().off.value() + buffer.size()) / BLOCKSIZE);
+        pack_fileblock_key(ino, (a().off.value() + payload_size()) / BLOCKSIZE);
     // we don't need to preserve whatever is in the output_buffer
     // past the end of the file.
     // TODO we used to calculate the size of the block with:
@@ -349,7 +395,7 @@ template <typename ActionT> ActionT Inflight_write<ActionT>::check() {
     return ActionT::Abort(EIO);
   }
 
-  return commit([&]() { return ActionT::Write(buffer.size()); });
+  return commit([&]() { return ActionT::Write(payload_size()); });
 }
 
 template <typename ActionT>
@@ -389,7 +435,7 @@ InflightCallbackT<ActionT> Inflight_write<ActionT>::block_fetch() {
 
   const auto [conflict_start_key, conflict_stop_key] =
       pack_fileblock_span_range(ino, a().off.value() / BLOCKSIZE,
-                                (a().off.value() + buffer.size()) / BLOCKSIZE);
+                                (a().off.value() + payload_size()) / BLOCKSIZE);
   // we're generating just a single conflict range for all of
   // the fileblocks that we're writing to: less to send across
   // the network, and for the resolver to process.
@@ -423,8 +469,8 @@ InflightCallbackT<ActionT> Inflight_write<ActionT>::block_fetch() {
     iter_start = a().off.value() / BLOCKSIZE;
   }
 
-  if (((a().off.value() + buffer.size()) % BLOCKSIZE) != 0) {
-    const int stop_block = (a().off.value() + buffer.size()) / BLOCKSIZE;
+  if (((a().off.value() + payload_size()) % BLOCKSIZE) != 0) {
+    const int stop_block = (a().off.value() + payload_size()) / BLOCKSIZE;
     // if the block is identical to the start block, there's no
     // sense fetching and processing it twice.
     if ((!doing_start_block) || (stop_block != (a().off.value() / BLOCKSIZE))) {
@@ -441,7 +487,7 @@ InflightCallbackT<ActionT> Inflight_write<ActionT>::block_fetch() {
     }
     iter_stop = stop_block;
   } else {
-    iter_stop = (a().off.value() + buffer.size()) / BLOCKSIZE;
+    iter_stop = (a().off.value() + payload_size()) / BLOCKSIZE;
   }
 
   {
@@ -450,28 +496,30 @@ InflightCallbackT<ActionT> Inflight_write<ActionT>::block_fetch() {
     // We're doing this in the spot where it ought to be safe even
     // if RYW is turned on.
     const auto range =
-        offset_size_to_range_keys(ino, a().off.value(), buffer.size());
+        offset_size_to_range_keys(ino, a().off.value(), payload_size());
     fdbfs_transaction_clear_range(transaction.get(), range);
   }
 
   // now while those block requests are coming back to us, we can
   // process the whole blocks in the middle of the write, that don't
   // require a read-write cycle.
-  for (int mid_block = iter_start; mid_block < iter_stop; mid_block++) {
-    const auto key = pack_fileblock_key(ino, mid_block);
-    // Offset into user write buffer for this full block:
-    // file_offset(mid_block_start) - write_start_offset.
-    const size_t block_buffer_offset =
-        static_cast<size_t>(mid_block) * BLOCKSIZE -
-        static_cast<size_t>(a().off.value());
-    const uint8_t *block = buffer.data() + block_buffer_offset;
-    const auto sret =
-        set_fileblock(transaction.get(), key,
-                      std::span<const uint8_t>(block, BLOCKSIZE), false);
-    // safe to discard the result here for normal operation, since we
-    // cleared the whole range beforehand.
-    if (!sret) {
-      return []() { return ActionT::Abort(EIO); };
+  if (!payload_is_zeroes()) {
+    for (int mid_block = iter_start; mid_block < iter_stop; mid_block++) {
+      const auto key = pack_fileblock_key(ino, mid_block);
+      // Offset into user write buffer for this full block:
+      // file_offset(mid_block_start) - write_start_offset.
+      const size_t block_buffer_offset =
+          static_cast<size_t>(mid_block) * BLOCKSIZE -
+          static_cast<size_t>(a().off.value());
+      const uint8_t *block = payload_bytes().data() + block_buffer_offset;
+      const auto sret =
+          set_fileblock(transaction.get(), key,
+                        std::span<const uint8_t>(block, BLOCKSIZE), false);
+      // safe to discard the result here for normal operation, since we
+      // cleared the whole range beforehand.
+      if (!sret) {
+        return []() { return ActionT::Abort(EIO); };
+      }
     }
   }
 

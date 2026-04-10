@@ -471,7 +471,8 @@ extern "C" void fdbfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 
   std::vector<uint8_t> buffer(buf, buf + size);
   auto *inflight = new Inflight_write<FuseInflightAction>(
-      req, to_fdbfs_ino(ino), buffer, pos, make_transaction());
+      req, to_fdbfs_ino(ino),
+      WritePayloadBytes{.bytes = std::move(buffer)}, pos, make_transaction());
 
   auto &filehandle = *fh;
   if (!filehandle.enqueue_inflight(inflight,
