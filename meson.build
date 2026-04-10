@@ -8,6 +8,9 @@ protoc = find_program('protoc', required: true)
 fuse_dep = dependency('fuse3', required: false)
 sqlite3_dep = dependency('sqlite3', required: false)
 sqlite3_prog = find_program('sqlite3', required: false)
+nbdkit_prog = find_program('nbdkit', required: false)
+nbdinfo_prog = find_program('nbdinfo', required: false)
+nbdcopy_prog = find_program('nbdcopy', required: false)
 nbdkit_dep = dependency('nbdkit', required: false)
 core_deps = [
   dependency('libzstd'),
@@ -40,6 +43,7 @@ project_includes = include_directories(
   'tests',
   'tests/inflight',
   'tests/fuse_integrated',
+  'tests/nbdkit_integrated',
   'thirdparty/CLI11',
   'thirdparty/concurrentqueue',
 
@@ -173,6 +177,53 @@ test(
   timeout: 90,
   is_parallel: false,
 )
+
+if nbdkit_dep.found()
+  nbdkit_integrated_sources = files(
+    'src/generic/fdb_service.cc',
+    'src/generic/fdbfs_runtime.cc',
+    'src/generic/garbage_collector.cc',
+    'src/generic/liveness.cc',
+    'src/generic/oplog.cc',
+    'src/generic/util.cc',
+    'src/generic/util_locks.cc',
+    'src/generic/util_unlink.cc',
+    'tests/nbdkit_integrated/test_basic.cc',
+    'tests/nbdkit_integrated/test_support.cc',
+  )
+
+  nbdkit_integrated_exe = executable(
+    'fdbfs_nbdkit_integrated_tests',
+    nbdkit_integrated_sources,
+    generated,
+    dependencies: [catch2_dep] + core_deps,
+    include_directories: project_includes,
+    cpp_args: test_cpp_args,
+  )
+
+  nbdkit_test_env = [
+    'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+    'FDBFS_NBDKIT_PLUGIN=' + nbdkit_fdbfs_plugin.full_path(),
+  ]
+  if nbdkit_prog.found()
+    nbdkit_test_env += 'FDBFS_NBDKIT_BIN=' + nbdkit_prog.full_path()
+  endif
+  if nbdinfo_prog.found()
+    nbdkit_test_env += 'FDBFS_NBDINFO_BIN=' + nbdinfo_prog.full_path()
+  endif
+  if nbdcopy_prog.found()
+    nbdkit_test_env += 'FDBFS_NBDCOPY_BIN=' + nbdcopy_prog.full_path()
+  endif
+
+  test(
+    'fdbfs_nbdkit_integrated',
+    nbdkit_integrated_exe,
+    env: nbdkit_test_env,
+    depends: nbdkit_fdbfs_plugin,
+    timeout: 120,
+    is_parallel: false,
+  )
+endif
 
 if have_sqlite3
   sqlite3_direct_sources = files(

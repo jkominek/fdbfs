@@ -100,7 +100,7 @@ public:
       }
       ++seen_count;
       last_seen_name.assign(name);
-      if ((inode->mode() & S_IFMT) != S_IFREG) {
+      if (inode->type() != ft_regular) {
         return {};
       }
       names.emplace_back(name);
