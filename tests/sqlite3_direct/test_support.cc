@@ -31,21 +31,6 @@ fs::path required_env_path(const char *name) {
   return fs::path(v);
 }
 
-std::string shell_quote(std::string_view s) {
-  std::string out;
-  out.reserve(s.size() + 2);
-  out.push_back('\'');
-  for (char c : s) {
-    if (c == '\'') {
-      out += "'\\''";
-    } else {
-      out.push_back(c);
-    }
-  }
-  out.push_back('\'');
-  return out;
-}
-
 using Sqlite3ExtensionInitT = int (*)(sqlite3 *, char **,
                                       const sqlite3_api_routines *);
 
@@ -67,9 +52,8 @@ void ensure_sqlite3_direct_database_ready() {
   const std::string prefix = sqlite3_direct_prefix();
   REQUIRE(::setenv("FDBFS_FS_PREFIX", prefix.c_str(), 1) == 0);
 
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-  const std::string cmd = "cd " + shell_quote(source_dir.string()) +
-                          " && ./gen.py " + shell_quote(prefix) + " | fdbcli";
+  const fs::path mkfs_exe = required_env_path("FDBFS_MKFS_EXE");
+  const std::string cmd = mkfs_exe.string() + " --force " + prefix;
   REQUIRE(std::system(cmd.c_str()) == 0);
 
   initialized = true;

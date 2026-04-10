@@ -43,29 +43,13 @@ std::filesystem::path required_env_path(const char *name) {
   return std::filesystem::path(v);
 }
 
-std::string shell_quote(std::string_view s) {
-  std::string out;
-  out.reserve(s.size() + 2);
-  out.push_back('\'');
-  for (char c : s) {
-    if (c == '\'') {
-      out += "'\\''";
-    } else {
-      out.push_back(c);
-    }
-  }
-  out.push_back('\'');
-  return out;
-}
-
-void reset_database_with_gen_py(const std::filesystem::path &source_dir,
-                                std::string_view prefix) {
-  const std::string cmd = "cd " + shell_quote(source_dir.string()) +
-                          " && ./gen.py " + shell_quote(std::string(prefix)) +
-                          " | fdbcli";
+void reset_database_with_mkfs(std::string_view prefix) {
+  const auto mkfs_exe = required_env_path("FDBFS_MKFS_EXE");
+  const std::string cmd =
+      mkfs_exe.string() + " --force " + std::string(prefix);
   const int status = std::system(cmd.c_str());
   if (status != 0) {
-    throw std::runtime_error("database initialization via gen.py failed");
+    throw std::runtime_error("database initialization via mkfs.fdbfs failed");
   }
 }
 
@@ -142,10 +126,8 @@ public:
     fileblock_prefix_length = inode_key_length;
     fileblock_key_length = pack_fileblock_key(0, 0).size();
     dirent_prefix_length = pack_dentry_key(0, "").size();
-    reset_database_with_gen_py(required_env_path("FDBFS_SOURCE_DIR"),
-                               std::string_view(
-                                   reinterpret_cast<const char *>(key_prefix.data()),
-                                   key_prefix.size()));
+    reset_database_with_mkfs(std::string_view(
+        reinterpret_cast<const char *>(key_prefix.data()), key_prefix.size()));
 
     runtime.add_persistent<FdbService>(
         []() { return std::make_unique<FdbService>(false); });

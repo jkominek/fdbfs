@@ -36,7 +36,7 @@ struct FdbfsEnv {
 fs::path required_env_path(const char *name);
 bool is_host_backend();
 
-void scenario(const fs::path &fs_exe, const fs::path &source_dir,
+void scenario(const fs::path &fs_exe, const fs::path &mkfs_exe,
               const std::function<void(FdbfsEnv &)> &fn);
 void scenario(const std::function<void(FdbfsEnv &)> &fn);
 void require_directory_scan_ok(const fs::path &dir);

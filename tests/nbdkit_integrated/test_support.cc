@@ -56,21 +56,6 @@ std::string optional_env_string(const char *name) {
   return std::string(v);
 }
 
-std::string shell_quote(std::string_view s) {
-  std::string out;
-  out.reserve(s.size() + 2);
-  out.push_back('\'');
-  for (char c : s) {
-    if (c == '\'') {
-      out += "'\\''";
-    } else {
-      out.push_back(c);
-    }
-  }
-  out.push_back('\'');
-  return out;
-}
-
 fs::path mkdtemp_dir(fs::path base, std::string_view prefix) {
   fs::create_directories(base);
   std::string tmpl = (base / (std::string(prefix) + "-XXXXXX")).string();
@@ -84,11 +69,10 @@ fs::path mkdtemp_dir(fs::path base, std::string_view prefix) {
   return fs::path(out);
 }
 
-void reset_database_with_gen_py(const fs::path &source_dir,
-                                std::string_view prefix) {
-  const std::string cmd = "cd " + shell_quote(source_dir.string()) +
-                          " && ./gen.py " + shell_quote(std::string(prefix)) +
-                          " | fdbcli";
+void reset_database_with_mkfs(std::string_view prefix) {
+  const auto mkfs_exe = required_env_path("FDBFS_MKFS_EXE");
+  const std::string cmd =
+      mkfs_exe.string() + " --force " + std::string(prefix);
   REQUIRE(std::system(cmd.c_str()) == 0);
 }
 
@@ -227,7 +211,7 @@ class NbdkitIntegratedServices::Impl {
 public:
   Impl() : prefix(unique_prefix()) {
     initialize_generic_state(prefix);
-    reset_database_with_gen_py(required_env_path("FDBFS_SOURCE_DIR"), prefix);
+    reset_database_with_mkfs(prefix);
 
     runtime.add_persistent<FdbService>(
         []() { return std::make_unique<FdbService>(false); });

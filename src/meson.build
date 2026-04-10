@@ -48,3 +48,10 @@ utils_source_files = files(
     'utils/fsck.fdbfs.cc',
     'utils/mkfs.fdbfs.cc',
 )
+
+utils_runtime_source_files = files(
+    'generic/fdb_service.cc',
+    'generic/fdbfs_runtime.cc',
+    'generic/liveness.cc',
+    'generic/util.cc',
+)

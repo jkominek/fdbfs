@@ -93,7 +93,7 @@ endif
 
 mkfs_exe = executable(
   'mkfs.fdbfs',
-  'src/utils/mkfs.fdbfs.cc',
+  ['src/utils/mkfs.fdbfs.cc'] + utils_runtime_source_files,
   generated,
   dependencies: core_deps,
   include_directories: project_includes,
@@ -101,7 +101,7 @@ mkfs_exe = executable(
 
 fsck_exe = executable(
   'fsck.fdbfs',
-  'src/utils/fsck.fdbfs.cc',
+  ['src/utils/fsck.fdbfs.cc'] + utils_runtime_source_files,
   generated,
   dependencies: core_deps + sqlite3_compile_deps,
   include_directories: project_includes,
@@ -173,6 +173,7 @@ test(
   inflight_test_exe,
   env: [
     'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+    'FDBFS_MKFS_EXE=' + mkfs_exe.full_path(),
   ],
   timeout: 90,
   is_parallel: false,
@@ -203,6 +204,7 @@ if nbdkit_dep.found()
 
   nbdkit_test_env = [
     'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+    'FDBFS_MKFS_EXE=' + mkfs_exe.full_path(),
     'FDBFS_NBDKIT_PLUGIN=' + nbdkit_fdbfs_plugin.full_path(),
   ]
   if nbdkit_prog.found()
@@ -249,6 +251,7 @@ if have_sqlite3
     sqlite3_direct_exe,
     env: [
       'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+      'FDBFS_MKFS_EXE=' + mkfs_exe.full_path(),
       'FDBFS_SQLITE3_LIB=' + sqlite3_vfs_lib.full_path(),
     ],
     timeout: 120,
@@ -274,6 +277,7 @@ if have_sqlite3
       sqlite3_integrated_exe,
       env: [
         'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+        'FDBFS_MKFS_EXE=' + mkfs_exe.full_path(),
         'FDBFS_SQLITE3_LIB=' + sqlite3_vfs_lib.full_path(),
         'FDBFS_SQLITE3_BIN=' + sqlite3_prog.full_path(),
       ],
@@ -343,6 +347,7 @@ if have_fuse
     env: [
       'FDBFS_FS_EXE=' + fs_exe.full_path(),
       'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+      'FDBFS_MKFS_EXE=' + mkfs_exe.full_path(),
       'FDBFS_TEST_MATRIX=empty',
     ],
     timeout: 600,
@@ -355,6 +360,7 @@ if have_fuse
     env: [
       'FDBFS_FS_EXE=' + fs_exe.full_path(),
       'FDBFS_SOURCE_DIR=' + meson.project_source_root(),
+      'FDBFS_MKFS_EXE=' + mkfs_exe.full_path(),
       'FDBFS_TEST_MATRIX=seeded',
     ],
     timeout: 420,

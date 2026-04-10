@@ -3,6 +3,8 @@ set -xe
 
 fdbcli --exec status
 
+./build/mkfs.fdbfs FS
+
 rm -rf test_a test_b
 mkdir -p test_a test_b
 MP=`stat -c %m .`

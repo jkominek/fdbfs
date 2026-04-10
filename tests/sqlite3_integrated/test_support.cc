@@ -32,21 +32,6 @@ std::string required_env_string(const char *name) {
   return required_env_path(name).string();
 }
 
-std::string shell_quote(std::string_view s) {
-  std::string out;
-  out.reserve(s.size() + 2);
-  out.push_back('\'');
-  for (char c : s) {
-    if (c == '\'') {
-      out += "'\\''";
-    } else {
-      out.push_back(c);
-    }
-  }
-  out.push_back('\'');
-  return out;
-}
-
 std::string sqlite3_integrated_prefix() {
   static const std::string prefix = []() {
     return "sqli" + std::to_string(getpid());
@@ -63,9 +48,8 @@ void ensure_database_ready_once() {
   const std::string prefix = sqlite3_integrated_prefix();
   REQUIRE(::setenv("FDBFS_FS_PREFIX", prefix.c_str(), 1) == 0);
 
-  const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-  const std::string cmd = "cd " + shell_quote(source_dir.string()) +
-                          " && ./gen.py " + shell_quote(prefix) + " | fdbcli";
+  const fs::path mkfs_exe = required_env_path("FDBFS_MKFS_EXE");
+  const std::string cmd = mkfs_exe.string() + " --force " + prefix;
   REQUIRE(std::system(cmd.c_str()) == 0);
 
   initialized = true;

@@ -408,30 +408,14 @@ void populate_seeded_dataset(const fs::path &mnt, const SeedConfig &cfg) {
   }
 }
 
-std::string shell_quote(std::string_view s) {
-  std::string out;
-  out.reserve(s.size() + 2);
-  out.push_back('\'');
-  for (char c : s) {
-    if (c == '\'') {
-      out += "'\"'\"'";
-    } else {
-      out.push_back(c);
-    }
-  }
-  out.push_back('\'');
-  return out;
-}
 
-void reset_database_with_gen_py(const fs::path &source_dir,
+void reset_database_with_mkfs(const fs::path &mkfs_exe,
                                 const fs::path &artifacts_dir,
                                 std::string_view key_prefix) {
   const fs::path out = artifacts_dir / "regen.stdout";
   const fs::path err = artifacts_dir / "regen.stderr";
-  const std::string cmd = "cd " + shell_quote(source_dir.string()) +
-                          " && ./gen.py " +
-                          shell_quote(std::string(key_prefix)) + " | fdbcli";
-  const int status = run_cmd_capture({"sh", "-c", cmd}, out, err);
+  const int status = run_cmd_capture(
+      {mkfs_exe.string(), "--force", std::string(key_prefix)}, out, err);
   if (!exited_ok(status)) {
     throw std::runtime_error("database initialization failed; see " +
                              out.string() + " and " + err.string());
@@ -606,7 +590,7 @@ void FdbfsEnv::capture_state(std::string_view why) noexcept {
   best_effort_copy_file(fdbfs_stdout, artifacts / "fdbfs.stdout.copy");
 }
 
-void scenario(const fs::path &fs_exe, const fs::path &source_dir,
+void scenario(const fs::path &fs_exe, const fs::path &mkfs_exe,
               const std::function<void(FdbfsEnv &)> &fn) {
   static const std::vector<DatasetProfile> profiles =
       dataset_profiles_from_env();
@@ -637,7 +621,7 @@ void scenario(const fs::path &fs_exe, const fs::path &source_dir,
     env.append_op("dataset profile: " + profile_name(profile));
     env.append_op("using key_prefix=" + key_prefix);
     if (backend == TestBackend::Fdbfs) {
-      reset_database_with_gen_py(source_dir, env.artifacts, key_prefix);
+      reset_database_with_mkfs(mkfs_exe, env.artifacts, key_prefix);
       env.start_fdbfs(fs_exe, key_prefix);
     } else {
       env.append_op("host backend: using local filesystem directly");
@@ -669,8 +653,8 @@ void scenario(const std::function<void(FdbfsEnv &)> &fn) {
   static const TestBackend backend = backend_from_env();
   if (backend == TestBackend::Fdbfs) {
     static const fs::path fs_exe = required_env_path("FDBFS_FS_EXE");
-    static const fs::path source_dir = required_env_path("FDBFS_SOURCE_DIR");
-    scenario(fs_exe, source_dir, fn);
+    static const fs::path mkfs_exe = required_env_path("FDBFS_MKFS_EXE");
+    scenario(fs_exe, mkfs_exe, fn);
     return;
   }
   scenario(fs::path{}, fs::path{}, fn);
