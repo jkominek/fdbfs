@@ -151,6 +151,7 @@ inflight_test_sources = files(
   'tests/inflight/test_rename.cc',
   'tests/inflight/test_setattr.cc',
   'tests/inflight/test_statfs.cc',
+  'tests/inflight/test_write.cc',
   'tests/inflight/test_support.cc',
 )
 
