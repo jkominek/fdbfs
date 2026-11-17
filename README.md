@@ -1,25 +1,26 @@
-[![Build Status](https://travis-ci.org/jkominek/fdbfs.svg?branch=master)](https://travis-ci.org/jkominek/fdbfs)
+[![Build Status](https://github.com/jkominek/fdbfs/actions/workflows/cpp.yml/badge.svg)](https://github.com/jkominek/fdbfs/actions/workflows/cpp.yml)
 [![GitHub license](https://img.shields.io/badge/license-ISC-blue.svg)](https://raw.githubusercontent.com/jkominek/fdbfs/master/LICENSE)
 
 # fdbfs
 
-needs a better name.
+this has evolved into a composable set of filesystem operations on top of foundationdb.
+it comes with layers on top of that for:
 
-this isn't ready for prime time, yet.
+* a FUSE filesystem
+* a SQLite VFS layer
+* Network Block Device (via nbdkit)
+
+there's a halfway decent test suite which attempts to exercise the code at multiple levels
+of abstraction, including the various layers.
 
 # compiling
 
-ensure you have the foundationdb client library, and protobuf
-available for pkg-config to find.
-
-for "precise" details, see the Github actions configuration file, as it
-is able to run the build and tests.
+see the Github actions configuration file, as it is able to run the build and tests.
 
 # backwards incompatibilities
 
-you shouldn't be using this, let alone storing real data in it yet.
-
-* 2026 heavy development; backwards incompatibility probably lost.
+i can't quite guarantee incompatibilities won't be introduced, but the
+keyspace layout seems to be working okay so far.
 
 # long termish TODO
 
